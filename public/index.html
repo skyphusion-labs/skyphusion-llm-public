@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>skyphusion-llm-public</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <header class="sidebar-header">
+        <h1>history</h1>
+        <button id="new-chat" type="button">+ new</button>
+      </header>
+      <div id="user-badge"></div>
+      <ul id="history-list" class="history-list"></ul>
+    </aside>
+    <main class="workspace">
+      <div class="controls">
+        <label>
+          model
+          <select id="model"></select>
+        </label>
+        <label>
+          <span id="system-prompt-label">system prompt</span>
+          <textarea id="system-prompt" rows="3" placeholder="optional"></textarea>
+        </label>
+      </div>
+      <div class="input-area">
+        <label>
+          <span id="user-input-label">your input</span>
+          <textarea id="user-input" rows="5" placeholder="type here, enter to send, shift+enter for newline"></textarea>
+        </label>
+        <div class="bottom-row">
+          <div id="attach-row" class="attach-row">
+            <input id="file-input" type="file" multiple accept="image/*,audio/*,video/*" hidden>
+            <button id="attach-btn" type="button" class="ghost">+ attach</button>
+            <span id="attach-hint" class="hint"></span>
+          </div>
+          <button id="run" type="button">run</button>
+        </div>
+        <div id="attachments" class="attachments"></div>
+      </div>
+      <div class="output-area">
+        <header class="output-header">
+          <span>output</span>
+          <span id="output-meta"></span>
+        </header>
+        <pre id="output" class="output"></pre>
+        <div id="output-artifact" class="output-artifact"></div>
+        <div id="loaded-attachments" class="loaded-attachments"></div>
+      </div>
+    </main>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>

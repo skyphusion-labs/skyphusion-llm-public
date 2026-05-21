@@ -40,13 +40,14 @@ interface Env {
   GATEWAY_ID: string;
   ANTHROPIC_API_KEY?: string; // optional; preferred is to store in AI Gateway dashboard
   XAI_API_KEY?: string;       // optional; preferred is to store in AI Gateway dashboard
+  GOOGLE_API_KEY?: string;    // optional; preferred is to store in AI Gateway dashboard
   CF_AIG_TOKEN?: string;      // only needed if gateway has Authenticated Gateway enabled
 }
 
 // ---------- Model catalog ----------
 
 type ModelType = "chat" | "image" | "tts";
-type Provider = "workers-ai" | "anthropic" | "xai";
+type Provider = "workers-ai" | "anthropic" | "xai" | "google";
 
 interface ModelEntry {
   id: string;
@@ -59,16 +60,22 @@ interface ModelEntry {
 
 const MODELS: ModelEntry[] = [
   // ---- Chat (text generation) ----
-  // Anthropic (BYOK via x-api-key, routed through AI Gateway)
-  { id: "anthropic/claude-opus-4-6",                    label: "Claude Opus 4.6 (Anthropic, BYOK)",   group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic" },
-  { id: "anthropic/claude-sonnet-4-6",                  label: "Claude Sonnet 4.6 (Anthropic, BYOK)", group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic" },
-  { id: "anthropic/claude-haiku-4-5",                   label: "Claude Haiku 4.5 (Anthropic, BYOK)",  group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic" },
+  // Anthropic (BYOK via x-api-key or stored keys, routed through AI Gateway)
+  { id: "anthropic/claude-opus-4-6",                    label: "Claude Opus 4.6 (Anthropic, BYOK)",          group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic" },
+  { id: "anthropic/claude-sonnet-4-6",                  label: "Claude Sonnet 4.6 (Anthropic, BYOK)",        group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic" },
+  { id: "anthropic/claude-haiku-4-5",                   label: "Claude Haiku 4.5 (Anthropic, BYOK)",         group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic" },
 
   // xAI / Grok (BYOK via Bearer auth or stored keys, routed through AI Gateway)
   { id: "xai/grok-4.3",                                 label: "Grok 4.3 (xAI, BYOK)",                       group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai" },
   { id: "xai/grok-4.20-multi-agent-0309",               label: "Grok 4.20 Multi-Agent (xAI, BYOK)",          group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai" },
   { id: "xai/grok-4.20-0309-reasoning",                 label: "Grok 4.20 Reasoning (xAI, BYOK)",            group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai" },
   { id: "xai/grok-build-0.1",                           label: "Grok Build 0.1 (xAI, BYOK, coding)",         group: "Chat \u00b7 xAI",       type: "chat", capabilities: [],         provider: "xai" },
+
+  // Google Gemini (BYOK via x-goog-api-key or stored keys, routed through AI Gateway)
+  { id: "google/gemini-3.5-flash",                      label: "Gemini 3.5 Flash (Google, BYOK)",            group: "Chat \u00b7 Google",    type: "chat", capabilities: ["vision"], provider: "google" },
+  { id: "google/gemini-3.1-pro-preview",                label: "Gemini 3.1 Pro (Google, BYOK)",              group: "Chat \u00b7 Google",    type: "chat", capabilities: ["vision"], provider: "google" },
+  { id: "google/gemini-3.1-flash",                      label: "Gemini 3.1 Flash (Google, BYOK)",            group: "Chat \u00b7 Google",    type: "chat", capabilities: ["vision"], provider: "google" },
+  { id: "google/gemini-2.5-pro",                        label: "Gemini 2.5 Pro (Google, BYOK)",              group: "Chat \u00b7 Google",    type: "chat", capabilities: ["vision"], provider: "google" },
 
   // Frontier
   { id: "@cf/moonshotai/kimi-k2.6",                     label: "Kimi K2.6 (1T)",               group: "Chat \u00b7 Frontier", type: "chat", capabilities: ["vision"] },
@@ -355,6 +362,10 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
       logId = r.logId;
     } else if (model.provider === "xai") {
       const r = await callXai(env, model, messages);
+      result = r.raw;
+      logId = r.logId;
+    } else if (model.provider === "google") {
+      const r = await callGoogle(env, model, body.system_prompt, messages);
       result = r.raw;
       logId = r.logId;
     } else {
@@ -731,6 +742,121 @@ async function callXai(
   return { raw, logId };
 }
 
+// ---------- Google Gemini BYOK call ----------
+//
+// Direct fetch to AI Gateway's Google AI Studio provider endpoint. The
+// gateway wraps the call for observability, caching, and rate-limiting.
+//
+// Auth strategy: stored-keys-first. If env.GOOGLE_API_KEY is set, we send it
+// as x-goog-api-key (inline auth, takes priority at the gateway). If it
+// isn't, we omit the header and let the gateway inject the key you've stored
+// in dashboard > AI Gateway > Provider Keys.
+//
+// Google's wire format differs from both OpenAI and Anthropic: messages are
+// in a `contents` array with `parts` blocks, the system prompt lives in
+// `systemInstruction`, image input uses `inline_data` blocks, and the
+// assistant role is called `model`. We transform on the way in and unify
+// the response shape in extractOutput / extractUsage.
+
+async function callGoogle(
+  env: Env,
+  model: ModelEntry,
+  systemPrompt: string | undefined,
+  messages: Array<unknown>
+): Promise<{ raw: unknown; logId: string | null }> {
+  const { systemInstruction, contents } = transformToGoogle(messages, systemPrompt);
+
+  const baseUrl = await (env.AI as unknown as {
+    gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
+  }).gateway(env.GATEWAY_ID).getUrl("google-ai-studio");
+
+  // Strip "google/" prefix; Google's API expects just the model name (e.g. "gemini-3.5-flash").
+  const modelName = model.id.replace(/^google\//, "");
+
+  const body: Record<string, unknown> = {
+    contents,
+    generationConfig: { maxOutputTokens: 4096 },
+  };
+  if (systemInstruction) body.systemInstruction = systemInstruction;
+
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+  };
+  if (env.GOOGLE_API_KEY) headers["x-goog-api-key"] = env.GOOGLE_API_KEY;
+  if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
+
+  const resp = await fetch(`${baseUrl}/v1beta/models/${modelName}:generateContent`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+
+  const logId = resp.headers.get("cf-aig-log-id");
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`Google API ${resp.status}: ${errText.slice(0, 500)}`);
+  }
+
+  const raw = await resp.json();
+  return { raw, logId };
+}
+
+interface GooglePart {
+  text?: string;
+  inline_data?: { mime_type: string; data: string };
+}
+interface GoogleContent {
+  role: "user" | "model";
+  parts: GooglePart[];
+}
+
+function transformToGoogle(
+  messages: Array<unknown>,
+  systemPromptOverride: string | undefined
+): { systemInstruction: { parts: Array<{ text: string }> } | undefined; contents: GoogleContent[] } {
+  let systemText = systemPromptOverride && systemPromptOverride.trim() ? systemPromptOverride : "";
+  const contents: GoogleContent[] = [];
+
+  for (const m of messages) {
+    const msg = m as { role: string; content: unknown };
+    if (msg.role === "system") {
+      const text = typeof msg.content === "string" ? msg.content : "";
+      systemText = systemText ? `${systemText}\n\n${text}` : text;
+      continue;
+    }
+    if (msg.role !== "user" && msg.role !== "assistant") continue;
+
+    // Google calls the assistant role "model".
+    const role: "user" | "model" = msg.role === "assistant" ? "model" : "user";
+
+    if (typeof msg.content === "string") {
+      contents.push({ role, parts: [{ text: msg.content }] });
+      continue;
+    }
+    if (!Array.isArray(msg.content)) continue;
+
+    const parts: GooglePart[] = [];
+    for (const block of msg.content) {
+      const b = block as { type?: string; text?: string; image_url?: { url?: string } };
+      if (b.type === "text" && typeof b.text === "string") {
+        parts.push({ text: b.text });
+      } else if (b.type === "image_url" && b.image_url?.url) {
+        const parsed = parseDataUrl(b.image_url.url);
+        if (parsed) {
+          parts.push({ inline_data: { mime_type: parsed.mime, data: parsed.base64 } });
+        }
+      }
+    }
+    contents.push({ role, parts });
+  }
+
+  return {
+    systemInstruction: systemText ? { parts: [{ text: systemText }] } : undefined,
+    contents,
+  };
+}
+
 // ---------- Output extraction (text models) ----------
 
 function extractOutput(result: unknown): string {
@@ -745,9 +871,19 @@ function extractOutput(result: unknown): string {
     return choices[0].message.content;
   }
 
+  // Anthropic Messages API: top-level content array
   const content = r?.content as Array<{ type?: string; text?: string }> | undefined;
   if (Array.isArray(content)) {
     const text = content.filter((b) => b.type === "text").map((b) => b.text ?? "").join("");
+    if (text) return text;
+  }
+
+  // Google Gemini: candidates[0].content.parts[].text
+  const candidates = r?.candidates as Array<{ content?: { parts?: Array<{ text?: string }> } }> | undefined;
+  if (Array.isArray(candidates) && Array.isArray(candidates[0]?.content?.parts)) {
+    const text = candidates[0].content.parts
+      .map((p) => (typeof p.text === "string" ? p.text : ""))
+      .join("");
     if (text) return text;
   }
 
@@ -768,12 +904,24 @@ function extractOutput(result: unknown): string {
 }
 
 function extractUsage(result: unknown): { in_: number | null; out_: number | null } {
-  const u = (result as { usage?: Record<string, number> })?.usage;
-  if (!u) return { in_: null, out_: null };
-  return {
-    in_:  u.prompt_tokens ?? u.input_tokens  ?? null,
-    out_: u.completion_tokens ?? u.output_tokens ?? null,
-  };
+  const r = result as Record<string, unknown>;
+  // OpenAI / Anthropic: usage object on result
+  const u = r?.usage as Record<string, number> | undefined;
+  if (u) {
+    return {
+      in_:  u.prompt_tokens ?? u.input_tokens  ?? null,
+      out_: u.completion_tokens ?? u.output_tokens ?? null,
+    };
+  }
+  // Google Gemini: usageMetadata
+  const um = r?.usageMetadata as Record<string, number> | undefined;
+  if (um) {
+    return {
+      in_:  um.promptTokenCount ?? null,
+      out_: um.candidatesTokenCount ?? null,
+    };
+  }
+  return { in_: null, out_: null };
 }
 
 // ---------- History ----------

@@ -147,7 +147,7 @@ Workers AI billing is per-token / per-image / per-minute depending on model. Fre
 
 D1 is roughly $0.75/GB-month for storage. R2 is roughly $0.015/GB-month with no egress fees inside Cloudflare. Free tiers on D1 and R2 cover small personal use indefinitely.
 
-Anthropic models (Claude family) and xAI models (Grok family) bill against your own accounts via BYOK, not Cloudflare. See below.
+Anthropic (Claude), xAI (Grok), and Google (Gemini) models bill against your own provider accounts via BYOK, not Cloudflare. See below.
 
 ## Anthropic models (BYOK)
 
@@ -207,16 +207,39 @@ Note: Grok 4.x are reasoning models and expect `max_completion_tokens` rather th
 
 Billing: xAI charges your account directly. Pricing as of mid-2026: Grok 4.3 and Grok 4.20 variants at $1.25/$2.50 per million input/output tokens, Grok Build 0.1 at $1.00/$2.00. No Cloudflare markup.
 
+## Google Gemini models (BYOK)
+
+Gemini 3.5 Flash, Gemini 3.1 Pro, Gemini 3.1 Flash, and Gemini 2.5 Pro are routed via BYOK against your own Google AI Studio account. Same pattern as Anthropic and xAI: stored keys in the gateway dashboard (recommended) or inline Worker secret.
+
+Google's API differs from OpenAI: messages live in a `contents` array of `parts` blocks, system prompts go in `systemInstruction`, images use `inline_data` blocks, and the assistant role is called `model`. The worker handles the transform internally; the same UI works for all four providers.
+
+### Option A (recommended): Store the key in AI Gateway
+
+1. Get an API key from https://aistudio.google.com > Get API key
+2. Dashboard > AI > AI Gateway > Provider Keys > Add API Key > pick Google AI Studio > paste
+3. Try a Gemini model; the gateway injects the stored key automatically
+
+### Option B: Inline secret
+
+```
+npx wrangler secret put GOOGLE_API_KEY
+npm run deploy
+```
+
+The worker sends `x-goog-api-key` on every request, overriding any stored key.
+
+Billing: Google charges your account directly. Gemini 3.5 Flash and Gemini 3.1 Flash are roughly $0.30/$2.50 per million input/output tokens, Gemini 3.1 Pro is higher (premium reasoning tier), Gemini 2.5 Pro is at the older 2.5-family pricing. Check https://ai.google.dev/pricing for current rates.
+
 ## Editing the model menu
 
 `MODELS` at the top of `src/index.ts`. Each entry has:
 
-- `id`: `@cf/{vendor}/{model}` for Workers AI, `anthropic/{model}` for BYOK Anthropic, or `xai/{model}` for BYOK xAI
+- `id`: `@cf/{vendor}/{model}` for Workers AI, `anthropic/{model}` for BYOK Anthropic, `xai/{model}` for BYOK xAI, or `google/{model}` for BYOK Google Gemini
 - `label` for the dropdown
 - `group` for the optgroup heading
 - `type`: `"chat"` | `"image"` | `"tts"`
 - `capabilities`: array. Currently only `"vision"` is recognized; applies to chat models only.
-- `provider` (optional): `"workers-ai"` (default) | `"anthropic"` (BYOK) | `"xai"` (BYOK). Drives the call dispatch.
+- `provider` (optional): `"workers-ai"` (default) | `"anthropic"` (BYOK) | `"xai"` (BYOK) | `"google"` (BYOK). Drives the call dispatch.
 
 Full Workers AI catalog: https://developers.cloudflare.com/workers-ai/models/. Skip anything tagged "Planned deprecation."
 

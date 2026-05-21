@@ -147,15 +147,36 @@ Workers AI billing is per-token / per-image / per-minute depending on model. Fre
 
 D1 is roughly $0.75/GB-month for storage. R2 is roughly $0.015/GB-month with no egress fees inside Cloudflare. Free tiers on D1 and R2 cover small personal use indefinitely.
 
+Anthropic models (Claude family) bill against your own Anthropic account via BYOK, not Cloudflare. See below.
+
+## Anthropic models (BYOK)
+
+The Anthropic entries in the model menu (Claude Opus 4.6, Sonnet 4.6, Haiku 4.5) are routed via BYOK (Bring Your Own Key) rather than Cloudflare Unified Billing. The `env.AI.run()` binding doesn't support BYOK for third-party models, so the worker hits the AI Gateway's Anthropic provider endpoint directly with `x-api-key` auth and Anthropic-native payloads. The gateway still wraps the call for observability, caching, and rate-limiting.
+
+Setup:
+
+1. Get an API key from https://console.anthropic.com > Settings > API Keys > Create Key
+2. Load it as a Worker secret (kept out of `wrangler.toml`, which is checked into version control):
+   ```
+   npx wrangler secret put ANTHROPIC_API_KEY
+   ```
+   Paste the key when prompted.
+3. Redeploy: `npm run deploy`
+
+If `ANTHROPIC_API_KEY` isn't set, selecting an Anthropic model returns a clear error. Workers AI models keep working regardless.
+
+Billing: Anthropic charges your account at their per-token rates. There's no Cloudflare markup on BYOK calls; the gateway just proxies. Caching at the gateway level can reduce duplicate-prompt costs.
+
 ## Editing the model menu
 
 `MODELS` at the top of `src/index.ts`. Each entry has:
 
-- `id` in `@cf/{vendor}/{model}` format
+- `id`: `@cf/{vendor}/{model}` for Workers AI, or `anthropic/{model}` for BYOK Anthropic
 - `label` for the dropdown
 - `group` for the optgroup heading
 - `type`: `"chat"` | `"image"` | `"tts"`
 - `capabilities`: array. Currently only `"vision"` is recognized; applies to chat models only.
+- `provider` (optional): `"workers-ai"` (default) | `"anthropic"` (BYOK). Drives the call dispatch.
 
 Full Workers AI catalog: https://developers.cloudflare.com/workers-ai/models/. Skip anything tagged "Planned deprecation."
 

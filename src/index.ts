@@ -38,11 +38,13 @@ interface Env {
   R2: R2Bucket;
   ASSETS: Fetcher;
   GATEWAY_ID: string;
+  ANTHROPIC_API_KEY?: string;
 }
 
 // ---------- Model catalog ----------
 
 type ModelType = "chat" | "image" | "tts";
+type Provider = "workers-ai" | "anthropic";
 
 interface ModelEntry {
   id: string;
@@ -50,10 +52,16 @@ interface ModelEntry {
   group: string;
   type: ModelType;
   capabilities: Array<"vision">;
+  provider?: Provider; // defaults to "workers-ai" when omitted
 }
 
 const MODELS: ModelEntry[] = [
   // ---- Chat (text generation) ----
+  // Anthropic (BYOK via x-api-key, routed through AI Gateway)
+  { id: "anthropic/claude-opus-4-6",                    label: "Claude Opus 4.6 (Anthropic, BYOK)",   group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic" },
+  { id: "anthropic/claude-sonnet-4-6",                  label: "Claude Sonnet 4.6 (Anthropic, BYOK)", group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic" },
+  { id: "anthropic/claude-haiku-4-5",                   label: "Claude Haiku 4.5 (Anthropic, BYOK)",  group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic" },
+
   // Frontier
   { id: "@cf/moonshotai/kimi-k2.6",                     label: "Kimi K2.6 (1T)",               group: "Chat \u00b7 Frontier", type: "chat", capabilities: ["vision"] },
   { id: "@cf/openai/gpt-oss-120b",                      label: "GPT-OSS 120B (reasoning)",     group: "Chat \u00b7 Frontier", type: "chat", capabilities: [] },
@@ -333,11 +341,20 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
   let result: unknown;
   let logId: string | null = null;
   try {
-    result = await aiRun(env, model.id, { messages });
-    logId = aiLogId(env);
+    if (model.provider === "anthropic") {
+      if (!env.ANTHROPIC_API_KEY) {
+        return json({ error: "ANTHROPIC_API_KEY is not set. Run `wrangler secret put ANTHROPIC_API_KEY` and redeploy." }, { status: 500 });
+      }
+      const r = await callAnthropic(env, model, body.system_prompt, messages);
+      result = r.raw;
+      logId = r.logId;
+    } else {
+      result = await aiRun(env, model.id, { messages });
+      logId = aiLogId(env);
+    }
   } catch (err) {
     const m = err instanceof Error ? err.message : String(err);
-    return json({ error: `AI Gateway call failed: ${m}` }, { status: 502 });
+    return json({ error: `AI call failed: ${m}` }, { status: 502 });
   }
 
   const latency = Date.now() - start;
@@ -535,6 +552,114 @@ async function persistChat(env: Env, a: PersistArgs): Promise<{ id: number; crea
     )
     .first<{ id: number; created_at: string }>();
   return row ?? { id: 0, created_at: new Date().toISOString() };
+}
+
+// ---------- Anthropic BYOK call ----------
+//
+// Direct fetch to the Anthropic provider endpoint of AI Gateway. The gateway
+// still wraps the call for observability, caching, and rate-limiting, but we
+// authenticate with the user's Anthropic API key (BYOK) rather than going
+// through Cloudflare Unified Billing. The env.AI.run binding doesn't support
+// BYOK for third-party models, so the fetch path is the only option here.
+//
+// The message format coming in is OpenAI-style (role + content array with
+// text / image_url blocks). We transform to Anthropic's Messages API shape:
+// system pulled to a top-level field, image_url blocks rewritten as image
+// blocks with base64 source.
+
+async function callAnthropic(
+  env: Env,
+  model: ModelEntry,
+  systemPrompt: string | undefined,
+  messages: Array<unknown>
+): Promise<{ raw: unknown; logId: string | null }> {
+  const { system, messages: aMessages } = transformToAnthropic(messages, systemPrompt);
+
+  const baseUrl = await (env.AI as unknown as {
+    gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
+  }).gateway(env.GATEWAY_ID).getUrl("anthropic");
+
+  // Strip the "anthropic/" prefix we use in our internal IDs; Anthropic's API
+  // expects just the model name (e.g. "claude-opus-4-6").
+  const modelName = model.id.replace(/^anthropic\//, "");
+
+  const body: Record<string, unknown> = {
+    model: modelName,
+    max_tokens: 4096,
+    messages: aMessages,
+  };
+  if (system) body.system = system;
+
+  const resp = await fetch(`${baseUrl}/v1/messages`, {
+    method: "POST",
+    headers: {
+      "x-api-key": env.ANTHROPIC_API_KEY ?? "",
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  const logId = resp.headers.get("cf-aig-log-id");
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`Anthropic API ${resp.status}: ${errText.slice(0, 500)}`);
+  }
+
+  const raw = await resp.json();
+  return { raw, logId };
+}
+
+interface AnthropicMessage {
+  role: "user" | "assistant";
+  content: Array<unknown>;
+}
+
+function transformToAnthropic(
+  messages: Array<unknown>,
+  systemPromptOverride: string | undefined
+): { system: string | undefined; messages: AnthropicMessage[] } {
+  let system: string | undefined = systemPromptOverride && systemPromptOverride.trim()
+    ? systemPromptOverride
+    : undefined;
+  const out: AnthropicMessage[] = [];
+
+  for (const m of messages) {
+    const msg = m as { role: string; content: unknown };
+    if (msg.role === "system") {
+      const text = typeof msg.content === "string" ? msg.content : "";
+      system = system ? `${system}\n\n${text}` : text;
+      continue;
+    }
+    if (msg.role !== "user" && msg.role !== "assistant") continue;
+
+    if (typeof msg.content === "string") {
+      out.push({ role: msg.role, content: [{ type: "text", text: msg.content }] });
+      continue;
+    }
+
+    if (!Array.isArray(msg.content)) continue;
+
+    const content: Array<unknown> = [];
+    for (const block of msg.content) {
+      const b = block as { type?: string; text?: string; image_url?: { url?: string } };
+      if (b.type === "text" && typeof b.text === "string") {
+        content.push({ type: "text", text: b.text });
+      } else if (b.type === "image_url" && b.image_url?.url) {
+        const parsed = parseDataUrl(b.image_url.url);
+        if (parsed) {
+          content.push({
+            type: "image",
+            source: { type: "base64", media_type: parsed.mime, data: parsed.base64 },
+          });
+        }
+      }
+    }
+    out.push({ role: msg.role, content });
+  }
+
+  return { system, messages: out };
 }
 
 // ---------- Output extraction (text models) ----------

@@ -147,15 +147,76 @@ Workers AI billing is per-token / per-image / per-minute depending on model. Fre
 
 D1 is roughly $0.75/GB-month for storage. R2 is roughly $0.015/GB-month with no egress fees inside Cloudflare. Free tiers on D1 and R2 cover small personal use indefinitely.
 
+Anthropic models (Claude family) and xAI models (Grok family) bill against your own accounts via BYOK, not Cloudflare. See below.
+
+## Anthropic models (BYOK)
+
+The Anthropic entries in the model menu (Claude Opus 4.6, Sonnet 4.6, Haiku 4.5) are routed via BYOK (Bring Your Own Key) rather than Cloudflare Unified Billing. The `env.AI.run()` binding doesn't support BYOK for third-party models, so the worker hits the AI Gateway's Anthropic provider endpoint directly with Anthropic-native payloads. The gateway still wraps the call for observability, caching, and rate-limiting.
+
+There are two ways to authenticate, and the worker supports both:
+
+### Option A (recommended): Store the key in AI Gateway
+
+1. Get an API key from https://console.anthropic.com > Settings > API Keys > Create Key
+2. Dashboard > AI > AI Gateway > select your gateway > Provider Keys > Add API Key > pick Anthropic > paste
+3. Redeploy: `npm run deploy`
+
+The worker sends the request without an `x-api-key` header; the gateway injects the stored key before forwarding to Anthropic. Keys live in Cloudflare Secrets Store, are rotatable in one place, and never appear in worker secrets.
+
+### Option B: Inline secret
+
+1. Get the key as above
+2. Load it as a Worker secret:
+   ```
+   npx wrangler secret put ANTHROPIC_API_KEY
+   ```
+3. Redeploy
+
+The worker sends the key as `x-api-key` on every request. This overrides any stored key at the gateway level.
+
+### Authenticated Gateway
+
+If your gateway has Authenticated Gateway enabled (recommended for production), also set:
+```
+npx wrangler secret put CF_AIG_TOKEN
+```
+The worker will include the `cf-aig-authorization` header automatically when this is set.
+
+Billing: Anthropic charges your account at their per-token rates. There's no Cloudflare markup on BYOK calls; the gateway just proxies. Caching at the gateway level can reduce duplicate-prompt costs.
+
+## xAI / Grok models (BYOK)
+
+Grok 4.3, Grok 4.20 (Multi-Agent and Reasoning variants), and Grok Build 0.1 are routed via BYOK against your own xAI account. Same patterns as Anthropic above: stored keys in the gateway dashboard (recommended) or inline Worker secret. xAI is OpenAI-compatible so no message transform is needed.
+
+### Option A (recommended): Store the key in AI Gateway
+
+1. Get an API key from https://console.x.ai > API Keys > Create API Key
+2. Dashboard > AI > AI Gateway > Provider Keys > Add API Key > pick xAI > paste
+3. Redeploy
+
+### Option B: Inline secret
+
+```
+npx wrangler secret put XAI_API_KEY
+npm run deploy
+```
+
+The same `CF_AIG_TOKEN` secret applies if your gateway is authenticated.
+
+Note: Grok 4.x are reasoning models and expect `max_completion_tokens` rather than the legacy `max_tokens` field. The worker handles this internally. If you swap in older Grok variants (the grok-3 family was retired May 15, 2026), check xAI's docs for which field they expect.
+
+Billing: xAI charges your account directly. Pricing as of mid-2026: Grok 4.3 and Grok 4.20 variants at $1.25/$2.50 per million input/output tokens, Grok Build 0.1 at $1.00/$2.00. No Cloudflare markup.
+
 ## Editing the model menu
 
 `MODELS` at the top of `src/index.ts`. Each entry has:
 
-- `id` in `@cf/{vendor}/{model}` format
+- `id`: `@cf/{vendor}/{model}` for Workers AI, `anthropic/{model}` for BYOK Anthropic, or `xai/{model}` for BYOK xAI
 - `label` for the dropdown
 - `group` for the optgroup heading
 - `type`: `"chat"` | `"image"` | `"tts"`
 - `capabilities`: array. Currently only `"vision"` is recognized; applies to chat models only.
+- `provider` (optional): `"workers-ai"` (default) | `"anthropic"` (BYOK) | `"xai"` (BYOK). Drives the call dispatch.
 
 Full Workers AI catalog: https://developers.cloudflare.com/workers-ai/models/. Skip anything tagged "Planned deprecation."
 

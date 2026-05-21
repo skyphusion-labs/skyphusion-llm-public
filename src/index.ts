@@ -38,11 +38,15 @@ interface Env {
   R2: R2Bucket;
   ASSETS: Fetcher;
   GATEWAY_ID: string;
+  ANTHROPIC_API_KEY?: string; // optional; preferred is to store in AI Gateway dashboard
+  XAI_API_KEY?: string;       // optional; preferred is to store in AI Gateway dashboard
+  CF_AIG_TOKEN?: string;      // only needed if gateway has Authenticated Gateway enabled
 }
 
 // ---------- Model catalog ----------
 
 type ModelType = "chat" | "image" | "tts";
+type Provider = "workers-ai" | "anthropic" | "xai";
 
 interface ModelEntry {
   id: string;
@@ -50,10 +54,22 @@ interface ModelEntry {
   group: string;
   type: ModelType;
   capabilities: Array<"vision">;
+  provider?: Provider; // defaults to "workers-ai" when omitted
 }
 
 const MODELS: ModelEntry[] = [
   // ---- Chat (text generation) ----
+  // Anthropic (BYOK via x-api-key, routed through AI Gateway)
+  { id: "anthropic/claude-opus-4-6",                    label: "Claude Opus 4.6 (Anthropic, BYOK)",   group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic" },
+  { id: "anthropic/claude-sonnet-4-6",                  label: "Claude Sonnet 4.6 (Anthropic, BYOK)", group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic" },
+  { id: "anthropic/claude-haiku-4-5",                   label: "Claude Haiku 4.5 (Anthropic, BYOK)",  group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic" },
+
+  // xAI / Grok (BYOK via Bearer auth or stored keys, routed through AI Gateway)
+  { id: "xai/grok-4.3",                                 label: "Grok 4.3 (xAI, BYOK)",                       group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai" },
+  { id: "xai/grok-4.20-multi-agent-0309",               label: "Grok 4.20 Multi-Agent (xAI, BYOK)",          group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai" },
+  { id: "xai/grok-4.20-0309-reasoning",                 label: "Grok 4.20 Reasoning (xAI, BYOK)",            group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai" },
+  { id: "xai/grok-build-0.1",                           label: "Grok Build 0.1 (xAI, BYOK, coding)",         group: "Chat \u00b7 xAI",       type: "chat", capabilities: [],         provider: "xai" },
+
   // Frontier
   { id: "@cf/moonshotai/kimi-k2.6",                     label: "Kimi K2.6 (1T)",               group: "Chat \u00b7 Frontier", type: "chat", capabilities: ["vision"] },
   { id: "@cf/openai/gpt-oss-120b",                      label: "GPT-OSS 120B (reasoning)",     group: "Chat \u00b7 Frontier", type: "chat", capabilities: [] },
@@ -333,11 +349,21 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
   let result: unknown;
   let logId: string | null = null;
   try {
-    result = await aiRun(env, model.id, { messages });
-    logId = aiLogId(env);
+    if (model.provider === "anthropic") {
+      const r = await callAnthropic(env, model, body.system_prompt, messages);
+      result = r.raw;
+      logId = r.logId;
+    } else if (model.provider === "xai") {
+      const r = await callXai(env, model, messages);
+      result = r.raw;
+      logId = r.logId;
+    } else {
+      result = await aiRun(env, model.id, { messages });
+      logId = aiLogId(env);
+    }
   } catch (err) {
     const m = err instanceof Error ? err.message : String(err);
-    return json({ error: `AI Gateway call failed: ${m}` }, { status: 502 });
+    return json({ error: `AI call failed: ${m}` }, { status: 502 });
   }
 
   const latency = Date.now() - start;
@@ -535,6 +561,174 @@ async function persistChat(env: Env, a: PersistArgs): Promise<{ id: number; crea
     )
     .first<{ id: number; created_at: string }>();
   return row ?? { id: 0, created_at: new Date().toISOString() };
+}
+
+// ---------- Anthropic BYOK call ----------
+//
+// Direct fetch to the Anthropic provider endpoint of AI Gateway. The gateway
+// wraps the call for observability, caching, and rate-limiting.
+//
+// Auth strategy: stored-keys-first. If env.ANTHROPIC_API_KEY is set, we send
+// it as x-api-key (inline auth, takes priority at the gateway). If it isn't,
+// we omit the header and let the gateway inject the key you've stored in
+// dashboard > AI Gateway > Provider Keys. Either path works.
+//
+// The message format coming in is OpenAI-style (role + content array with
+// text / image_url blocks). We transform to Anthropic's Messages API shape:
+// system pulled to a top-level field, image_url blocks rewritten as image
+// blocks with base64 source.
+
+async function callAnthropic(
+  env: Env,
+  model: ModelEntry,
+  systemPrompt: string | undefined,
+  messages: Array<unknown>
+): Promise<{ raw: unknown; logId: string | null }> {
+  const { system, messages: aMessages } = transformToAnthropic(messages, systemPrompt);
+
+  const baseUrl = await (env.AI as unknown as {
+    gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
+  }).gateway(env.GATEWAY_ID).getUrl("anthropic");
+
+  // Strip the "anthropic/" prefix we use in our internal IDs; Anthropic's API
+  // expects just the model name (e.g. "claude-opus-4-6").
+  const modelName = model.id.replace(/^anthropic\//, "");
+
+  const body: Record<string, unknown> = {
+    model: modelName,
+    max_tokens: 4096,
+    messages: aMessages,
+  };
+  if (system) body.system = system;
+
+  const headers: Record<string, string> = {
+    "anthropic-version": "2023-06-01",
+    "content-type": "application/json",
+  };
+  if (env.ANTHROPIC_API_KEY) headers["x-api-key"] = env.ANTHROPIC_API_KEY;
+  if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
+
+  const resp = await fetch(`${baseUrl}/v1/messages`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+
+  const logId = resp.headers.get("cf-aig-log-id");
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`Anthropic API ${resp.status}: ${errText.slice(0, 500)}`);
+  }
+
+  const raw = await resp.json();
+  return { raw, logId };
+}
+
+interface AnthropicMessage {
+  role: "user" | "assistant";
+  content: Array<unknown>;
+}
+
+function transformToAnthropic(
+  messages: Array<unknown>,
+  systemPromptOverride: string | undefined
+): { system: string | undefined; messages: AnthropicMessage[] } {
+  let system: string | undefined = systemPromptOverride && systemPromptOverride.trim()
+    ? systemPromptOverride
+    : undefined;
+  const out: AnthropicMessage[] = [];
+
+  for (const m of messages) {
+    const msg = m as { role: string; content: unknown };
+    if (msg.role === "system") {
+      const text = typeof msg.content === "string" ? msg.content : "";
+      system = system ? `${system}\n\n${text}` : text;
+      continue;
+    }
+    if (msg.role !== "user" && msg.role !== "assistant") continue;
+
+    if (typeof msg.content === "string") {
+      out.push({ role: msg.role, content: [{ type: "text", text: msg.content }] });
+      continue;
+    }
+
+    if (!Array.isArray(msg.content)) continue;
+
+    const content: Array<unknown> = [];
+    for (const block of msg.content) {
+      const b = block as { type?: string; text?: string; image_url?: { url?: string } };
+      if (b.type === "text" && typeof b.text === "string") {
+        content.push({ type: "text", text: b.text });
+      } else if (b.type === "image_url" && b.image_url?.url) {
+        const parsed = parseDataUrl(b.image_url.url);
+        if (parsed) {
+          content.push({
+            type: "image",
+            source: { type: "base64", media_type: parsed.mime, data: parsed.base64 },
+          });
+        }
+      }
+    }
+    out.push({ role: msg.role, content });
+  }
+
+  return { system, messages: out };
+}
+
+// ---------- xAI BYOK call ----------
+//
+// xAI's API is OpenAI-compatible (same wire format), so no message transform
+// is needed. Routed through AI Gateway's xAI provider endpoint for caching,
+// logging, and rate-limiting.
+//
+// Auth strategy: stored-keys-first. If env.XAI_API_KEY is set, we send it as
+// Authorization: Bearer (inline auth, takes priority at the gateway). If it
+// isn't, we omit the header and let the gateway inject the key you've stored
+// in dashboard > AI Gateway > Provider Keys. Either path works.
+//
+// Note: Grok 4.x models are reasoning models that expect max_completion_tokens
+// rather than the older max_tokens field.
+
+async function callXai(
+  env: Env,
+  model: ModelEntry,
+  messages: Array<unknown>
+): Promise<{ raw: unknown; logId: string | null }> {
+  const baseUrl = await (env.AI as unknown as {
+    gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
+  }).gateway(env.GATEWAY_ID).getUrl("grok");
+
+  // Strip "xai/" prefix; xAI's API expects just the model name (e.g. "grok-4.3").
+  const modelName = model.id.replace(/^xai\//, "");
+
+  const body: Record<string, unknown> = {
+    model: modelName,
+    messages,
+    max_completion_tokens: 4096,
+  };
+
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+  };
+  if (env.XAI_API_KEY) headers["Authorization"] = `Bearer ${env.XAI_API_KEY}`;
+  if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
+
+  const resp = await fetch(`${baseUrl}/v1/chat/completions`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+
+  const logId = resp.headers.get("cf-aig-log-id");
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`xAI API ${resp.status}: ${errText.slice(0, 500)}`);
+  }
+
+  const raw = await resp.json();
+  return { raw, logId };
 }
 
 // ---------- Output extraction (text models) ----------

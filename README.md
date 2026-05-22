@@ -3,39 +3,60 @@
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Typecheck](https://github.com/SkyPhusion/skyphusion-llm-public/actions/workflows/typecheck.yml/badge.svg)](https://github.com/SkyPhusion/skyphusion-llm-public/actions/workflows/typecheck.yml)
 
-A multimodal AI playground deployed as a single Cloudflare Worker. Chat with text models, generate images, synthesize speech, and analyze images, audio, and video, all through one web UI. Per-user history, R2 artifact storage, and Cloudflare Access for authentication.
+A multimodal AI playground deployed as a single Cloudflare Worker. Chat across 39 text models from six providers, generate images, speech, videos, and music, transcribe audio, and run retrieval-augmented chat over your own PDFs and spreadsheets. One web UI behind Cloudflare Access; per-user history; R2 for all binary artifacts.
 
 ## What this is
 
-A working template for the Cloudflare AI stack. One Worker, no framework, no build step beyond TypeScript. The interesting parts are the patterns, not the line count:
+A working template for the Cloudflare AI stack. One Worker, no framework, no build step beyond TypeScript. The interesting parts are the patterns, not the model count:
 
-- **Unified `env.AI.run()` binding** drives text generation, vision input, audio transcription (Whisper), image generation (FLUX, Lucid Origin, Phoenix), and TTS (Aura-2, MeloTTS) from a single call surface.
+- **Unified `env.AI.run()` binding** drives every modality through one call surface: chat, vision input, image gen, TTS, STT, video gen (Unified Billing), and music gen.
+- **BYOK paths** for Anthropic Claude, xAI Grok, Google Gemini, OpenAI GPT, and Amazon Bedrock (Nova family plus TwelveLabs Pegasus 1.2). Each provider has its own dispatch helper that transforms our internal `messages` shape into the provider's format.
 - **AI Gateway** wraps every call for observability, caching, and rate-limiting.
-- **D1** holds chat metadata and text. **R2** holds all binary artifacts. The chat row references R2 keys; nothing binary touches D1.
+- **D1** holds chat metadata, multi-turn conversation history, and RAG chunk text. **R2** holds all binary artifacts. **Vectorize** holds RAG embeddings (768-dim BGE-base). The chat row references R2 keys; nothing binary touches D1.
+- **Cloudflare Workflows** owns long-running Unified Billing video and music generation (30s to 3min jobs). The `LongRunWorkflow` class holds the blocking `env.AI.run` call alive across step boundaries that `ctx.waitUntil` cannot.
 - **Cloudflare Access** gates the entire worker URL. The worker reads `Cf-Access-Authenticated-User-Email` to scope history per user; R2 objects carry `customMetadata.user_email` so cross-user access is impossible even if a UUID is guessed.
-- **Client-side video keyframe extraction** sends 8 evenly-spaced frames to vision models instead of uploading the full video file.
+- **Client-side video keyframe extraction** sends 8 evenly-spaced frames to vision-capable chat models instead of uploading the full video file. The exception is TwelveLabs Pegasus 1.2 on Bedrock, which takes the raw video file directly for proper temporal understanding (18MB cap per the Bedrock InvokeModel request limit).
 
 ## Features
 
-- 13 text-generation models from the Workers AI catalog, optgrouped by vendor (Anthropic-equivalents, OpenAI open weights, Meta Llama, Qwen, DeepSeek, Mistral)
-- 3 image-generation models: FLUX-1 schnell (fast), Lucid Origin (quality), Phoenix 1.0 (text rendering)
-- 3 TTS models: Aura-2 EN, Aura-2 ES, MeloTTS (multilingual)
-- Multimodal chat input: text, images (vision), audio (auto-transcribed via Whisper), video (8 sampled keyframes)
-- Per-user chat history with replay-able attachments and generated artifacts
-- Optgrouped model dropdown with capability-aware UI (vision-only attachment types, image-mode UI re-skin to "negative prompt", TTS-mode UI that hides attachments)
-- Enter to send, Shift+Enter for newline
-- Streaming-ready R2 artifact proxy that respects Access auth
+**Chat (39 models across 6 providers):**
+- Workers AI: Llama 4 Scout, Llama 3.x, Qwen 3 / 2.5, DeepSeek R1, Mistral, Gemma 4, Granite 4, Nemotron 3, GLM 4.7, Hermes, GPT-OSS 120B/20B, Kimi K2.6
+- Anthropic BYOK: Opus 4.7 / 4.6, Sonnet 4.6, Haiku 4.5
+- xAI BYOK: Grok 4.3, Grok 4.20 (multi-agent and reasoning variants), Grok Build 0.1
+- Google BYOK: Gemini 3.5 Flash, 3.1 Pro / Flash, 2.5 Pro
+- OpenAI BYOK: GPT-5.5, GPT-5.4, GPT-5.4 mini
+- Bedrock BYOK: Nova 2 Lite/Pro, Nova Lite/Pro, TwelveLabs Pegasus 1.2 (video-Q&A)
+
+**Image generation:** FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM, OpenAI GPT Image 2 (BYOK).
+
+**Video generation:** Google Veo 3.1 / 3.1 Fast / 3 / 3 Fast, ByteDance Seedance 2.0 / 2.0 Fast, MiniMax Hailuo 2.3 / 2.3 Fast, RunwayML Gen-4.5, Alibaba HappyHorse 1.0, PixVerse v6 / v5.6, Vidu Q3 Pro / Q3 Turbo, xAI Grok Imagine Video. BYOK for xAI and the Veo 3.1 family; Unified Billing for the rest (durable via Cloudflare Workflows).
+
+**Music generation:** MiniMax Music 2.6 (Unified Billing, durable via Workflows).
+
+**Text-to-speech:** Aura-2 EN / ES, MeloTTS, OpenAI GPT-4o mini TTS (BYOK).
+
+**Speech-to-text:** Whisper Large v3 Turbo / Whisper / Whisper Tiny EN, OpenAI GPT-4o Transcribe and mini Transcribe (BYOK).
+
+**RAG (Vectorize):** upload `.txt`, `.md`, `.pdf`, or `.xlsx`/`.xls` files via the sidebar. The worker chunks, embeds via BGE-base, and stores vectors in Vectorize plus text in D1. Per-page metadata for PDFs, per-sheet for XLSX. Toggle "use my docs" per turn to fold the top-5 nearest chunks into the system prompt before the LLM call.
+
+**Multi-turn conversations:** `conversation_id` plus `turn_index` on chat rows. Continuing a conversation pulls prior turns and assembles a full message history for the next call. Mixed-model conversations allowed (start with Llama, continue with Claude). Text-only on continuation; prior images, audio, and video are not re-sent.
+
+**UI:** capability-aware mode switching (vision-only attachment types; image-mode UI re-skin to "negative prompt"; TTS / STT / video / music hide irrelevant inputs), per-user replay-able history with attachments and generated artifacts, optgrouped model dropdown, Enter to send / Shift+Enter for newline.
+
+**Auth:** Cloudflare Access on the worker URL. Per-user history and R2 ownership checks via `Cf-Access-Authenticated-User-Email`. Free up to 50 seats on Zero Trust.
 
 ## Stack
 
 - One Worker, TypeScript, no framework
 - `env.AI` unified binding routed through Cloudflare AI Gateway
-- D1 for chat history rows
+- D1 for chat history rows and RAG chunk text
 - R2 for input and output artifact bytes
+- Vectorize for RAG embeddings (768-dim, cosine)
+- Cloudflare Workflows for long-running Unified Billing video and music generation
 - Static frontend served via Workers Assets
 - Cloudflare Access in front for auth
 
-Roughly 1900 LOC across TypeScript, vanilla JS, CSS, HTML, and SQL.
+Roughly 3100 LOC in TypeScript, plus ~1800 LOC of vanilla JS, CSS, HTML, and SQL.
 
 ## Quickstart
 

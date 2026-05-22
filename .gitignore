@@ -4,3 +4,9 @@ node_modules/
 .dev.vars.*
 *.log
 .DS_Store
+
+# v0.12.0+: wrangler.toml is per-deployer (has your D1 id, your worker name);
+# the committed template is wrangler.example.toml. Bootstrap with:
+#   cp wrangler.example.toml wrangler.toml  (then fill in database_id and your name)
+wrangler.toml
+wrangler.production.toml

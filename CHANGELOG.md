@@ -6,10 +6,48 @@
 - Affected providers (now durable): Google Veo 3 / Veo 3 Fast, ByteDance Seedance 2.0 / 2.0 Fast, MiniMax Hailuo 2.3 / 2.3 Fast, RunwayML Gen-4.5, Alibaba HappyHorse 1.0, PixVerse v6 / v5.6, Vidu Q3 Pro / Q3 Turbo, MiniMax Music 2.6. xAI Grok Imagine Video and Google Veo BYOK paths are unchanged (still use the submit-and-poll pattern from v0.10.2, which already works).
 - Workflow steps: (1) `invoke-model` calls `env.AI.run` with 1 retry on 30s linear backoff; (2) `download-and-store` fetches the upstream artifact and uploads to R2 in one combined step (Workflows cap step return values at 1 MiB so we can't pass bytes between steps - video files are 5-15MB, music 3-5MB); (3) `finalize-d1` writes status, `output_artifact`, and latency to the chats row.
 - D1 `chats.job_id` now stores the Workflow instance ID for Unified Billing jobs (BYOK rows still store the upstream provider's job ID). Useful for cross-referencing with `npx wrangler workflows instances describe skyphusion-longrun <id>`.
-- `wrangler.toml` adds the `[[workflows]]` binding (`LONGRUN`, class `LongRunWorkflow`) and `[observability]` block. The new binding requires a `wrangler deploy` to take effect; workflows are not supported on `wrangler dev --remote`.
 - Frontend unchanged: the existing `GET /api/job/:id` polling endpoint still works. The workflow updates D1 directly when complete, so the poll endpoint just reads the current state.
 - Removed: `generateVideoUnified`, `generateMusicBackground`, `MusicGenResult`, `VideoGenResult` (replaced by inline workflow logic).
 - No D1 migration required.
+
+**Config restructuring (deploy-impacting):**
+
+- `wrangler.toml` is now gitignored. The repo ships `wrangler.example.toml` as the committed template; deployer-specific values (D1 `database_id`, worker `name`) live in your local `wrangler.toml` and are no longer overwritten when you pull a new version. Bootstrap a new clone with `npm run bootstrap` (copies the example to a real `wrangler.toml`).
+- `GATEWAY_ID` moved out of `[vars]` in the wrangler config and into a worker secret. Set it with `echo "your-gateway-slug" | npx wrangler secret put GATEWAY_ID`. For local development, also add `GATEWAY_ID=your-gateway-slug` to `.dev.vars`.
+- New `npm run bootstrap` script idempotently creates `wrangler.toml` from the template.
+
+**wrangler.toml migration for existing deployers (v0.11.x -> v0.12.0):**
+
+Apply these changes to your live `wrangler.toml`. Paste the two new blocks anywhere after the `[assets]` block. Then delete the `[vars]` block (since `GATEWAY_ID` is now a secret), and run the `secret put` command at the end.
+
+```toml
+# Add these two blocks to your wrangler.toml:
+
+[[workflows]]
+name = "skyphusion-longrun"
+binding = "LONGRUN"
+class_name = "LongRunWorkflow"
+
+[observability]
+enabled = true
+```
+
+Then:
+
+```
+# Delete the [vars] block from wrangler.toml (it only had GATEWAY_ID).
+# Move GATEWAY_ID to a secret:
+echo "your-gateway-slug" | npx wrangler secret put GATEWAY_ID
+
+# Add it to .dev.vars too if you do local dev:
+echo "GATEWAY_ID=your-gateway-slug" >> .dev.vars
+
+# Regenerate types and deploy:
+npx wrangler types
+npm run deploy
+```
+
+Workflows are not supported on `wrangler dev --remote`, so the Unified Billing video and music paths can only be exercised in deployed mode.
 
 **Known limitations carried into v0.12.0:**
 

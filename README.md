@@ -69,22 +69,37 @@ Prerequisites:
 
 - Cloudflare account with Workers, D1, R2, AI Gateway, and Workers AI enabled
 - Node.js 18 or later
-- Workers Paid plan if you plan to exceed the free Workers AI tier (10,000 neurons per day across all model usage)
+- Workers Paid plan if you plan to exceed the free Workers AI tier (10,000 neurons per day across all model usage), and required as of v0.11.0 for the `unpdf` bundle size
 
 ```
 git clone https://github.com/SkyPhusion/skyphusion-llm-public.git
 cd skyphusion-llm-public
 npm install
+npm run bootstrap
 ```
+
+`npm run bootstrap` copies `wrangler.example.toml` (the committed template) to `wrangler.toml` (your per-deployer config; gitignored). The committed template gains new bindings across versions; your `wrangler.toml` keeps your deployer-specific IDs across pulls. See [Upgrading across versions](#upgrading-across-versions) below for the convention.
 
 ### 1. Create the AI Gateway
 
-Dashboard > AI > AI Gateway > Create Gateway. Name it anything. Copy the slug from the URL after creation and paste it into `wrangler.toml` at `[vars] GATEWAY_ID`.
+Dashboard > AI > AI Gateway > Create Gateway. Name it anything. Copy the slug from the URL after creation. Then set it as a worker secret:
+
+```
+echo "your-gateway-slug" | npx wrangler secret put GATEWAY_ID
+```
+
+For local development, also add it to `.dev.vars` so `wrangler dev` picks it up:
+
+```
+echo "GATEWAY_ID=your-gateway-slug" >> .dev.vars
+```
+
+`.dev.vars` is gitignored.
 
 ### 2. Create the D1 database
 
 ```
-npx wrangler d1 create skyphusion-llm-public
+npm run db:create
 ```
 
 Paste the returned `database_id` into `wrangler.toml` at `[[d1_databases]] database_id`. Then apply the schema:
@@ -100,9 +115,19 @@ npm run db:migrate:local
 npx wrangler r2 bucket create skyphusion-llm-public
 ```
 
-No further config needed; the binding is already in `wrangler.toml`.
+No further config needed; the binding is already in `wrangler.example.toml` (and therefore in your `wrangler.toml` after bootstrap).
 
-### 4. First deploy
+### 4. Create the Vectorize index
+
+For RAG over PDFs and spreadsheets:
+
+```
+npx wrangler vectorize create skyphusion-llm-vec --dimensions=768 --metric=cosine
+```
+
+The `VEC` binding is already in the template. If you don't intend to use RAG, the worker still functions; the binding just goes unused.
+
+### 5. First deploy
 
 ```
 npm run deploy
@@ -110,7 +135,7 @@ npm run deploy
 
 You will get a `*.workers.dev` URL.
 
-### 5. Cloudflare Access
+### 6. Cloudflare Access
 
 Dashboard > Zero Trust > Access > Applications > Add an application > Self-hosted. Application domain is your worker URL. Identity providers: enable at least one (Google, GitHub, One-Time PIN, etc.). Policy: Action Allow, Rules > Emails > include your address and anyone else who should have access.
 
@@ -118,13 +143,23 @@ Cloudflare Zero Trust is free up to 50 seats, so a small team is free.
 
 After this, hitting the worker URL shows the Access login screen. Authenticated requests reach the worker with `Cf-Access-Authenticated-User-Email`, which scopes both history and R2 artifact access per user.
 
-### 6. Local development
+### 7. Local development
 
 `wrangler dev` does not run Cloudflare Access. The worker falls back to `user_email = 'anonymous'` for local runs. Do not expose your local dev port to the public internet.
 
 ```
 npm run dev
 ```
+
+## Upgrading across versions
+
+`wrangler.toml` is gitignored from v0.12.0 on. The repo ships `wrangler.example.toml` as the canonical template. When you pull a new release, your `wrangler.toml` is untouched, but the example template may have gained new bindings (e.g., v0.12.0 added `[[workflows]]` and `[observability]`). To apply those:
+
+```
+diff wrangler.toml wrangler.example.toml
+```
+
+Each version that touches `wrangler.example.toml` documents the exact TOML blocks to paste in the corresponding [CHANGELOG.md](CHANGELOG.md) entry under a "wrangler.toml migration" heading. Apply those blocks to your local `wrangler.toml` and redeploy.
 
 ## Architecture
 

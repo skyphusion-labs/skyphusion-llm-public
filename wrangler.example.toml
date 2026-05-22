@@ -34,12 +34,6 @@ index_name = "skyphusion-llm-vec"
 directory = "./public"
 binding = "ASSETS"
 
-# Non-secret config. The AI Gateway ID is account-scoped, not sensitive.
-# Get it from: dashboard > AI > AI Gateway > (your gateway), it is the slug
-# in the URL path after /ai-gateway/.
-[vars]
-GATEWAY_ID = "PLACEHOLDER_PASTE_YOUR_AI_GATEWAY_SLUG_HERE"
-
 # Cloudflare Workflow for long-running Unified Billing video and music gen
 # (v0.12.0). env.AI.run for these models blocks until completion (30s-3min),
 # which exceeds the ~30s waitUntil budget after an HTTP response. Workflows
@@ -57,3 +51,18 @@ class_name = "LongRunWorkflow"
 # for the rest of the worker too.
 [observability]
 enabled = true
+
+# Note: GATEWAY_ID is set as a worker secret rather than a var in this file
+# (v0.12.0+). This keeps deployer-specific values out of the committed template.
+# Set it once after first deploy:
+#   echo "your-gateway-slug" | npx wrangler secret put GATEWAY_ID
+# For local development, also add it to .dev.vars:
+#   GATEWAY_ID=your-gateway-slug
+#
+# Other worker secrets (also set via `npx wrangler secret put <NAME>`):
+#   ANTHROPIC_API_KEY, XAI_API_KEY, GOOGLE_API_KEY, OPENAI_API_KEY,
+#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+#   AWS_REGION (optional, defaults us-east-1; for Nova),
+#   AWS_REGION_PEGASUS (optional, defaults us-west-2; Pegasus only available
+#                       in us-west-2 or eu-west-1),
+#   CF_AIG_TOKEN (optional, only if Authenticated Gateway is enabled).

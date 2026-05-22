@@ -15,6 +15,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "bootstrap": "node -e \"const fs=require('fs');if(fs.existsSync('wrangler.toml')){console.error('wrangler.toml already exists; not overwriting.');process.exit(1)}fs.copyFileSync('wrangler.example.toml','wrangler.toml');console.log('Created wrangler.toml from wrangler.example.toml. Fill in database_id (and worker name if you want a custom one) before deploying.')\"",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",

@@ -634,7 +634,7 @@ async function runStt(request: Request, env: Env, model: ModelEntry, body: ChatR
   const persistedAtt: PersistedAttachment[] = [{
     type: "audio",
     mime: parsed.mime,
-    filename: audioAtt.filename ?? null,
+    filename: audioAtt.filename,
     transcript: transcript || null,
   }];
 

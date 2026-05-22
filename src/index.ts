@@ -2051,7 +2051,7 @@ async function retrieveContext(
   // 2) Query Vectorize. No metadata filter - we scope by user in D1 below.
   let matches: { id: string; score: number }[];
   try {
-    const q = await env.VEC.query(queryVec, { topK, returnMetadata: false });
+    const q = await env.VEC.query(queryVec, { topK });
     matches = (q?.matches ?? []).map((m) => ({ id: m.id, score: m.score }));
   } catch (err) {
     const m = err instanceof Error ? err.message : String(err);

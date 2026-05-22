@@ -230,6 +230,71 @@ The worker sends `x-goog-api-key` on every request, overriding any stored key.
 
 Billing: Google charges your account directly. Gemini 3.5 Flash and Gemini 3.1 Flash are roughly $0.30/$2.50 per million input/output tokens, Gemini 3.1 Pro is higher (premium reasoning tier), Gemini 2.5 Pro is at the older 2.5-family pricing. Check https://ai.google.dev/pricing for current rates.
 
+## Video generation (dual-route: Unified Billing + BYOK)
+
+Video models have two possible routes through the AI Gateway:
+
+**Route A: Unified Billing via `env.AI.run`** (binding-based, 15 of 15 models). Cloudflare manages provider auth and bills your CF account directly. Requires opting into Unified Billing in the AI Gateway dashboard and funding it with credits. Per CF docs: BYOK is **not** supported for third-party models called through the AI binding.
+
+**Route B: BYOK via per-provider AI Gateway endpoints** (3 of 15 models). Hits `/grok/v1/videos/*` and `/google-ai-studio/v1beta/*` directly with your stored xAI and Google keys. Works today without Unified Billing.
+
+This deployment supports both. The router picks per-model based on a `byok_alias` field in the model catalog. If a model has `byok_alias` set and the provider is `xai` or `google`, the worker uses BYOK. Otherwise it uses `env.AI.run`, which will fail with code `2021: Invalid User Credentials` until Unified Billing is enabled.
+
+### Model availability matrix
+
+| Model | Route | Works today | Notes |
+|---|---|---|---|
+| `xai/grok-imagine-video` | BYOK | yes (with XAI_API_KEY) | $0.05/sec, 8s default |
+| `google/veo-3.1-fast` | BYOK | yes (with GOOGLE_API_KEY) | aliases to `veo-3.1-fast-generate-001` |
+| `google/veo-3.1` | BYOK | yes (with GOOGLE_API_KEY) | aliases to `veo-3.1-generate-preview` |
+| `google/veo-3`, `google/veo-3-fast` | Unified | needs CF credits | no AI Studio direct equivalent listed |
+| `bytedance/seedance-2.0`, `seedance-2.0-fast` | Unified | needs CF credits | CF partner, no public API |
+| `minimax/hailuo-2.3`, `hailuo-2.3-fast` | Unified | needs CF credits | CF partner, no public API |
+| `runwayml/gen-4.5` | Unified | needs CF credits | CF partner |
+| `alibaba/hh1-t2v` | Unified | needs CF credits | image-to-video only |
+| `pixverse/v6`, `v5.6` | Unified | needs CF credits | CF partner |
+| `vidu/q3-pro`, `q3-turbo` | Unified | needs CF credits | CF partner |
+
+The "needs CF credits" entries appear in the menu but will fail until you enable Unified Billing.
+
+### Enabling Unified Billing
+
+1. https://dash.cloudflare.com -> AI -> AI Gateway -> your gateway -> Settings
+2. Find the Unified Billing section (open beta as of November 2025)
+3. Enable it and purchase credits ($20 covers ~40-50 video gens depending on model)
+4. No code change required; the existing `env.AI.run` path activates automatically once credits are available
+
+### Architecture
+
+Both routes share the same fire-and-forget pattern:
+
+1. Client POSTs to `/api/chat` with a video model. Worker writes a `status='pending'` row to D1 and returns immediately with `{ id, status: "pending" }`.
+2. Generation runs in the background via `ctx.waitUntil()`:
+   - **Unified route:** single `env.AI.run("provider/model", ...)` call blocks until the video is ready, then we download and re-host.
+   - **BYOK route:** submit to the per-provider endpoint, sleep+poll every 5s for up to 5 minutes, then download and re-host.
+3. Background task uploads the video bytes to your R2 bucket and updates the D1 row to `status='done'`.
+4. Client polls `GET /api/job/:id` every 5 seconds. This endpoint just reads D1 (no provider calls), so polling is essentially free.
+5. Frontend renders `<video controls>` pointing at `/api/artifact/:key` once `status='done'`.
+
+If the job fails at any stage (provider error, poll timeout, download failure, R2 upload error), the row gets `status='failed'` with a descriptive `job_error`. The history list shows a warning icon and the chat detail view shows the error message.
+
+### Defaults
+
+The worker submits with `duration: 8s`, `aspect_ratio: "16:9"`, `resolution: "720p"`, `generate_audio: true` for the Unified route. The BYOK route uses the xAI/Google-specific param shapes (`duration: 8` integer for xAI, `parameters: {durationSeconds, aspectRatio}` for Google). Per-model parameter customization is a v0.8.0 follow-on.
+
+### Cost discipline
+
+Video gen is the most expensive feature in this playground.
+
+- The worker has no per-user rate limiting. If you make the URL public, add rate limits at the AI Gateway level.
+- Each generation creates an R2 object (~5-30MB per 8s clip). Use `DELETE /api/history/:id` to clean up.
+- BYOK route prices: xAI Grok Imagine Video $0.05/sec ($0.40 per 8s clip). Veo via Gemini AI Studio per Google's pricing page.
+- Unified Billing prices: visible at https://dash.cloudflare.com under AI > Models > [model] > Pricing. CF marks up upstream provider costs.
+
+### Image-to-video
+
+Most of these models support image-to-video via an `image_input` parameter (base64-encoded reference image). The UI doesn't yet expose this; it's a v0.8.0 follow-on. The Alibaba HH1 model is image-to-video only; selecting it without supplying an image will fail.
+
 ## Editing the model menu
 
 `MODELS` at the top of `src/index.ts`. Each entry has:
@@ -237,11 +302,25 @@ Billing: Google charges your account directly. Gemini 3.5 Flash and Gemini 3.1 F
 - `id`: `@cf/{vendor}/{model}` for Workers AI, `anthropic/{model}` for BYOK Anthropic, `xai/{model}` for BYOK xAI, or `google/{model}` for BYOK Google Gemini
 - `label` for the dropdown
 - `group` for the optgroup heading
-- `type`: `"chat"` | `"image"` | `"tts"`
+- `type`: `"chat"` | `"image"` | `"tts"` | `"video"`
 - `capabilities`: array. Currently only `"vision"` is recognized; applies to chat models only.
 - `provider` (optional): `"workers-ai"` (default) | `"anthropic"` (BYOK) | `"xai"` (BYOK) | `"google"` (BYOK). Drives the call dispatch.
 
 Full Workers AI catalog: https://developers.cloudflare.com/workers-ai/models/. Skip anything tagged "Planned deprecation."
+
+## Migrating an existing deployment
+
+If you deployed an earlier version, apply the schema deltas before redeploying. For v0.7.0 (video generation), add the job-state columns:
+
+```
+npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE chats ADD COLUMN status TEXT NOT NULL DEFAULT 'done'"
+npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE chats ADD COLUMN job_id TEXT"
+npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE chats ADD COLUMN job_provider TEXT"
+npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE chats ADD COLUMN job_error TEXT"
+npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE chats ADD COLUMN job_started_at TEXT"
+```
+
+Then redeploy. Old rows default to `status='done'` so they render unchanged. Add the same statements with `--local` instead of `--remote` if you also have a local D1 instance to update.
 
 ## Local type check
 

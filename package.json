@@ -1,6 +1,6 @@
 {
   "name": "skyphusion-llm-public",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Multimodal AI playground on Cloudflare Workers: chat, image gen, TTS, with R2 artifact storage and Cloudflare Access auth.",
   "license": "AGPL-3.0-only",
   "author": "Conrad Rockenhaus",

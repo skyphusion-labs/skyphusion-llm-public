@@ -43,6 +43,10 @@ const state = {
   currentChatId: null,
   modelsById: {},
   pendingAttachments: [],
+  pollTimer: null,
+  pollChatId: null,
+  pollStartedAt: 0,
+  pollElapsedTimer: null,
 };
 
 // ---------- API helpers ----------
@@ -136,6 +140,14 @@ function updateAffordance() {
     systemPrompt.placeholder = "(unused for TTS)";
     userInputLabel.textContent = "text to speak";
     userInput.placeholder = "text to synthesize as speech";
+    attachRow.style.display = "none";
+    state.pendingAttachments = [];
+    renderAttachments();
+  } else if (m.type === "video") {
+    systemPromptLabel.textContent = "system prompt";
+    systemPrompt.placeholder = "(unused for video gen)";
+    userInputLabel.textContent = "video prompt";
+    userInput.placeholder = "describe the video (8s at 16:9, takes 1-3 min)";
     attachRow.style.display = "none";
     state.pendingAttachments = [];
     renderAttachments();
@@ -372,9 +384,87 @@ function renderOutputArtifact(oa) {
     outputArtifactEl.innerHTML = `
       <audio class="output-audio" controls src="${escapeHtml(url)}"></audio>
       <div class="output-actions"><a href="${escapeHtml(url)}" download>download</a></div>`;
+  } else if (oa.type === "video") {
+    outputArtifactEl.innerHTML = `
+      <video class="output-video" controls preload="metadata" src="${escapeHtml(url)}"></video>
+      <div class="output-actions"><a href="${escapeHtml(url)}" download>download</a></div>`;
   } else {
     outputArtifactEl.innerHTML = "";
   }
+}
+
+// ---------- Video job polling ----------
+//
+// When the worker returns status: "pending" from /api/chat (video models),
+// we poll /api/job/:id every 5s until status is "done" or "failed".
+// The pendingArea displays elapsed time and progress while polling.
+
+function fmtElapsed(ms) {
+  const total = Math.floor(ms / 1000);
+  const min = Math.floor(total / 60);
+  const sec = total % 60;
+  return min > 0 ? `${min}m ${sec}s` : `${sec}s`;
+}
+
+function renderPendingOutput(progress) {
+  const elapsed = fmtElapsed(Date.now() - state.pollStartedAt);
+  const pct = (typeof progress === "number" && progress > 0) ? ` (${progress}%)` : "";
+  output.classList.remove("error");
+  output.textContent = `Generating video, this can take 1-3 minutes\u2026\n\nElapsed: ${elapsed}${pct}`;
+}
+
+function stopPolling() {
+  if (state.pollTimer) { clearTimeout(state.pollTimer); state.pollTimer = null; }
+  if (state.pollElapsedTimer) { clearInterval(state.pollElapsedTimer); state.pollElapsedTimer = null; }
+  state.pollChatId = null;
+}
+
+async function pollOnce() {
+  if (!state.pollChatId) return;
+  const id = state.pollChatId;
+  try {
+    const result = await api(`/api/job/${id}`);
+    // If the user navigated away during the request, drop the result.
+    if (state.pollChatId !== id) return;
+
+    if (result.status === "pending") {
+      renderPendingOutput(result.progress);
+      state.pollTimer = setTimeout(pollOnce, 5000);
+      return;
+    }
+
+    if (result.status === "done") {
+      stopPolling();
+      output.textContent = "";
+      renderOutputArtifact(result.output_artifact || null);
+      outputMeta.textContent = result.latency_ms ? `${result.latency_ms}ms` : "";
+      await loadHistory();
+      return;
+    }
+
+    if (result.status === "failed") {
+      stopPolling();
+      output.classList.add("error");
+      output.textContent = `Video generation failed: ${result.job_error || "unknown error"}`;
+      await loadHistory();
+      return;
+    }
+  } catch (err) {
+    // Transient network error; keep polling.
+    state.pollTimer = setTimeout(pollOnce, 5000);
+  }
+}
+
+function startPolling(id, startedAtIso) {
+  stopPolling();
+  state.pollChatId = id;
+  state.pollStartedAt = startedAtIso ? Date.parse(startedAtIso) : Date.now();
+  renderPendingOutput();
+  // Tick the elapsed-time display every second so the user sees progress
+  // even between 5s polls.
+  state.pollElapsedTimer = setInterval(() => renderPendingOutput(), 1000);
+  // First poll immediately, then every 5s on success.
+  state.pollTimer = setTimeout(pollOnce, 500);
 }
 
 attachments.addEventListener("click", (e) => {
@@ -407,9 +497,12 @@ async function loadHistory() {
       });
       const icons = [];
       if (c.has_attachments)     icons.push(`<span title="has input attachments">\u{1F4CE}</span>`);
+      if (c.status === "pending") icons.push(`<span title="generating, in progress">\u23F3</span>`);
+      if (c.status === "failed")  icons.push(`<span title="generation failed" class="status-failed">\u26A0</span>`);
       if (c.has_output_artifact) {
         if (c.model_type === "image") icons.push(`<span title="image output">\u{1F5BC}</span>`);
         else if (c.model_type === "tts") icons.push(`<span title="audio output">\u{1F50A}</span>`);
+        else if (c.model_type === "video") icons.push(`<span title="video output">\u{1F3AC}</span>`);
         else icons.push(`<span title="artifact output">\u{1F4E6}</span>`);
       }
       const iconBlock = icons.length ? `<span class="attach-icon">${icons.join(" ")}</span>` : `<span></span>`;
@@ -425,6 +518,7 @@ async function loadHistory() {
 }
 
 async function loadChat(id) {
+  stopPolling();
   const chat = await api(`/api/history/${id}`);
   state.currentChatId = id;
   modelSelect.value = chat.model;
@@ -440,6 +534,14 @@ async function loadChat(id) {
     .map((att) => renderStoredAttachment(att))
     .join("");
   renderOutputArtifact(chat.output_artifact);
+
+  // Resume polling if this chat is a still-pending video job.
+  if (chat.status === "pending" && chat.model_type === "video") {
+    startPolling(id, chat.job_started_at);
+  } else if (chat.status === "failed") {
+    output.classList.add("error");
+    output.textContent = `Failed: ${chat.job_error || "unknown error"}`;
+  }
 }
 
 async function deleteChat(id) {
@@ -449,6 +551,7 @@ async function deleteChat(id) {
 }
 
 function newChat() {
+  stopPolling();
   state.currentChatId = null;
   userInput.value = "";
   output.textContent = "";
@@ -470,9 +573,13 @@ async function run() {
   const user_input = userInput.value.trim();
   if (!user_input && state.pendingAttachments.length === 0) return;
 
+  stopPolling();
   runBtn.disabled = true;
   attachBtn.disabled = true;
-  output.textContent = m.type === "chat" ? "\u2026" : `running ${m.type}\u2026`;
+  const runningMsg = m.type === "chat" ? "\u2026"
+    : m.type === "video" ? "submitting video job\u2026"
+    : `running ${m.type}\u2026`;
+  output.textContent = runningMsg;
   output.classList.remove("error");
   outputMeta.textContent = "";
   renderOutputArtifact(null);
@@ -488,12 +595,18 @@ async function run() {
       }),
     });
     state.currentChatId = result.id;
-    output.textContent = result.output || "";
-    outputMeta.textContent = fmtMeta(result);
-    renderOutputArtifact(result.output_artifact || null);
     state.pendingAttachments = [];
     renderAttachments();
     await loadHistory();
+
+    if (result.status === "pending") {
+      // Async video job; start polling.
+      startPolling(result.id, result.job_started_at);
+    } else {
+      output.textContent = result.output || "";
+      outputMeta.textContent = fmtMeta(result);
+      renderOutputArtifact(result.output_artifact || null);
+    }
   } catch (err) {
     output.classList.add("error");
     output.textContent = err.message;

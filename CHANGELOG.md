@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.7.0
+
+- Add text-to-video generation across 15 models from 9 providers, with a dual-route architecture: Cloudflare Unified Billing (via `env.AI.run`) for all 15 models, and BYOK (per-provider AI Gateway endpoints) for the 3 models with documented direct provider APIs
+- Providers: Google (Veo 3.1, Veo 3.1 Fast, Veo 3, Veo 3 Fast), ByteDance (Seedance 2.0, Seedance 2.0 Fast), MiniMax (Hailuo 2.3, Hailuo 2.3 Fast), xAI (Grok Imagine Video), RunwayML (Gen-4.5), Alibaba (HappyHorse 1.0), PixVerse (v6, v5.6), Vidu (Q3 Pro, Q3 Turbo)
+- BYOK route (works today with existing keys): xAI Grok Imagine Video, Google Veo 3.1, Google Veo 3.1 Fast
+- Unified Billing route (requires CF credits): all 15 models, including the 12 CF-partner-only models without public APIs
+- Per-model `byok_alias` field in the catalog controls routing; if present, worker uses per-provider endpoints with stored gateway keys or env-var keys; if absent, worker uses `env.AI.run` which requires Unified Billing
+- New `model_type: "video"` dispatches to one of two background functions via `ctx.waitUntil`: `generateVideoUnified` (single blocking `env.AI.run` call) or `generateVideoBYOK` (submit + poll loop up to 5 minutes + download)
+- Both routes share the same fire-and-forget pattern: write `status='pending'` row, schedule background work, return immediately, frontend polls D1 for state changes
+- D1 schema gains `status`, `job_id`, `job_provider`, `job_error`, `job_started_at` columns; old rows default to `status='done'`
+- New `GET /api/job/:id` endpoint just reads D1 (cheap polling, no provider calls)
+- Frontend polls every 5 seconds while pending, with elapsed-time counter
+- Loading a still-pending chat from history resumes polling automatically
+- History list shows hourglass for pending jobs, warning icon for failed, film clapboard for completed video output
+- `<video controls>` rendering in the output artifact area, with download link
+
 ## v0.6.0
 
 - Mobile-responsive layout with breakpoints at 768px and 420px

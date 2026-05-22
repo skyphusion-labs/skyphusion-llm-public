@@ -3,20 +3,21 @@
 -- user_email is set from the Cf-Access-Authenticated-User-Email header
 -- injected by Cloudflare Access; local dev defaults to 'anonymous'.
 --
--- model_type is 'chat' | 'image' | 'tts'. Drives output rendering on the
--- client and dispatch logic on the server.
+-- model_type is 'chat' | 'image' | 'tts' | 'video'. Drives output rendering
+-- on the client and dispatch logic on the server.
 --
--- output holds the text response for chat models, '' for image/tts models.
+-- For model_type='video', the row is created with status='pending' and a
+-- job_id pointing at the upstream provider's operation. The frontend polls
+-- /api/job/:id, which advances the row to 'done' (downloading the bytes
+-- into R2 + recording the output_artifact) or 'failed' (recording the error
+-- in job_error).
+--
+-- output holds text for chat models, '' for image/tts/video.
 -- output_artifact is JSON { key, mime, type } pointing to an R2 object for
--- non-text outputs (generated images, generated audio).
+-- non-text outputs (generated images, generated audio, generated video).
 --
--- attachments is a JSON array. Each entry is one of:
---   image:        { type, key, mime, filename }                       (R2 key)
---   audio:        { type, mime, filename, transcript }                (no R2 ref)
---   video_frames: { type, keys, frame_count, duration, filename }     (R2 keys)
--- Audio attachments store ONLY the transcript text; the raw audio is
--- dropped (kept neither in D1 nor R2) since the transcript is what's
--- useful on replay.
+-- attachments is a JSON array as documented in the worker; audio attachments
+-- store only the transcript, the raw audio is dropped.
 
 CREATE TABLE IF NOT EXISTS chats (
   id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -32,8 +33,16 @@ CREATE TABLE IF NOT EXISTS chats (
   tokens_in         INTEGER,
   tokens_out        INTEGER,
   latency_ms        INTEGER,
-  ai_gateway_log_id TEXT
+  ai_gateway_log_id TEXT,
+  status            TEXT NOT NULL DEFAULT 'done',
+  job_id            TEXT,
+  job_provider      TEXT,
+  job_error         TEXT,
+  job_started_at    TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_chats_user_created
   ON chats(user_email, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_chats_pending
+  ON chats(status, user_email) WHERE status = 'pending';

@@ -46,8 +46,18 @@ interface Env {
 
 // ---------- Model catalog ----------
 
-type ModelType = "chat" | "image" | "tts";
-type Provider = "workers-ai" | "anthropic" | "xai" | "google";
+type ModelType = "chat" | "image" | "tts" | "video";
+type Provider =
+  | "workers-ai"
+  | "anthropic"
+  | "xai"
+  | "google"
+  | "bytedance"
+  | "minimax"
+  | "runwayml"
+  | "alibaba"
+  | "pixverse"
+  | "vidu";
 
 interface ModelEntry {
   id: string;
@@ -56,6 +66,12 @@ interface ModelEntry {
   type: ModelType;
   capabilities: Array<"vision">;
   provider?: Provider; // defaults to "workers-ai" when omitted
+  // For video models: if set, the worker uses the per-provider BYOK endpoint
+  // (Gemini AI Studio for google/*, xAI direct for xai/*) instead of the
+  // env.AI.run binding. The value is the model name expected by the direct
+  // provider API (e.g. "veo-3.1-fast-generate-001" for Gemini AI Studio).
+  // Without this, video gen requires Unified Billing on the AI Gateway.
+  byok_alias?: string;
 }
 
 const MODELS: ModelEntry[] = [
@@ -105,6 +121,25 @@ const MODELS: ModelEntry[] = [
   { id: "@cf/deepgram/aura-2-en",                       label: "Aura-2 English (Deepgram)",    group: "TTS",                  type: "tts",   capabilities: [] },
   { id: "@cf/deepgram/aura-2-es",                       label: "Aura-2 Spanish (Deepgram)",    group: "TTS",                  type: "tts",   capabilities: [] },
   { id: "@cf/myshell/melotts",                          label: "MeloTTS (multilingual)",       group: "TTS",                  type: "tts",   capabilities: [] },
+
+  // ---- Video generation (Cloudflare Unified Billing via env.AI.run) ----
+  // All routed through env.AI.run("provider/model", ...) - CF handles auth and
+  // billing. No BYOK to xAI/Google/etc needed for these models.
+  { id: "google/veo-3.1",                               label: "Veo 3.1 (Google, BYOK)",                           group: "Video gen", type: "video", capabilities: [], provider: "google",   byok_alias: "veo-3.1-generate-preview" },
+  { id: "google/veo-3.1-fast",                          label: "Veo 3.1 Fast (Google, BYOK)",                      group: "Video gen", type: "video", capabilities: [], provider: "google",   byok_alias: "veo-3.1-fast-generate-001" },
+  { id: "google/veo-3",                                 label: "Veo 3 (Google, needs CF credits)",                 group: "Video gen", type: "video", capabilities: [], provider: "google" },
+  { id: "google/veo-3-fast",                            label: "Veo 3 Fast (Google, needs CF credits)",            group: "Video gen", type: "video", capabilities: [], provider: "google" },
+  { id: "bytedance/seedance-2.0",                       label: "Seedance 2.0 (ByteDance, needs CF credits)",       group: "Video gen", type: "video", capabilities: [], provider: "bytedance" },
+  { id: "bytedance/seedance-2.0-fast",                  label: "Seedance 2.0 Fast (ByteDance, needs CF credits)",  group: "Video gen", type: "video", capabilities: [], provider: "bytedance" },
+  { id: "minimax/hailuo-2.3",                           label: "Hailuo 2.3 (MiniMax, needs CF credits)",           group: "Video gen", type: "video", capabilities: [], provider: "minimax" },
+  { id: "minimax/hailuo-2.3-fast",                      label: "Hailuo 2.3 Fast (MiniMax, needs CF credits)",      group: "Video gen", type: "video", capabilities: [], provider: "minimax" },
+  { id: "xai/grok-imagine-video",                       label: "Grok Imagine Video (xAI, BYOK)",                   group: "Video gen", type: "video", capabilities: [], provider: "xai",      byok_alias: "grok-imagine-video" },
+  { id: "runwayml/gen-4.5",                             label: "Gen-4.5 (RunwayML, needs CF credits)",             group: "Video gen", type: "video", capabilities: [], provider: "runwayml" },
+  { id: "alibaba/hh1-t2v",                              label: "HappyHorse 1.0 (Alibaba, img2vid, needs CF credits)", group: "Video gen", type: "video", capabilities: [], provider: "alibaba" },
+  { id: "pixverse/v6",                                  label: "PixVerse v6 (needs CF credits)",                   group: "Video gen", type: "video", capabilities: [], provider: "pixverse" },
+  { id: "pixverse/v5.6",                                label: "PixVerse v5.6 (needs CF credits)",                 group: "Video gen", type: "video", capabilities: [], provider: "pixverse" },
+  { id: "vidu/q3-pro",                                  label: "Vidu Q3 Pro (needs CF credits)",                   group: "Video gen", type: "video", capabilities: [], provider: "vidu" },
+  { id: "vidu/q3-turbo",                                label: "Vidu Q3 Turbo (needs CF credits)",                 group: "Video gen", type: "video", capabilities: [], provider: "vidu" },
 ];
 
 const WHISPER_MODEL = "@cf/openai/whisper-large-v3-turbo";
@@ -154,7 +189,7 @@ type PersistedAttachment =
 interface OutputArtifact {
   key: string;
   mime: string;
-  type: "image" | "audio";
+  type: "image" | "audio" | "video";
 }
 
 // ---------- Helpers ----------
@@ -226,14 +261,14 @@ function aiLogId(env: Env): string | null {
 // ---------- Router ----------
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
     if (url.pathname === "/api/models" && request.method === "GET") {
       return json({ models: MODELS, user: getUserEmail(request) });
     }
     if (url.pathname === "/api/chat" && request.method === "POST") {
-      return handleChat(request, env);
+      return handleChat(request, env, ctx);
     }
     if (url.pathname === "/api/history" && request.method === "GET") {
       return handleHistoryList(request, env);
@@ -244,6 +279,11 @@ export default {
       const id = Number(h[1]);
       if (request.method === "GET")    return handleHistoryGet(request, env, id);
       if (request.method === "DELETE") return handleHistoryDelete(request, env, id);
+    }
+
+    const j = url.pathname.match(/^\/api\/job\/(\d+)$/);
+    if (j && request.method === "GET") {
+      return handleJobPoll(request, env, Number(j[1]));
     }
 
     const a = url.pathname.match(/^\/api\/artifact\/(.+)$/);
@@ -257,7 +297,7 @@ export default {
 
 // ---------- /api/chat ----------
 
-async function handleChat(request: Request, env: Env): Promise<Response> {
+async function handleChat(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   let body: ChatRequest;
   try {
     body = await request.json<ChatRequest>();
@@ -276,6 +316,7 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
   if (model.type === "chat") return runChat(request, env, model, body);
   if (model.type === "image") return runImage(request, env, model, body);
   if (model.type === "tts") return runTts(request, env, model, body);
+  if (model.type === "video") return runVideo(request, env, ctx, model, body);
   return json({ error: `Unsupported model type: ${model.type}` }, { status: 500 });
 }
 
@@ -553,6 +594,11 @@ interface PersistArgs {
   tokens_out: number | null;
   latency_ms: number;
   ai_gateway_log_id: string | null;
+  status?: "pending" | "done" | "failed";
+  job_id?: string | null;
+  job_provider?: string | null;
+  job_error?: string | null;
+  job_started_at?: string | null;
 }
 
 async function persistChat(env: Env, a: PersistArgs): Promise<{ id: number; created_at: string }> {
@@ -560,15 +606,21 @@ async function persistChat(env: Env, a: PersistArgs): Promise<{ id: number; crea
     `INSERT INTO chats
        (user_email, model, model_type, system_prompt, user_input, output,
         output_artifact, attachments,
-        tokens_in, tokens_out, latency_ms, ai_gateway_log_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        tokens_in, tokens_out, latency_ms, ai_gateway_log_id,
+        status, job_id, job_provider, job_error, job_started_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      RETURNING id, created_at`
   )
     .bind(
       a.userEmail, a.model, a.model_type, a.system_prompt, a.user_input, a.output,
       a.output_artifact ? JSON.stringify(a.output_artifact) : null,
       a.attachments.length ? JSON.stringify(a.attachments) : null,
-      a.tokens_in, a.tokens_out, a.latency_ms, a.ai_gateway_log_id
+      a.tokens_in, a.tokens_out, a.latency_ms, a.ai_gateway_log_id,
+      a.status ?? "done",
+      a.job_id ?? null,
+      a.job_provider ?? null,
+      a.job_error ?? null,
+      a.job_started_at ?? null
     )
     .first<{ id: number; created_at: string }>();
   return row ?? { id: 0, created_at: new Date().toISOString() };
@@ -857,6 +909,465 @@ function transformToGoogle(
   };
 }
 
+// ---------- Video generation (Unified Billing via env.AI.run) ----------
+//
+// As of Cloudflare Agents Week 2026 (April 2026), the AI Gateway and Workers
+// AI are unified. Third-party video models are callable via env.AI.run with
+// model strings like "google/veo-3.1-fast" or "xai/grok-imagine-video".
+// Cloudflare bills your account directly under Unified Billing - no BYOK to
+// xAI, Google, etc needed for these models. See:
+//   https://developers.cloudflare.com/ai-gateway/features/unified-billing/
+//   https://developers.cloudflare.com/ai/models/google/veo-3.1-fast/
+//
+// Video gen takes 30s-3min. Rather than hold the client's HTTP request open
+// that long, we:
+//   1. Write a status='pending' row to D1
+//   2. Use ctx.waitUntil() to run env.AI.run in the background after the
+//      response is sent
+//   3. The background task fetches the resulting video from CF's catalog R2
+//      bucket and re-uploads to our R2 bucket so we have a stable URL
+//   4. Frontend polls GET /api/job/:id which just reads D1
+//
+// env.AI.run for video models appears to block until completion based on the
+// docs example showing state="Completed" directly. If it ever returns a
+// non-terminal state, the background task marks the job failed with a clear
+// error so we can iterate.
+
+interface VideoGenResult {
+  state?: string;
+  result?: { video?: string };
+  gatewayMetadata?: { keySource?: string };
+}
+
+async function runVideo(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  model: ModelEntry,
+  body: ChatRequest
+): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const startedAt = new Date().toISOString();
+
+  const row = await persistChat(env, {
+    userEmail,
+    model: model.id,
+    model_type: "video",
+    system_prompt: body.system_prompt ?? null,
+    user_input: body.user_input,
+    output: "",
+    output_artifact: null,
+    attachments: [],
+    tokens_in: null,
+    tokens_out: null,
+    latency_ms: 0,
+    ai_gateway_log_id: null,
+    status: "pending",
+    job_id: null,
+    job_provider: model.provider ?? null,
+    job_error: null,
+    job_started_at: startedAt,
+  });
+
+  // Schedule the actual generation to run after the response is sent.
+  // If the model has a byok_alias, route through the per-provider BYOK
+  // endpoint (works with stored gateway keys or env-var keys today).
+  // Otherwise call env.AI.run, which requires Unified Billing on the gateway.
+  if (model.byok_alias && (model.provider === "xai" || model.provider === "google")) {
+    ctx.waitUntil(
+      generateVideoBYOK(env, row.id, userEmail, model, body.user_input, startedAt)
+    );
+  } else {
+    ctx.waitUntil(
+      generateVideoUnified(env, row.id, userEmail, model.id, body.user_input, startedAt)
+    );
+  }
+
+  return json({
+    id: row.id,
+    created_at: row.created_at,
+    model: model.id,
+    model_type: "video",
+    output: "",
+    output_artifact: null,
+    status: "pending",
+    job_started_at: startedAt,
+  });
+}
+
+async function generateVideoUnified(
+  env: Env,
+  rowId: number,
+  userEmail: string,
+  modelId: string,
+  prompt: string,
+  startedAtIso: string
+): Promise<void> {
+  const failRow = async (msg: string) => {
+    try {
+      await env.DB.prepare(`UPDATE chats SET status = 'failed', job_error = ? WHERE id = ?`)
+        .bind(msg.slice(0, 1000), rowId)
+        .run();
+    } catch { /* swallow - background task can't surface errors anyway */ }
+  };
+
+  let result: VideoGenResult;
+  try {
+    // Baseline params shape per the documented Veo example. Some models may
+    // accept additional or different params; their errors will surface in
+    // job_error and we can iterate per-model from there.
+    result = await aiRun(env, modelId, {
+      prompt,
+      duration: "8s",
+      aspect_ratio: "16:9",
+      resolution: "720p",
+      generate_audio: true,
+    }) as VideoGenResult;
+  } catch (err) {
+    const m = err instanceof Error ? err.message : String(err);
+    await failRow(`env.AI.run failed: ${m}`);
+    return;
+  }
+
+  if (!result || (result.state && result.state !== "Completed")) {
+    await failRow(`Unexpected gen state: ${result?.state ?? "missing"}`);
+    return;
+  }
+
+  const videoUrl = result.result?.video;
+  if (!videoUrl) {
+    await failRow("Gen completed but no video URL in result");
+    return;
+  }
+
+  // Re-host into our R2 for stable serving and uniform artifact access.
+  let bytes: Uint8Array;
+  let mime = "video/mp4";
+  try {
+    const vresp = await fetch(videoUrl);
+    if (!vresp.ok) throw new Error(`Fetch ${vresp.status}`);
+    mime = vresp.headers.get("content-type") || "video/mp4";
+    bytes = new Uint8Array(await vresp.arrayBuffer());
+  } catch (err) {
+    const m = err instanceof Error ? err.message : String(err);
+    await failRow(`Video download failed: ${m}`);
+    return;
+  }
+
+  let r2Key: string;
+  try {
+    r2Key = await r2Put(env, "out", mime, bytes, userEmail);
+  } catch (err) {
+    const m = err instanceof Error ? err.message : String(err);
+    await failRow(`R2 upload failed: ${m}`);
+    return;
+  }
+
+  const outputArtifact: OutputArtifact = { key: r2Key, mime, type: "video" };
+  const latency = Date.now() - Date.parse(startedAtIso);
+
+  try {
+    await env.DB.prepare(
+      `UPDATE chats SET status = 'done', output_artifact = ?, latency_ms = ? WHERE id = ?`
+    )
+      .bind(JSON.stringify(outputArtifact), latency, rowId)
+      .run();
+  } catch (err) {
+    const m = err instanceof Error ? err.message : String(err);
+    await failRow(`D1 finalize failed: ${m}`);
+  }
+}
+
+// ---------- Video generation BYOK path (per-provider endpoints) ----------
+//
+// Used when a model has byok_alias set. Goes through the AI Gateway's
+// per-provider proxy endpoints (e.g. {gateway}/grok/v1/videos/generations)
+// rather than env.AI.run. This works with stored provider keys in the
+// gateway dashboard or with env-var keys (XAI_API_KEY, GOOGLE_API_KEY),
+// without requiring Unified Billing.
+//
+// Submit/poll/download is orchestrated by generateVideoBYOK inside a
+// ctx.waitUntil background task. The same D1 status='pending' machinery
+// applies; the only difference from the Unified path is that we poll the
+// provider ourselves (every 5s, up to 5 minutes) before downloading the
+// resulting video and storing it in R2.
+
+const BYOK_POLL_INTERVAL_MS = 5000;
+const BYOK_POLL_MAX_MS = 5 * 60 * 1000;
+
+interface BYOKSubmitResult { job_id: string; }
+interface BYOKPollResult {
+  status: "pending" | "done" | "failed";
+  video_url?: string;
+  error?: string;
+}
+
+async function generateVideoBYOK(
+  env: Env,
+  rowId: number,
+  userEmail: string,
+  model: ModelEntry,
+  prompt: string,
+  startedAtIso: string
+): Promise<void> {
+  const failRow = async (msg: string) => {
+    try {
+      await env.DB.prepare(`UPDATE chats SET status = 'failed', job_error = ? WHERE id = ?`)
+        .bind(msg.slice(0, 1000), rowId)
+        .run();
+    } catch { /* swallow */ }
+  };
+
+  if (!model.byok_alias) { await failRow("BYOK route entered without byok_alias"); return; }
+
+  // 1. Submit job
+  let submit: BYOKSubmitResult;
+  try {
+    if (model.provider === "xai") {
+      submit = await submitVideoXai(env, model.byok_alias, prompt);
+    } else if (model.provider === "google") {
+      submit = await submitVideoGoogle(env, model.byok_alias, prompt);
+    } else {
+      await failRow(`BYOK path not implemented for provider: ${model.provider}`);
+      return;
+    }
+  } catch (err) {
+    await failRow(`BYOK submit failed: ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
+
+  // Record the upstream job_id on the row for visibility.
+  try {
+    await env.DB.prepare(`UPDATE chats SET job_id = ? WHERE id = ?`).bind(submit.job_id, rowId).run();
+  } catch { /* non-fatal */ }
+
+  // 2. Poll until done, failed, or timeout
+  const deadline = Date.now() + BYOK_POLL_MAX_MS;
+  let pollResult: BYOKPollResult = { status: "pending" };
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, BYOK_POLL_INTERVAL_MS));
+    try {
+      if (model.provider === "xai") {
+        pollResult = await pollVideoXai(env, submit.job_id);
+      } else if (model.provider === "google") {
+        pollResult = await pollVideoGoogle(env, submit.job_id);
+      } else {
+        pollResult = { status: "failed", error: `Unsupported provider: ${model.provider}` };
+      }
+    } catch (err) {
+      // Transient poll error; keep trying until deadline.
+      continue;
+    }
+    if (pollResult.status !== "pending") break;
+  }
+
+  if (pollResult.status === "pending") {
+    await failRow(`BYOK poll timed out after ${BYOK_POLL_MAX_MS / 1000}s`);
+    return;
+  }
+  if (pollResult.status === "failed") {
+    await failRow(`BYOK gen failed: ${pollResult.error ?? "unknown"}`);
+    return;
+  }
+
+  // 3. Download from provider and re-host in our R2
+  if (!pollResult.video_url) { await failRow("BYOK gen done but no video_url"); return; }
+
+  let bytes: Uint8Array;
+  let mime = "video/mp4";
+  try {
+    if (pollResult.video_url.startsWith("data:")) {
+      const parsed = parseDataUrl(pollResult.video_url);
+      if (!parsed) throw new Error("Bad data URL");
+      bytes = base64ToBytes(parsed.base64);
+      mime = parsed.mime;
+    } else {
+      // Google Gemini Files URIs require the API key on download; xAI URLs
+      // are pre-signed. Apply the key conditionally by hostname.
+      const fetchHeaders: Record<string, string> = {};
+      try {
+        const u = new URL(pollResult.video_url);
+        if (u.hostname.endsWith("generativelanguage.googleapis.com") && env.GOOGLE_API_KEY) {
+          fetchHeaders["x-goog-api-key"] = env.GOOGLE_API_KEY;
+        }
+      } catch { /* ignore */ }
+      const vresp = await fetch(pollResult.video_url, { headers: fetchHeaders });
+      if (!vresp.ok) throw new Error(`Fetch ${vresp.status}`);
+      mime = vresp.headers.get("content-type") || "video/mp4";
+      bytes = new Uint8Array(await vresp.arrayBuffer());
+    }
+  } catch (err) {
+    await failRow(`Video download failed: ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
+
+  // 4. R2 upload + D1 finalize
+  let r2Key: string;
+  try {
+    r2Key = await r2Put(env, "out", mime, bytes, userEmail);
+  } catch (err) {
+    await failRow(`R2 upload failed: ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
+
+  const outputArtifact: OutputArtifact = { key: r2Key, mime, type: "video" };
+  const latency = Date.now() - Date.parse(startedAtIso);
+  try {
+    await env.DB.prepare(
+      `UPDATE chats SET status = 'done', output_artifact = ?, latency_ms = ? WHERE id = ?`
+    )
+      .bind(JSON.stringify(outputArtifact), latency, rowId)
+      .run();
+  } catch (err) {
+    await failRow(`D1 finalize failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+// xAI BYOK submit/poll - hits /grok/v1/videos/* through the gateway.
+
+async function submitVideoXai(env: Env, modelName: string, prompt: string): Promise<BYOKSubmitResult> {
+  const baseUrl = await (env.AI as unknown as {
+    gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
+  }).gateway(env.GATEWAY_ID).getUrl("grok");
+
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (env.XAI_API_KEY) headers["Authorization"] = `Bearer ${env.XAI_API_KEY}`;
+  if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
+
+  const resp = await fetch(`${baseUrl}/v1/videos/generations`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      model: modelName,
+      prompt,
+      duration: 8,
+      aspect_ratio: "16:9",
+      resolution: "720p",
+    }),
+  });
+  if (!resp.ok) throw new Error(`xAI submit ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
+  const data = await resp.json() as { request_id?: string };
+  if (!data.request_id) throw new Error("xAI submit returned no request_id");
+  return { job_id: data.request_id };
+}
+
+async function pollVideoXai(env: Env, jobId: string): Promise<BYOKPollResult> {
+  const baseUrl = await (env.AI as unknown as {
+    gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
+  }).gateway(env.GATEWAY_ID).getUrl("grok");
+
+  const headers: Record<string, string> = {};
+  if (env.XAI_API_KEY) headers["Authorization"] = `Bearer ${env.XAI_API_KEY}`;
+  if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
+
+  const resp = await fetch(`${baseUrl}/v1/videos/${encodeURIComponent(jobId)}`, { headers });
+  if (!resp.ok) throw new Error(`xAI poll ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
+  const data = await resp.json() as {
+    status?: string;
+    video?: { url?: string };
+    error?: { message?: string } | string;
+  };
+
+  if (data.status === "done" && data.video?.url) return { status: "done", video_url: data.video.url };
+  if (data.status === "failed" || data.status === "expired") {
+    const errMsg = typeof data.error === "string" ? data.error : (data.error?.message ?? data.status);
+    return { status: "failed", error: errMsg };
+  }
+  return { status: "pending" };
+}
+
+// Google Veo BYOK submit/poll - hits /google-ai-studio/v1beta/* through the gateway.
+
+async function submitVideoGoogle(env: Env, modelName: string, prompt: string): Promise<BYOKSubmitResult> {
+  const baseUrl = await (env.AI as unknown as {
+    gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
+  }).gateway(env.GATEWAY_ID).getUrl("google-ai-studio");
+
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (env.GOOGLE_API_KEY) headers["x-goog-api-key"] = env.GOOGLE_API_KEY;
+  if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
+
+  const resp = await fetch(`${baseUrl}/v1beta/models/${modelName}:predictLongRunning`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      instances: [{ prompt }],
+      parameters: { aspectRatio: "16:9", durationSeconds: 8 },
+    }),
+  });
+  if (!resp.ok) throw new Error(`Google submit ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
+  const data = await resp.json() as { name?: string };
+  if (!data.name) throw new Error("Google submit returned no operation name");
+  return { job_id: data.name };
+}
+
+async function pollVideoGoogle(env: Env, operationName: string): Promise<BYOKPollResult> {
+  const baseUrl = await (env.AI as unknown as {
+    gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
+  }).gateway(env.GATEWAY_ID).getUrl("google-ai-studio");
+
+  const headers: Record<string, string> = {};
+  if (env.GOOGLE_API_KEY) headers["x-goog-api-key"] = env.GOOGLE_API_KEY;
+  if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
+
+  const resp = await fetch(`${baseUrl}/v1beta/${operationName}`, { headers });
+  if (!resp.ok) throw new Error(`Google poll ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
+  const data = await resp.json() as {
+    done?: boolean;
+    error?: { message?: string };
+    response?: {
+      generatedVideos?: Array<{ video?: { uri?: string; videoBytes?: string } }>;
+    };
+  };
+
+  if (data.error) return { status: "failed", error: data.error.message ?? "Unknown Google error" };
+  if (!data.done) return { status: "pending" };
+
+  const v = data.response?.generatedVideos?.[0]?.video;
+  if (v?.uri) return { status: "done", video_url: v.uri };
+  if (v?.videoBytes) return { status: "done", video_url: `data:video/mp4;base64,${v.videoBytes}` };
+  return { status: "failed", error: "Google reported done but returned no video uri or bytes" };
+}
+
+// ---------- Job polling endpoint ----------
+//
+// All real work happens in the waitUntil background task. This endpoint just
+// reflects the current D1 row state to the client.
+
+async function handleJobPoll(request: Request, env: Env, id: number): Promise<Response> {
+  const userEmail = getUserEmail(request);
+
+  const row = await env.DB.prepare(
+    `SELECT id, status, job_error, job_started_at, output_artifact, latency_ms
+       FROM chats
+      WHERE id = ? AND user_email = ?`
+  )
+    .bind(id, userEmail)
+    .first<{
+      id: number;
+      status: string;
+      job_error: string | null;
+      job_started_at: string | null;
+      output_artifact: string | null;
+      latency_ms: number | null;
+    }>();
+
+  if (!row) return json({ error: "Not found" }, { status: 404 });
+
+  if (row.status === "done") {
+    return json({
+      id: row.id,
+      status: "done",
+      output_artifact: row.output_artifact ? safeParseJson<OutputArtifact>(row.output_artifact) : null,
+      latency_ms: row.latency_ms,
+    });
+  }
+  if (row.status === "failed") {
+    return json({ id: row.id, status: "failed", job_error: row.job_error });
+  }
+  return json({ id: row.id, status: "pending" });
+}
+
 // ---------- Output extraction (text models) ----------
 
 function extractOutput(result: unknown): string {
@@ -933,7 +1444,7 @@ async function handleHistoryList(request: Request, env: Env): Promise<Response> 
 
   const rows = await env.DB.prepare(
     `SELECT id, created_at, model, model_type, system_prompt, user_input, output,
-            tokens_in, tokens_out, latency_ms,
+            tokens_in, tokens_out, latency_ms, status,
             CASE WHEN attachments     IS NOT NULL THEN 1 ELSE 0 END AS has_attachments,
             CASE WHEN output_artifact IS NOT NULL THEN 1 ELSE 0 END AS has_output_artifact
        FROM chats

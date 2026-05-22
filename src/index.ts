@@ -444,8 +444,11 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
   // as the query - attachment transcripts could be added but for now this
   // keeps retrieval signal focused on what the user actually typed.
   let retrievedChunks: RetrievedChunk[] = [];
+  let retrievalError: string | null = null;
   if (body.use_docs) {
-    retrievedChunks = await retrieveContext(env, userEmail, body.user_input);
+    const r = await retrieveContext(env, userEmail, body.user_input);
+    retrievedChunks = r.chunks;
+    retrievalError = r.error;
   }
 
   // Build the effective system prompt: user-supplied prompt followed by
@@ -456,8 +459,14 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
     userSystemPrompt && retrievalBlock ? `${userSystemPrompt}\n\n${retrievalBlock}` :
     retrievalBlock || userSystemPrompt || "";
 
+  // Build the message array. For providers that take system as a separate
+  // top-level param (Anthropic system, Google systemInstruction), we DON'T
+  // include the system role here - we pass effectiveSystemPrompt as the
+  // param instead. For providers that take messages-only (xAI, Workers AI),
+  // we DO include the system role.
+  const wantsSystemInMessages = !(model.provider === "anthropic" || model.provider === "google");
   const messages: Array<unknown> = [];
-  if (effectiveSystemPrompt) {
+  if (effectiveSystemPrompt && wantsSystemInMessages) {
     messages.push({ role: "system", content: effectiveSystemPrompt });
   }
   messages.push({ role: "user", content: userContent });
@@ -519,6 +528,11 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
     ai_gateway_log_id: logId,
     transcripts: extraText,
     retrieved_chunks: retrievedChunks,
+    // Diagnostic: when use_docs was on, include the exact text that went into
+    // the model as the system prompt, plus any retrieval error. Inspect via
+    // browser DevTools to verify the retrieval block reached the model.
+    effective_system_prompt: body.use_docs ? effectiveSystemPrompt : undefined,
+    retrieval_error: body.use_docs ? retrievalError : undefined,
   });
 }
 
@@ -2013,17 +2027,25 @@ async function retrieveContext(
   userEmail: string,
   queryText: string,
   topK: number = RETRIEVE_TOP_K
-): Promise<RetrievedChunk[]> {
-  if (!queryText || !queryText.trim()) return [];
+): Promise<{ chunks: RetrievedChunk[]; error: string | null }> {
+  if (!queryText || !queryText.trim()) {
+    return { chunks: [], error: "Empty query text" };
+  }
 
-  // 1) Embed the query.
+  // 1) Embed the query. Log + surface errors instead of silently swallowing.
   let queryVec: number[];
   try {
     const vectors = await embedBatch(env, [queryText]);
-    if (vectors.length === 0) return [];
+    if (vectors.length === 0) {
+      const msg = "Embed returned no vectors";
+      console.error("retrieveContext:", msg);
+      return { chunks: [], error: msg };
+    }
     queryVec = vectors[0];
-  } catch {
-    return [];
+  } catch (err) {
+    const m = err instanceof Error ? err.message : String(err);
+    console.error("retrieveContext: embed failed:", m);
+    return { chunks: [], error: `embed failed: ${m}` };
   }
 
   // 2) Query Vectorize. No metadata filter - we scope by user in D1 below.
@@ -2031,28 +2053,50 @@ async function retrieveContext(
   try {
     const q = await env.VEC.query(queryVec, { topK, returnMetadata: false });
     matches = (q?.matches ?? []).map((m) => ({ id: m.id, score: m.score }));
-  } catch {
-    return [];
+  } catch (err) {
+    const m = err instanceof Error ? err.message : String(err);
+    console.error("retrieveContext: vectorize query failed:", m);
+    return { chunks: [], error: `vectorize query failed: ${m}` };
   }
-  if (matches.length === 0) return [];
+  if (matches.length === 0) {
+    console.warn("retrieveContext: vectorize returned 0 matches for query");
+    return { chunks: [], error: "vectorize returned 0 matches" };
+  }
 
   // 3) D1 lookup: join chunks to documents, scope by user_email so we
   // never return another user's chunk even if their vector IDs would
   // somehow collide.
   const ids = matches.map((m) => m.id);
   const placeholders = ids.map(() => "?").join(",");
-  const rows = await env.DB.prepare(
-    `SELECT c.document_id, c.chunk_index, c.text, c.vector_id, c.page, c.sheet, d.filename
-       FROM chunks c
-       JOIN documents d ON c.document_id = d.id
-      WHERE c.user_email = ?
-        AND c.vector_id IN (${placeholders})`
-  )
-    .bind(userEmail, ...ids)
-    .all<{ document_id: number; chunk_index: number; text: string; vector_id: string; filename: string; page: number | null; sheet: string | null }>();
+  let rows;
+  try {
+    rows = await env.DB.prepare(
+      `SELECT c.document_id, c.chunk_index, c.text, c.vector_id, c.page, c.sheet, d.filename
+         FROM chunks c
+         JOIN documents d ON c.document_id = d.id
+        WHERE c.user_email = ?
+          AND c.vector_id IN (${placeholders})`
+    )
+      .bind(userEmail, ...ids)
+      .all<{ document_id: number; chunk_index: number; text: string; vector_id: string; filename: string; page: number | null; sheet: string | null }>();
+  } catch (err) {
+    const m = err instanceof Error ? err.message : String(err);
+    console.error("retrieveContext: D1 lookup failed:", m);
+    return { chunks: [], error: `D1 lookup failed: ${m}` };
+  }
+
+  const results = rows.results ?? [];
+  if (results.length === 0) {
+    // Vectorize had matches but D1 join returned nothing - likely a user_email
+    // mismatch (vectors written under one identity, query under another).
+    const idSample = ids.slice(0, 3).join(", ");
+    const msg = `Vectorize returned ${matches.length} matches but D1 join returned 0. user_email='${userEmail}', sample vector_ids=[${idSample}]. Check whether vectors were upserted under a different user identity.`;
+    console.warn("retrieveContext:", msg);
+    return { chunks: [], error: msg };
+  }
 
   // 4) Merge scores back in, preserve Vectorize ordering.
-  const byId = new Map((rows.results ?? []).map((r) => [r.vector_id, r]));
+  const byId = new Map(results.map((r) => [r.vector_id, r]));
   const scoreById = new Map(matches.map((m) => [m.id, m.score]));
   const out: RetrievedChunk[] = [];
   for (const id of ids) {
@@ -2068,7 +2112,7 @@ async function retrieveContext(
       sheet: r.sheet,
     });
   }
-  return out;
+  return { chunks: out, error: null };
 }
 
 function formatRetrievalForSystemPrompt(chunks: RetrievedChunk[]): string {

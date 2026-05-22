@@ -658,6 +658,8 @@ async function runImage(request: Request, env: Env, model: ModelEntry, body: Cha
     output_artifact: outputArtifact,
     latency_ms: latency,
     ai_gateway_log_id: logId,
+    conversation_id: row.conversation_id,
+    turn_index: 0,
   });
 }
 
@@ -714,6 +716,8 @@ async function runTts(request: Request, env: Env, model: ModelEntry, body: ChatR
     output_artifact: outputArtifact,
     latency_ms: latency,
     ai_gateway_log_id: logId,
+    conversation_id: row.conversation_id,
+    turn_index: 0,
   });
 }
 
@@ -777,6 +781,8 @@ async function runStt(request: Request, env: Env, model: ModelEntry, body: ChatR
     output: transcript,
     output_artifact: null,
     latency_ms: latency,
+    conversation_id: row.conversation_id,
+    turn_index: 0,
   });
 }
 
@@ -842,6 +848,8 @@ async function runMusic(
     output_artifact: null,
     status: "pending",
     job_started_at: startedAt,
+    conversation_id: row.conversation_id,
+    turn_index: 0,
   });
 }
 
@@ -949,7 +957,7 @@ interface PersistArgs {
   turn_index?: number | null;
 }
 
-async function persistChat(env: Env, a: PersistArgs): Promise<{ id: number; created_at: string }> {
+async function persistChat(env: Env, a: PersistArgs): Promise<{ id: number; created_at: string; conversation_id: string }> {
   // For non-chat model types (image/tts/video/etc), conversation_id is
   // auto-assigned as a synthetic per-row key so the rows still group in the
   // sidebar as single-turn entries.
@@ -982,17 +990,23 @@ async function persistChat(env: Env, a: PersistArgs): Promise<{ id: number; crea
     )
     .first<{ id: number; created_at: string }>();
 
+  if (!row) {
+    return { id: 0, created_at: new Date().toISOString(), conversation_id: "" };
+  }
+
   // For non-chat rows that didn't get an explicit conversation_id, backfill
   // a synthetic one so they appear in the conversation list.
-  if (row && !convId) {
+  let finalConvId = convId;
+  if (!finalConvId) {
+    finalConvId = `single-${row.id}`;
     await env.DB.prepare(
       `UPDATE chats SET conversation_id = ?, turn_index = 0 WHERE id = ?`
     )
-      .bind(`single-${row.id}`, row.id)
+      .bind(finalConvId, row.id)
       .run();
   }
 
-  return row ?? { id: 0, created_at: new Date().toISOString() };
+  return { id: row.id, created_at: row.created_at, conversation_id: finalConvId };
 }
 
 // ---------- Anthropic BYOK call ----------
@@ -1317,7 +1331,67 @@ async function runVideo(
 ): Promise<Response> {
   const userEmail = getUserEmail(request);
   const startedAt = new Date().toISOString();
+  const isBYOK = !!(model.byok_alias && (model.provider === "xai" || model.provider === "google"));
 
+  // BYOK path: do the submit synchronously (one fast HTTP call, well within
+  // the worker's request budget). Save the upstream job_id on the row so the
+  // poll endpoint can check status without re-submitting. This avoids using
+  // ctx.waitUntil for the long-running poll loop - waitUntil only gets ~30s
+  // after the response, which is far less than the 1-3 minutes needed.
+  if (isBYOK) {
+    let submit: BYOKSubmitResult;
+    try {
+      if (model.provider === "xai") {
+        submit = await submitVideoXai(env, model.byok_alias!, body.user_input);
+      } else {
+        submit = await submitVideoGoogle(env, model.byok_alias!, body.user_input);
+      }
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      return json({ error: `Video submit failed: ${m}` }, { status: 502 });
+    }
+
+    const row = await persistChat(env, {
+      userEmail,
+      model: model.id,
+      model_type: "video",
+      system_prompt: body.system_prompt ?? null,
+      user_input: body.user_input,
+      output: "",
+      output_artifact: null,
+      attachments: [],
+      tokens_in: null,
+      tokens_out: null,
+      latency_ms: 0,
+      ai_gateway_log_id: null,
+      status: "pending",
+      job_id: submit.job_id,
+      job_provider: model.provider ?? null,
+      job_error: null,
+      job_started_at: startedAt,
+    });
+
+    return json({
+      id: row.id,
+      created_at: row.created_at,
+      model: model.id,
+      model_type: "video",
+      output: "",
+      output_artifact: null,
+      status: "pending",
+      job_started_at: startedAt,
+      job_id: submit.job_id,
+      conversation_id: row.conversation_id,
+      turn_index: 0,
+    });
+  }
+
+  // Unified Billing path (env.AI.run for third-party video models). This
+  // remains a fire-and-forget design which can be cancelled by the Workers
+  // waitUntil time limit. It needs a Workflows-based refactor to be reliable
+  // for multi-minute generations. Left as-is so Conrad's BYOK use case isn't
+  // blocked - Unified Billing models won't reliably finish until Workflows
+  // (TODO) replaces the waitUntil pattern.
   const row = await persistChat(env, {
     userEmail,
     model: model.id,
@@ -1338,19 +1412,9 @@ async function runVideo(
     job_started_at: startedAt,
   });
 
-  // Schedule the actual generation to run after the response is sent.
-  // If the model has a byok_alias, route through the per-provider BYOK
-  // endpoint (works with stored gateway keys or env-var keys today).
-  // Otherwise call env.AI.run, which requires Unified Billing on the gateway.
-  if (model.byok_alias && (model.provider === "xai" || model.provider === "google")) {
-    ctx.waitUntil(
-      generateVideoBYOK(env, row.id, userEmail, model, body.user_input, startedAt)
-    );
-  } else {
-    ctx.waitUntil(
-      generateVideoUnified(env, row.id, userEmail, model.id, body.user_input, startedAt)
-    );
-  }
+  ctx.waitUntil(
+    generateVideoUnified(env, row.id, userEmail, model.id, body.user_input, startedAt)
+  );
 
   return json({
     id: row.id,
@@ -1361,6 +1425,8 @@ async function runVideo(
     output_artifact: null,
     status: "pending",
     job_started_at: startedAt,
+    conversation_id: row.conversation_id,
+    turn_index: 0,
   });
 }
 
@@ -1449,20 +1515,24 @@ async function generateVideoUnified(
 
 // ---------- Video generation BYOK path (per-provider endpoints) ----------
 //
-// Used when a model has byok_alias set. Goes through the AI Gateway's
-// per-provider proxy endpoints (e.g. {gateway}/grok/v1/videos/generations)
-// rather than env.AI.run. This works with stored provider keys in the
-// gateway dashboard or with env-var keys (XAI_API_KEY, GOOGLE_API_KEY),
-// without requiring Unified Billing.
+// BYOK video architecture (v0.10.2):
 //
-// Submit/poll/download is orchestrated by generateVideoBYOK inside a
-// ctx.waitUntil background task. The same D1 status='pending' machinery
-// applies; the only difference from the Unified path is that we poll the
-// provider ourselves (every 5s, up to 5 minutes) before downloading the
-// resulting video and storing it in R2.
-
-const BYOK_POLL_INTERVAL_MS = 5000;
-const BYOK_POLL_MAX_MS = 5 * 60 * 1000;
+// The OLD architecture (v0.7.0-v0.10.1) used ctx.waitUntil to run a long poll
+// loop after the response was sent. That doesn't work: Cloudflare Workers only
+// gives waitUntil ~30 seconds after the response, but video generation takes
+// 1-3 minutes. The waitUntil task got cancelled mid-poll, leaving rows stuck
+// "pending" until the client gave up.
+//
+// The NEW architecture:
+//   1. POST /api/chat: submit synchronously (one fast HTTP call), store the
+//      upstream job_id on the row, return immediately.
+//   2. GET /api/job/:id: each client poll triggers one upstream poll. If done,
+//      this single invocation downloads the video and stores it in R2. Each
+//      invocation gets its own ~30s budget, plenty for one round-trip.
+//
+// This eliminates the waitUntil cancellation problem entirely for BYOK models.
+// The Unified Billing path (env.AI.run) still uses waitUntil and is still
+// subject to the same problem - that requires a Cloudflare Workflows refactor.
 
 interface BYOKSubmitResult { job_id: string; }
 interface BYOKPollResult {
@@ -1471,139 +1541,25 @@ interface BYOKPollResult {
   error?: string;
 }
 
-async function generateVideoBYOK(
-  env: Env,
-  rowId: number,
-  userEmail: string,
-  model: ModelEntry,
-  prompt: string,
-  startedAtIso: string
-): Promise<void> {
-  const failRow = async (msg: string) => {
-    try {
-      await env.DB.prepare(`UPDATE chats SET status = 'failed', job_error = ? WHERE id = ?`)
-        .bind(msg.slice(0, 1000), rowId)
-        .run();
-    } catch { /* swallow */ }
-  };
 
-  if (!model.byok_alias) { await failRow("BYOK route entered without byok_alias"); return; }
+// xAI BYOK submit/poll - hits /v1/videos/* directly on api.x.ai.
+//
+// IMPORTANT: Cloudflare AI Gateway only proxies the OpenAI-compatible chat
+// schema for xAI - it doesn't know /v1/videos/generations and returns 404
+// ("not found") for that path. We call api.x.ai directly to work around it.
+// This means no caching/analytics for video gen, but those benefits were
+// marginal for a 1-3 minute generation anyway.
 
-  // 1. Submit job
-  let submit: BYOKSubmitResult;
-  try {
-    if (model.provider === "xai") {
-      submit = await submitVideoXai(env, model.byok_alias, prompt);
-    } else if (model.provider === "google") {
-      submit = await submitVideoGoogle(env, model.byok_alias, prompt);
-    } else {
-      await failRow(`BYOK path not implemented for provider: ${model.provider}`);
-      return;
-    }
-  } catch (err) {
-    await failRow(`BYOK submit failed: ${err instanceof Error ? err.message : String(err)}`);
-    return;
-  }
-
-  // Record the upstream job_id on the row for visibility.
-  try {
-    await env.DB.prepare(`UPDATE chats SET job_id = ? WHERE id = ?`).bind(submit.job_id, rowId).run();
-  } catch { /* non-fatal */ }
-
-  // 2. Poll until done, failed, or timeout
-  const deadline = Date.now() + BYOK_POLL_MAX_MS;
-  let pollResult: BYOKPollResult = { status: "pending" };
-  while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, BYOK_POLL_INTERVAL_MS));
-    try {
-      if (model.provider === "xai") {
-        pollResult = await pollVideoXai(env, submit.job_id);
-      } else if (model.provider === "google") {
-        pollResult = await pollVideoGoogle(env, submit.job_id);
-      } else {
-        pollResult = { status: "failed", error: `Unsupported provider: ${model.provider}` };
-      }
-    } catch (err) {
-      // Transient poll error; keep trying until deadline.
-      continue;
-    }
-    if (pollResult.status !== "pending") break;
-  }
-
-  if (pollResult.status === "pending") {
-    await failRow(`BYOK poll timed out after ${BYOK_POLL_MAX_MS / 1000}s`);
-    return;
-  }
-  if (pollResult.status === "failed") {
-    await failRow(`BYOK gen failed: ${pollResult.error ?? "unknown"}`);
-    return;
-  }
-
-  // 3. Download from provider and re-host in our R2
-  if (!pollResult.video_url) { await failRow("BYOK gen done but no video_url"); return; }
-
-  let bytes: Uint8Array;
-  let mime = "video/mp4";
-  try {
-    if (pollResult.video_url.startsWith("data:")) {
-      const parsed = parseDataUrl(pollResult.video_url);
-      if (!parsed) throw new Error("Bad data URL");
-      bytes = base64ToBytes(parsed.base64);
-      mime = parsed.mime;
-    } else {
-      // Google Gemini Files URIs require the API key on download; xAI URLs
-      // are pre-signed. Apply the key conditionally by hostname.
-      const fetchHeaders: Record<string, string> = {};
-      try {
-        const u = new URL(pollResult.video_url);
-        if (u.hostname.endsWith("generativelanguage.googleapis.com") && env.GOOGLE_API_KEY) {
-          fetchHeaders["x-goog-api-key"] = env.GOOGLE_API_KEY;
-        }
-      } catch { /* ignore */ }
-      const vresp = await fetch(pollResult.video_url, { headers: fetchHeaders });
-      if (!vresp.ok) throw new Error(`Fetch ${vresp.status}`);
-      mime = vresp.headers.get("content-type") || "video/mp4";
-      bytes = new Uint8Array(await vresp.arrayBuffer());
-    }
-  } catch (err) {
-    await failRow(`Video download failed: ${err instanceof Error ? err.message : String(err)}`);
-    return;
-  }
-
-  // 4. R2 upload + D1 finalize
-  let r2Key: string;
-  try {
-    r2Key = await r2Put(env, "out", mime, bytes, userEmail);
-  } catch (err) {
-    await failRow(`R2 upload failed: ${err instanceof Error ? err.message : String(err)}`);
-    return;
-  }
-
-  const outputArtifact: OutputArtifact = { key: r2Key, mime, type: "video" };
-  const latency = Date.now() - Date.parse(startedAtIso);
-  try {
-    await env.DB.prepare(
-      `UPDATE chats SET status = 'done', output_artifact = ?, latency_ms = ? WHERE id = ?`
-    )
-      .bind(JSON.stringify(outputArtifact), latency, rowId)
-      .run();
-  } catch (err) {
-    await failRow(`D1 finalize failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
-}
-
-// xAI BYOK submit/poll - hits /grok/v1/videos/* through the gateway.
+const XAI_DIRECT_BASE = "https://api.x.ai";
 
 async function submitVideoXai(env: Env, modelName: string, prompt: string): Promise<BYOKSubmitResult> {
-  const baseUrl = await (env.AI as unknown as {
-    gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
-  }).gateway(env.GATEWAY_ID).getUrl("grok");
+  if (!env.XAI_API_KEY) throw new Error("XAI_API_KEY not set; xAI video gen requires the secret to be configured");
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    "Authorization": `Bearer ${env.XAI_API_KEY}`,
+  };
 
-  const headers: Record<string, string> = { "content-type": "application/json" };
-  if (env.XAI_API_KEY) headers["Authorization"] = `Bearer ${env.XAI_API_KEY}`;
-  if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
-
-  const resp = await fetch(`${baseUrl}/v1/videos/generations`, {
+  const resp = await fetch(`${XAI_DIRECT_BASE}/v1/videos/generations`, {
     method: "POST",
     headers,
     body: JSON.stringify({
@@ -1621,15 +1577,12 @@ async function submitVideoXai(env: Env, modelName: string, prompt: string): Prom
 }
 
 async function pollVideoXai(env: Env, jobId: string): Promise<BYOKPollResult> {
-  const baseUrl = await (env.AI as unknown as {
-    gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
-  }).gateway(env.GATEWAY_ID).getUrl("grok");
+  if (!env.XAI_API_KEY) throw new Error("XAI_API_KEY not set");
+  const headers: Record<string, string> = {
+    "Authorization": `Bearer ${env.XAI_API_KEY}`,
+  };
 
-  const headers: Record<string, string> = {};
-  if (env.XAI_API_KEY) headers["Authorization"] = `Bearer ${env.XAI_API_KEY}`;
-  if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
-
-  const resp = await fetch(`${baseUrl}/v1/videos/${encodeURIComponent(jobId)}`, { headers });
+  const resp = await fetch(`${XAI_DIRECT_BASE}/v1/videos/${encodeURIComponent(jobId)}`, { headers });
   if (!resp.ok) throw new Error(`xAI poll ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
   const data = await resp.json() as {
     status?: string;
@@ -1707,7 +1660,8 @@ async function handleJobPoll(request: Request, env: Env, id: number): Promise<Re
   const userEmail = getUserEmail(request);
 
   const row = await env.DB.prepare(
-    `SELECT id, status, job_error, job_started_at, output_artifact, latency_ms
+    `SELECT id, status, job_error, job_started_at, output_artifact, latency_ms,
+            job_id, job_provider, model_type
        FROM chats
       WHERE id = ? AND user_email = ?`
   )
@@ -1719,10 +1673,14 @@ async function handleJobPoll(request: Request, env: Env, id: number): Promise<Re
       job_started_at: string | null;
       output_artifact: string | null;
       latency_ms: number | null;
+      job_id: string | null;
+      job_provider: string | null;
+      model_type: string;
     }>();
 
   if (!row) return json({ error: "Not found" }, { status: 404 });
 
+  // Terminal states return immediately.
   if (row.status === "done") {
     return json({
       id: row.id,
@@ -1734,6 +1692,88 @@ async function handleJobPoll(request: Request, env: Env, id: number): Promise<Re
   if (row.status === "failed") {
     return json({ id: row.id, status: "failed", job_error: row.job_error });
   }
+
+  // Pending. For BYOK video gen (xAI/Google with a stored job_id), this is
+  // where the actual upstream poll happens - one round-trip per client poll,
+  // each in its own worker invocation budget. No more waitUntil cancellation.
+  if (row.status === "pending" && row.model_type === "video" && row.job_id && (row.job_provider === "xai" || row.job_provider === "google")) {
+    let pollResult: BYOKPollResult;
+    try {
+      if (row.job_provider === "xai") {
+        pollResult = await pollVideoXai(env, row.job_id);
+      } else {
+        pollResult = await pollVideoGoogle(env, row.job_id);
+      }
+    } catch (err) {
+      // Transient upstream error - keep status pending, client will try again.
+      console.error("handleJobPoll: upstream poll failed:", err instanceof Error ? err.message : String(err));
+      return json({ id: row.id, status: "pending" });
+    }
+
+    if (pollResult.status === "pending") {
+      return json({ id: row.id, status: "pending" });
+    }
+
+    if (pollResult.status === "failed") {
+      await env.DB.prepare(`UPDATE chats SET status = 'failed', job_error = ? WHERE id = ?`)
+        .bind(`Upstream gen failed: ${pollResult.error ?? "unknown"}`, row.id)
+        .run();
+      return json({ id: row.id, status: "failed", job_error: pollResult.error ?? "unknown" });
+    }
+
+    // Done. Download video, upload to R2, finalize D1.
+    if (!pollResult.video_url) {
+      await env.DB.prepare(`UPDATE chats SET status = 'failed', job_error = ? WHERE id = ?`)
+        .bind("Upstream reported done but no video_url", row.id)
+        .run();
+      return json({ id: row.id, status: "failed", job_error: "Upstream reported done but no video_url" });
+    }
+
+    let bytes: Uint8Array;
+    let mime = "video/mp4";
+    try {
+      const aresp = await fetch(pollResult.video_url);
+      if (!aresp.ok) throw new Error(`Fetch ${aresp.status}`);
+      mime = aresp.headers.get("content-type") || "video/mp4";
+      bytes = new Uint8Array(await aresp.arrayBuffer());
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      await env.DB.prepare(`UPDATE chats SET status = 'failed', job_error = ? WHERE id = ?`)
+        .bind(`Video download failed: ${m}`, row.id)
+        .run();
+      return json({ id: row.id, status: "failed", job_error: `Video download failed: ${m}` });
+    }
+
+    let r2Key: string;
+    try {
+      r2Key = await r2Put(env, "out", mime, bytes, userEmail);
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      await env.DB.prepare(`UPDATE chats SET status = 'failed', job_error = ? WHERE id = ?`)
+        .bind(`R2 upload failed: ${m}`, row.id)
+        .run();
+      return json({ id: row.id, status: "failed", job_error: `R2 upload failed: ${m}` });
+    }
+
+    const outputArtifact: OutputArtifact = { key: r2Key, mime, type: "video" };
+    const latency = row.job_started_at ? (Date.now() - Date.parse(row.job_started_at)) : 0;
+    await env.DB.prepare(
+      `UPDATE chats SET status = 'done', output_artifact = ?, latency_ms = ? WHERE id = ?`
+    )
+      .bind(JSON.stringify(outputArtifact), latency, row.id)
+      .run();
+
+    return json({
+      id: row.id,
+      status: "done",
+      output_artifact: outputArtifact,
+      latency_ms: latency,
+    });
+  }
+
+  // Other pending case (Unified Billing video, music gen). These still use
+  // the old waitUntil background task and may be stuck if it was cancelled.
+  // TODO: refactor to Workflows for reliability.
   return json({ id: row.id, status: "pending" });
 }
 

@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.10.2
+
+- Fix Grok Imagine Video failing for the actual underlying reason. The "not found" error was the *symptom*; the *cause* was Cloudflare Workers' `waitUntil()` having a ~30-second post-response budget, while video generation takes 1-3 minutes. The background poll loop was getting cancelled mid-run, leaving rows stuck in "pending" until the client gave up.
+- Refactored BYOK video architecture: submit happens synchronously in `POST /api/chat` (one fast HTTP call), upstream `job_id` persists to D1, then each client poll of `GET /api/job/:id` triggers ONE upstream poll in its own fresh worker invocation. Each invocation has its own ~30s budget, well within reach. When the upstream reports "done", the same invocation downloads the video, uploads to R2, and finalizes D1.
+- Also fix Bug 1 from the diagnostic: the v0.10.0 multi-turn refactor neglected to add `conversation_id` to non-chat response shapes (image, TTS, video, music, STT). The frontend was seeing `result.conversation_id === undefined`, stringifying it to "undefined", and fetching `/api/conversations/undefined`. Now all non-chat handlers return `conversation_id` from the persisted row.
+- Removed obsolete `generateVideoBYOK` background task function and `BYOK_POLL_INTERVAL_MS` / `BYOK_POLL_MAX_MS` constants. No longer needed.
+- Known limitation: Unified Billing video models (bytedance, runwayml, alibaba, pixverse, vidu, etc.) and music gen (`minimax/music-2.6`) still use the old waitUntil-based pattern and are subject to the same cancellation issue. A future Cloudflare Workflows refactor will fix these. BYOK works reliably now; Unified Billing models won't until they're funded AND the architecture is reworked.
+
+## v0.10.1
+
+- Fix Grok Imagine Video failing with "not found": Cloudflare AI Gateway's xAI proxy only supports the OpenAI-compatible chat schema (`/v1/chat/completions`). It doesn't proxy `/v1/videos/generations` or `/v1/videos/:id`, so every video submit returned 404. Now we call `https://api.x.ai` directly for these endpoints, bypassing the gateway. The XAI_API_KEY secret is still used; the workaround means no gateway caching/analytics for video gen specifically, but those features were marginal for 1-3 minute generations.
+- The fix requires `XAI_API_KEY` to be set as a worker secret (previously the AI Gateway "Stored Keys" feature could fill it in transparently for chat; with direct calls we need the actual secret).
+
 ## v0.10.0
 
 - Multi-turn conversations. Each conversation is a sequence of turns sharing a `conversation_id` and ordered by `turn_index`. Continuing a conversation pulls prior turns from D1 and assembles a `[system, user1, assistant1, user2, assistant2, ..., userN]` message array for the model.

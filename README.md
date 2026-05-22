@@ -5,6 +5,11 @@
 
 A multimodal AI playground deployed as a single Cloudflare Worker. Chat across 39 text models from six providers, generate images, speech, videos, and music, transcribe audio, and run retrieval-augmented chat over your own PDFs and spreadsheets. One web UI behind Cloudflare Access; per-user history; R2 for all binary artifacts.
 
+<p align="center">
+  <img src="docs/screenshot-desktop.jpg" alt="Desktop UI: image generation with FLUX-1 schnell" width="800"><br><br>
+  <img src="docs/screenshot-mobile.jpg" alt="Mobile UI: Claude Haiku 4.5 BYOK chat" width="280">
+</p>
+
 ## What this is
 
 A working template for the Cloudflare AI stack. One Worker, no framework, no build step beyond TypeScript. The interesting parts are the patterns, not the model count:

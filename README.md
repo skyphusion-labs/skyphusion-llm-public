@@ -552,4 +552,4 @@ See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
 ## Acknowledgements
 
-Built on Cloudflare Workers, Workers AI, AI Gateway, D1, R2, and Cloudflare Access. Image generation models courtesy of Black Forest Labs and Leonardo.Ai. Text-to-speech via Deepgram. Speech-to-text via OpenAI Whisper.
+Built on Cloudflare Workers, Workers AI, AI Gateway, D1, R2, and Cloudflare Access. Image generation models courtesy of Black Forest Labs and Leonardo.Ai. Text-to-speech via Deepgram. Speech-to-text via OpenAI Whisper. I would also like to think M for inspiring, UX critique, and locating bug after bug :P.

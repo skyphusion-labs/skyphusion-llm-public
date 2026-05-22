@@ -295,6 +295,27 @@ Video gen is the most expensive feature in this playground.
 
 Most of these models support image-to-video via an `image_input` parameter (base64-encoded reference image). The UI doesn't yet expose this; it's a v0.8.0 follow-on. The Alibaba HH1 model is image-to-video only; selecting it without supplying an image will fail.
 
+## Speech-to-text (Whisper, standalone)
+
+Attach an audio file, pick a Whisper model, click Run. The worker calls Whisper directly via `env.AI.run` (no async; Whisper completes in seconds) and stores the transcript as the chat's `output` text. The audio's bytes are not persisted; only the transcript is kept on the row's attachment record, same convention as the chat-path audio attachments.
+
+Three Whisper variants are exposed:
+- `@cf/openai/whisper-large-v3-turbo` (default; best quality, multilingual)
+- `@cf/openai/whisper` (general purpose, slightly older)
+- `@cf/openai/whisper-tiny-en` (fast, English-only, beta)
+
+Whisper is hosted on Workers AI (no Unified Billing needed).
+
+## Music generation (MiniMax Music 2.6)
+
+Same fire-and-forget architecture as video gen, single model in the catalog: `minimax/music-2.6`. Generates full songs with vocals from a style/mood prompt and optional lyrics, or instrumental tracks. Output is an MP3 stored in R2.
+
+Input fields:
+- `user_input` -> `prompt` (style/mood/genre, ~10-300 chars). Example: `"Indie folk, melancholic, introspective, longing, solitary walk, coffee shop"`
+- `system_prompt` -> `lyrics` (optional, ~10-3000 chars). Supports structure tags: `[Intro]`, `[Verse]`, `[Chorus]`, `[Bridge]`, `[Outro]`
+
+This is a Cloudflare-proxied (third-party) model, so it requires Unified Billing on the gateway. It will fail with the same `2021: Invalid User Credentials` error as the other 12 video models until credits are funded.
+
 ## Editing the model menu
 
 `MODELS` at the top of `src/index.ts`. Each entry has:

@@ -151,6 +151,23 @@ function updateAffordance() {
     attachRow.style.display = "none";
     state.pendingAttachments = [];
     renderAttachments();
+  } else if (m.type === "stt") {
+    systemPromptLabel.textContent = "system prompt";
+    systemPrompt.placeholder = "(unused for STT)";
+    userInputLabel.textContent = "optional context";
+    userInput.placeholder = "optional context for the transcriber (e.g. domain-specific terms)";
+    attachRow.style.display = "flex";
+    fileInput.accept = "audio/*";
+    attachHint.textContent = "attach an audio file to transcribe (required)";
+    attachHint.classList.remove("warn");
+  } else if (m.type === "music") {
+    systemPromptLabel.textContent = "lyrics (optional)";
+    systemPrompt.placeholder = "song lyrics, optional. use [Verse] [Chorus] [Bridge] [Outro] tags for structure";
+    userInputLabel.textContent = "song description";
+    userInput.placeholder = "style/mood/genre, e.g. 'indie folk, melancholic, longing, solitary walk'";
+    attachRow.style.display = "none";
+    state.pendingAttachments = [];
+    renderAttachments();
   } else {
     // chat
     systemPromptLabel.textContent = "system prompt";
@@ -410,7 +427,7 @@ function renderPendingOutput(progress) {
   const elapsed = fmtElapsed(Date.now() - state.pollStartedAt);
   const pct = (typeof progress === "number" && progress > 0) ? ` (${progress}%)` : "";
   output.classList.remove("error");
-  output.textContent = `Generating video, this can take 1-3 minutes\u2026\n\nElapsed: ${elapsed}${pct}`;
+  output.textContent = `Generating, this can take 1-3 minutes\u2026\n\nElapsed: ${elapsed}${pct}`;
 }
 
 function stopPolling() {
@@ -503,6 +520,8 @@ async function loadHistory() {
         if (c.model_type === "image") icons.push(`<span title="image output">\u{1F5BC}</span>`);
         else if (c.model_type === "tts") icons.push(`<span title="audio output">\u{1F50A}</span>`);
         else if (c.model_type === "video") icons.push(`<span title="video output">\u{1F3AC}</span>`);
+        else if (c.model_type === "music") icons.push(`<span title="music output">\u{1F3B5}</span>`);
+        else if (c.model_type === "stt")   icons.push(`<span title="transcript">\u{1F4DD}</span>`);
         else icons.push(`<span title="artifact output">\u{1F4E6}</span>`);
       }
       const iconBlock = icons.length ? `<span class="attach-icon">${icons.join(" ")}</span>` : `<span></span>`;
@@ -535,8 +554,8 @@ async function loadChat(id) {
     .join("");
   renderOutputArtifact(chat.output_artifact);
 
-  // Resume polling if this chat is a still-pending video job.
-  if (chat.status === "pending" && chat.model_type === "video") {
+  // Resume polling if this chat is a still-pending async job (video or music).
+  if (chat.status === "pending" && (chat.model_type === "video" || chat.model_type === "music")) {
     startPolling(id, chat.job_started_at);
   } else if (chat.status === "failed") {
     output.classList.add("error");
@@ -578,6 +597,8 @@ async function run() {
   attachBtn.disabled = true;
   const runningMsg = m.type === "chat" ? "\u2026"
     : m.type === "video" ? "submitting video job\u2026"
+    : m.type === "music" ? "submitting music job\u2026"
+    : m.type === "stt" ? "transcribing\u2026"
     : `running ${m.type}\u2026`;
   output.textContent = runningMsg;
   output.classList.remove("error");
@@ -591,7 +612,7 @@ async function run() {
         model,
         system_prompt,
         user_input: user_input || "(no text, attachments only)",
-        attachments: m.type === "chat" ? state.pendingAttachments : [],
+        attachments: (m.type === "chat" || m.type === "stt") ? state.pendingAttachments : [],
       }),
     });
     state.currentChatId = result.id;

@@ -46,7 +46,7 @@ interface Env {
 
 // ---------- Model catalog ----------
 
-type ModelType = "chat" | "image" | "tts" | "video";
+type ModelType = "chat" | "image" | "tts" | "video" | "stt" | "music";
 type Provider =
   | "workers-ai"
   | "anthropic"
@@ -119,37 +119,47 @@ const MODELS: ModelEntry[] = [
   { id: "@cf/meta/llama-3.2-1b-instruct",               label: "Llama 3.2 1B (tiny, cheap)",   group: "Chat \u00b7 Meta",     type: "chat", capabilities: [] },
 
   // ---- Image generation ----
-  { id: "@cf/black-forest-labs/flux-2-klein-9b",        label: "FLUX 2 Klein 9B (frontier)",   group: "Image gen",            type: "image", capabilities: [] },
-  { id: "@cf/black-forest-labs/flux-2-klein-4b",        label: "FLUX 2 Klein 4B (faster)",     group: "Image gen",            type: "image", capabilities: [] },
-  { id: "@cf/black-forest-labs/flux-2-dev",             label: "FLUX 2 Dev (multi-reference)", group: "Image gen",            type: "image", capabilities: [] },
-  { id: "@cf/black-forest-labs/flux-1-schnell",         label: "FLUX-1 schnell (fast)",        group: "Image gen",            type: "image", capabilities: [] },
-  { id: "@cf/leonardo/lucid-origin",                    label: "Lucid Origin (Leonardo)",      group: "Image gen",            type: "image", capabilities: [] },
-  { id: "@cf/leonardo/phoenix-1.0",                     label: "Phoenix 1.0 (Leonardo)",       group: "Image gen",            type: "image", capabilities: [] },
-  { id: "@cf/lykon/dreamshaper-8-lcm",                  label: "Dreamshaper 8 LCM (fast SD)",  group: "Image gen",            type: "image", capabilities: [] },
+  { id: "@cf/black-forest-labs/flux-2-klein-9b",        label: "FLUX 2 Klein 9B (frontier)",   group: "Image Gen",            type: "image", capabilities: [] },
+  { id: "@cf/black-forest-labs/flux-2-klein-4b",        label: "FLUX 2 Klein 4B (faster)",     group: "Image Gen",            type: "image", capabilities: [] },
+  { id: "@cf/black-forest-labs/flux-2-dev",             label: "FLUX 2 Dev (multi-reference)", group: "Image Gen",            type: "image", capabilities: [] },
+  { id: "@cf/black-forest-labs/flux-1-schnell",         label: "FLUX-1 schnell (fast)",        group: "Image Gen",            type: "image", capabilities: [] },
+  { id: "@cf/leonardo/lucid-origin",                    label: "Lucid Origin (Leonardo)",      group: "Image Gen",            type: "image", capabilities: [] },
+  { id: "@cf/leonardo/phoenix-1.0",                     label: "Phoenix 1.0 (Leonardo)",       group: "Image Gen",            type: "image", capabilities: [] },
+  { id: "@cf/lykon/dreamshaper-8-lcm",                  label: "Dreamshaper 8 LCM (fast SD)",  group: "Image Gen",            type: "image", capabilities: [] },
 
   // ---- Text-to-speech ----
   { id: "@cf/deepgram/aura-2-en",                       label: "Aura-2 English (Deepgram)",    group: "TTS",                  type: "tts",   capabilities: [] },
   { id: "@cf/deepgram/aura-2-es",                       label: "Aura-2 Spanish (Deepgram)",    group: "TTS",                  type: "tts",   capabilities: [] },
   { id: "@cf/myshell/melotts",                          label: "MeloTTS (multilingual)",       group: "TTS",                  type: "tts",   capabilities: [] },
 
+  // ---- Speech-to-text (Whisper) ----
+  // Attach an audio file, pick a model, get the transcript. Audio file is
+  // required; everything else (prompt, system prompt) is ignored.
+  { id: "@cf/openai/whisper-large-v3-turbo",            label: "Whisper Large v3 Turbo (best)", group: "Speech-to-text",      type: "stt",   capabilities: [] },
+  { id: "@cf/openai/whisper",                           label: "Whisper (general purpose)",    group: "Speech-to-text",       type: "stt",   capabilities: [] },
+  { id: "@cf/openai/whisper-tiny-en",                   label: "Whisper Tiny EN (fast, beta)", group: "Speech-to-text",       type: "stt",   capabilities: [] },
+
+  // ---- Music generation (Unified Billing only) ----
+  { id: "minimax/music-2.6",                            label: "MiniMax Music 2.6 (needs CF credits)", group: "Music Gen",     type: "music", capabilities: [], provider: "minimax" },
+
   // ---- Video generation (Cloudflare Unified Billing via env.AI.run) ----
   // All routed through env.AI.run("provider/model", ...) - CF handles auth and
   // billing. No BYOK to xAI/Google/etc needed for these models.
-  { id: "google/veo-3.1",                               label: "Veo 3.1 (Google, BYOK)",                           group: "Video gen", type: "video", capabilities: [], provider: "google",   byok_alias: "veo-3.1-generate-preview" },
-  { id: "google/veo-3.1-fast",                          label: "Veo 3.1 Fast (Google, BYOK)",                      group: "Video gen", type: "video", capabilities: [], provider: "google",   byok_alias: "veo-3.1-fast-generate-001" },
-  { id: "google/veo-3",                                 label: "Veo 3 (Google, needs CF credits)",                 group: "Video gen", type: "video", capabilities: [], provider: "google" },
-  { id: "google/veo-3-fast",                            label: "Veo 3 Fast (Google, needs CF credits)",            group: "Video gen", type: "video", capabilities: [], provider: "google" },
-  { id: "bytedance/seedance-2.0",                       label: "Seedance 2.0 (ByteDance, needs CF credits)",       group: "Video gen", type: "video", capabilities: [], provider: "bytedance" },
-  { id: "bytedance/seedance-2.0-fast",                  label: "Seedance 2.0 Fast (ByteDance, needs CF credits)",  group: "Video gen", type: "video", capabilities: [], provider: "bytedance" },
-  { id: "minimax/hailuo-2.3",                           label: "Hailuo 2.3 (MiniMax, needs CF credits)",           group: "Video gen", type: "video", capabilities: [], provider: "minimax" },
-  { id: "minimax/hailuo-2.3-fast",                      label: "Hailuo 2.3 Fast (MiniMax, needs CF credits)",      group: "Video gen", type: "video", capabilities: [], provider: "minimax" },
-  { id: "xai/grok-imagine-video",                       label: "Grok Imagine Video (xAI, BYOK)",                   group: "Video gen", type: "video", capabilities: [], provider: "xai",      byok_alias: "grok-imagine-video" },
-  { id: "runwayml/gen-4.5",                             label: "Gen-4.5 (RunwayML, needs CF credits)",             group: "Video gen", type: "video", capabilities: [], provider: "runwayml" },
-  { id: "alibaba/hh1-t2v",                              label: "HappyHorse 1.0 (Alibaba, img2vid, needs CF credits)", group: "Video gen", type: "video", capabilities: [], provider: "alibaba" },
-  { id: "pixverse/v6",                                  label: "PixVerse v6 (needs CF credits)",                   group: "Video gen", type: "video", capabilities: [], provider: "pixverse" },
-  { id: "pixverse/v5.6",                                label: "PixVerse v5.6 (needs CF credits)",                 group: "Video gen", type: "video", capabilities: [], provider: "pixverse" },
-  { id: "vidu/q3-pro",                                  label: "Vidu Q3 Pro (needs CF credits)",                   group: "Video gen", type: "video", capabilities: [], provider: "vidu" },
-  { id: "vidu/q3-turbo",                                label: "Vidu Q3 Turbo (needs CF credits)",                 group: "Video gen", type: "video", capabilities: [], provider: "vidu" },
+  { id: "google/veo-3.1",                               label: "Veo 3.1 (Google, BYOK)",                           group: "Video Gen", type: "video", capabilities: [], provider: "google",   byok_alias: "veo-3.1-generate-preview" },
+  { id: "google/veo-3.1-fast",                          label: "Veo 3.1 Fast (Google, BYOK)",                      group: "Video Gen", type: "video", capabilities: [], provider: "google",   byok_alias: "veo-3.1-fast-generate-001" },
+  { id: "google/veo-3",                                 label: "Veo 3 (Google, needs CF credits)",                 group: "Video Gen", type: "video", capabilities: [], provider: "google" },
+  { id: "google/veo-3-fast",                            label: "Veo 3 Fast (Google, needs CF credits)",            group: "Video Gen", type: "video", capabilities: [], provider: "google" },
+  { id: "bytedance/seedance-2.0",                       label: "Seedance 2.0 (ByteDance, needs CF credits)",       group: "Video Gen", type: "video", capabilities: [], provider: "bytedance" },
+  { id: "bytedance/seedance-2.0-fast",                  label: "Seedance 2.0 Fast (ByteDance, needs CF credits)",  group: "Video Gen", type: "video", capabilities: [], provider: "bytedance" },
+  { id: "minimax/hailuo-2.3",                           label: "Hailuo 2.3 (MiniMax, needs CF credits)",           group: "Video Gen", type: "video", capabilities: [], provider: "minimax" },
+  { id: "minimax/hailuo-2.3-fast",                      label: "Hailuo 2.3 Fast (MiniMax, needs CF credits)",      group: "Video Gen", type: "video", capabilities: [], provider: "minimax" },
+  { id: "xai/grok-imagine-video",                       label: "Grok Imagine Video (xAI, BYOK)",                   group: "Video Gen", type: "video", capabilities: [], provider: "xai",      byok_alias: "grok-imagine-video" },
+  { id: "runwayml/gen-4.5",                             label: "Gen-4.5 (RunwayML, needs CF credits)",             group: "Video Gen", type: "video", capabilities: [], provider: "runwayml" },
+  { id: "alibaba/hh1-t2v",                              label: "HappyHorse 1.0 (Alibaba, img2vid, needs CF credits)", group: "Video Gen", type: "video", capabilities: [], provider: "alibaba" },
+  { id: "pixverse/v6",                                  label: "PixVerse v6 (needs CF credits)",                   group: "Video Gen", type: "video", capabilities: [], provider: "pixverse" },
+  { id: "pixverse/v5.6",                                label: "PixVerse v5.6 (needs CF credits)",                 group: "Video Gen", type: "video", capabilities: [], provider: "pixverse" },
+  { id: "vidu/q3-pro",                                  label: "Vidu Q3 Pro (needs CF credits)",                   group: "Video Gen", type: "video", capabilities: [], provider: "vidu" },
+  { id: "vidu/q3-turbo",                                label: "Vidu Q3 Turbo (needs CF credits)",                 group: "Video Gen", type: "video", capabilities: [], provider: "vidu" },
 ];
 
 const WHISPER_MODEL = "@cf/openai/whisper-large-v3-turbo";
@@ -327,6 +337,8 @@ async function handleChat(request: Request, env: Env, ctx: ExecutionContext): Pr
   if (model.type === "image") return runImage(request, env, model, body);
   if (model.type === "tts") return runTts(request, env, model, body);
   if (model.type === "video") return runVideo(request, env, ctx, model, body);
+  if (model.type === "stt") return runStt(request, env, model, body);
+  if (model.type === "music") return runMusic(request, env, ctx, model, body);
   return json({ error: `Unsupported model type: ${model.type}` }, { status: 500 });
 }
 
@@ -587,6 +599,213 @@ async function runTts(request: Request, env: Env, model: ModelEntry, body: ChatR
     latency_ms: latency,
     ai_gateway_log_id: logId,
   });
+}
+
+// ---------- Speech-to-text (Whisper) ----------
+//
+// Synchronous: user attaches an audio file and picks a Whisper model, worker
+// calls Whisper directly and returns the transcript as the row's `output`
+// text. No D1 status='pending' or polling - Whisper completes in seconds.
+// Reuses the existing audio attachment shape from the chat path.
+
+async function runStt(request: Request, env: Env, model: ModelEntry, body: ChatRequest): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const t0 = Date.now();
+
+  const audioAtt = (body.attachments ?? []).find((a) => a.type === "audio");
+  if (!audioAtt?.data) {
+    return json({ error: "Please attach an audio file to transcribe" }, { status: 400 });
+  }
+  const parsed = parseDataUrl(audioAtt.data);
+  if (!parsed) return json({ error: "Invalid audio data URL" }, { status: 400 });
+
+  let transcript: string;
+  try {
+    const wr = await aiRun(env, model.id, { audio: parsed.base64 });
+    transcript = (wr as { text?: string })?.text?.trim() ?? "";
+  } catch (err) {
+    const m = err instanceof Error ? err.message : String(err);
+    return json({ error: `Transcription failed: ${m}` }, { status: 502 });
+  }
+
+  const latency = Date.now() - t0;
+  // Persist the audio's transcript on the attachment record but not the
+  // raw audio bytes (same convention as the chat path).
+  const persistedAtt: PersistedAttachment[] = [{
+    type: "audio",
+    mime: parsed.mime,
+    filename: audioAtt.filename ?? null,
+    transcript: transcript || null,
+  }];
+
+  const row = await persistChat(env, {
+    userEmail,
+    model: model.id,
+    model_type: "stt",
+    system_prompt: body.system_prompt ?? null,
+    user_input: body.user_input || "(audio attachment)",
+    output: transcript || "(empty transcript)",
+    output_artifact: null,
+    attachments: persistedAtt,
+    tokens_in: null,
+    tokens_out: null,
+    latency_ms: latency,
+    ai_gateway_log_id: aiLogId(env),
+  });
+
+  return json({
+    id: row.id,
+    created_at: row.created_at,
+    model: model.id,
+    model_type: "stt",
+    output: transcript,
+    output_artifact: null,
+    latency_ms: latency,
+  });
+}
+
+// ---------- Music generation (MiniMax via Unified Billing) ----------
+//
+// Same async architecture as video gen: write pending row, schedule the
+// actual env.AI.run call via ctx.waitUntil, fetch the result audio, store
+// in R2, mark done. Client polls /api/job/:id (no provider calls).
+//
+// User input maps to fields:
+//   body.user_input    -> "prompt" (style/mood description, ~10-300 chars)
+//   body.system_prompt -> "lyrics" (optional, supports [Verse]/[Chorus] tags)
+//
+// Output shape from the docs example: { audio: "https://...mp3" }
+
+interface MusicGenResult {
+  audio?: string;
+  state?: string;
+  result?: { audio?: string };
+  gatewayMetadata?: { keySource?: string };
+}
+
+async function runMusic(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  model: ModelEntry,
+  body: ChatRequest
+): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const startedAt = new Date().toISOString();
+
+  const row = await persistChat(env, {
+    userEmail,
+    model: model.id,
+    model_type: "music",
+    system_prompt: body.system_prompt ?? null,
+    user_input: body.user_input,
+    output: "",
+    output_artifact: null,
+    attachments: [],
+    tokens_in: null,
+    tokens_out: null,
+    latency_ms: 0,
+    ai_gateway_log_id: null,
+    status: "pending",
+    job_id: null,
+    job_provider: model.provider ?? null,
+    job_error: null,
+    job_started_at: startedAt,
+  });
+
+  ctx.waitUntil(
+    generateMusicBackground(env, row.id, userEmail, model.id, body.user_input, body.system_prompt ?? "", startedAt)
+  );
+
+  return json({
+    id: row.id,
+    created_at: row.created_at,
+    model: model.id,
+    model_type: "music",
+    output: "",
+    output_artifact: null,
+    status: "pending",
+    job_started_at: startedAt,
+  });
+}
+
+async function generateMusicBackground(
+  env: Env,
+  rowId: number,
+  userEmail: string,
+  modelId: string,
+  prompt: string,
+  lyrics: string,
+  startedAtIso: string
+): Promise<void> {
+  const failRow = async (msg: string) => {
+    try {
+      await env.DB.prepare(`UPDATE chats SET status = 'failed', job_error = ? WHERE id = ?`)
+        .bind(msg.slice(0, 1000), rowId)
+        .run();
+    } catch { /* swallow - background task */ }
+  };
+
+  // Build the request body. Send `lyrics` only if non-empty; some wrappers
+  // may reject empty strings.
+  const params: Record<string, unknown> = { prompt };
+  if (lyrics && lyrics.trim()) params.lyrics = lyrics;
+
+  let result: MusicGenResult;
+  try {
+    result = await aiRun(env, modelId, params) as MusicGenResult;
+  } catch (err) {
+    const m = err instanceof Error ? err.message : String(err);
+    await failRow(`env.AI.run failed: ${m}`);
+    return;
+  }
+
+  // Extract audio URL. The docs show flat shape `{ audio: "..." }`; we also
+  // accept `{ result: { audio: "..." } }` and `{ state: "Completed", result: {...} }`
+  // in case CF normalizes other providers' shapes.
+  const audioUrl = result?.audio ?? result?.result?.audio;
+  if (!audioUrl) {
+    await failRow(`Gen returned no audio URL. Raw: ${JSON.stringify(result).slice(0, 500)}`);
+    return;
+  }
+
+  // Re-host in our R2 (the MiniMax-hosted URL on aliyuncs.com may be
+  // temporary; we control the lifecycle by storing locally).
+  let bytes: Uint8Array;
+  let mime = "audio/mpeg";
+  try {
+    const aresp = await fetch(audioUrl);
+    if (!aresp.ok) throw new Error(`Fetch ${aresp.status}`);
+    mime = aresp.headers.get("content-type") || "audio/mpeg";
+    bytes = new Uint8Array(await aresp.arrayBuffer());
+  } catch (err) {
+    const m = err instanceof Error ? err.message : String(err);
+    await failRow(`Audio download failed: ${m}`);
+    return;
+  }
+
+  let r2Key: string;
+  try {
+    r2Key = await r2Put(env, "out", mime, bytes, userEmail);
+  } catch (err) {
+    const m = err instanceof Error ? err.message : String(err);
+    await failRow(`R2 upload failed: ${m}`);
+    return;
+  }
+
+  const outputArtifact: OutputArtifact = { key: r2Key, mime, type: "audio" };
+  const latency = Date.now() - Date.parse(startedAtIso);
+
+  try {
+    await env.DB.prepare(
+      `UPDATE chats SET status = 'done', output_artifact = ?, latency_ms = ? WHERE id = ?`
+    )
+      .bind(JSON.stringify(outputArtifact), latency, rowId)
+      .run();
+  } catch (err) {
+    const m = err instanceof Error ? err.message : String(err);
+    await failRow(`D1 finalize failed: ${m}`);
+  }
 }
 
 // ---------- Persistence ----------

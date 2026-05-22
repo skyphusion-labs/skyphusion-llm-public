@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.10.4
+
+- Add project favicon and PWA manifest. The mark is a stylized Greek phi (the first letter of "phusion" in skyphusion) in cyan and magenta on a deep navy rounded square. Ships as `favicon.svg` (vector, used by all modern browsers) with PNG fallbacks at 16/32/180/192/512 for older browsers, iOS, and Android home-screen installs. `manifest.webmanifest` lets the app be installed as a standalone PWA on mobile.
+- No worker code changes. Cloudflare Workers Assets binding serves the new `public/*.png`, `public/favicon.svg`, and `public/manifest.webmanifest` files automatically; no wrangler config change needed.
+
 ## v0.10.3
 
 - Fix videos downloading as `.bin` instead of `.mp4`. Three compounding causes:

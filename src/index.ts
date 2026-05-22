@@ -2051,10 +2051,11 @@ async function handleDocumentUpload(request: Request, env: Env): Promise<Respons
     return json({ error: `File too large (${bytes.length} bytes, max ${DOC_MAX_BYTES})` }, { status: 413 });
   }
 
-  // Decode as UTF-8 text.
+  // Decode as UTF-8 text. Default behavior replaces invalid bytes with U+FFFD
+  // rather than throwing, which is what we want for graceful upload handling.
   let text: string;
   try {
-    text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    text = new TextDecoder("utf-8").decode(bytes);
   } catch (err) {
     return json({ error: `Could not decode as UTF-8: ${err instanceof Error ? err.message : err}` }, { status: 400 });
   }

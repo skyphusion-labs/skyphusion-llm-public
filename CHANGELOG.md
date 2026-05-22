@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.8.2
+
+- Fix typecheck failure in `handleDocumentUpload`: Workers' `TextDecoder` types don't accept `{ fatal: false }` as a constructor option. Dropped the explicit option (non-fatal is the default), keeping the existing try/catch for defensive handling.
+
 ## v0.8.1
 
 - RAG Pass 2: chat retrieval injection now wired end-to-end

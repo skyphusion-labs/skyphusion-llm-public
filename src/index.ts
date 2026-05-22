@@ -46,6 +46,13 @@ interface Env {
   ANTHROPIC_API_KEY?: string; // optional; preferred is to store in AI Gateway dashboard
   XAI_API_KEY?: string;       // optional; preferred is to store in AI Gateway dashboard
   GOOGLE_API_KEY?: string;    // optional; preferred is to store in AI Gateway dashboard
+  OPENAI_API_KEY?: string;    // v0.11.0: optional; for OpenAI BYOK chat
+  // v0.11.0: AWS credentials for Bedrock BYOK. Scope IAM key to Bedrock invoke only.
+  // AWS_REGION defaults to us-east-1 for Nova; Pegasus 1.2 requires us-west-2 or eu-west-1.
+  AWS_ACCESS_KEY_ID?: string;
+  AWS_SECRET_ACCESS_KEY?: string;
+  AWS_REGION?: string;
+  AWS_REGION_PEGASUS?: string; // optional override for Pegasus calls
   CF_AIG_TOKEN?: string;      // only needed if gateway has Authenticated Gateway enabled
 }
 
@@ -57,6 +64,8 @@ type Provider =
   | "anthropic"
   | "xai"
   | "google"
+  | "openai"
+  | "bedrock"
   | "bytedance"
   | "minimax"
   | "runwayml"
@@ -86,6 +95,23 @@ const MODELS: ModelEntry[] = [
   { id: "anthropic/claude-opus-4-6",                    label: "Claude Opus 4.6 (Anthropic, BYOK)",          group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic" },
   { id: "anthropic/claude-sonnet-4-6",                  label: "Claude Sonnet 4.6 (Anthropic, BYOK)",        group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic" },
   { id: "anthropic/claude-haiku-4-5",                   label: "Claude Haiku 4.5 (Anthropic, BYOK)",         group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic" },
+
+  // OpenAI (v0.11.0, BYOK via OPENAI_API_KEY secret routed through AI Gateway's OpenAI proxy)
+  { id: "openai/gpt-5.5",                                label: "GPT-5.5 (OpenAI, BYOK)",                     group: "Chat \u00b7 OpenAI", type: "chat", capabilities: ["vision"], provider: "openai", byok_alias: "gpt-5.5" },
+  { id: "openai/gpt-5.4",                                label: "GPT-5.4 (OpenAI, BYOK)",                     group: "Chat \u00b7 OpenAI", type: "chat", capabilities: ["vision"], provider: "openai", byok_alias: "gpt-5.4" },
+  { id: "openai/gpt-5.4-mini",                           label: "GPT-5.4 mini (OpenAI, BYOK)",                group: "Chat \u00b7 OpenAI", type: "chat", capabilities: ["vision"], provider: "openai", byok_alias: "gpt-5.4-mini" },
+
+  // Amazon Bedrock Nova family (v0.11.0, BYOK via AWS SigV4, direct to bedrock-runtime)
+  // All four go through Bedrock's Converse API (unified across model families).
+  { id: "bedrock/amazon.nova-2-lite-v1:0",               label: "Amazon Nova 2 Lite (Bedrock, BYOK)",         group: "Chat \u00b7 Bedrock", type: "chat", capabilities: ["vision"], provider: "bedrock", byok_alias: "amazon.nova-2-lite-v1:0" },
+  { id: "bedrock/amazon.nova-2-pro-v1:0",                label: "Amazon Nova 2 Pro (Bedrock, BYOK)",          group: "Chat \u00b7 Bedrock", type: "chat", capabilities: ["vision"], provider: "bedrock", byok_alias: "amazon.nova-2-pro-v1:0" },
+  { id: "bedrock/amazon.nova-lite-v1:0",                 label: "Amazon Nova Lite (Bedrock, BYOK)",           group: "Chat \u00b7 Bedrock", type: "chat", capabilities: ["vision"], provider: "bedrock", byok_alias: "amazon.nova-lite-v1:0" },
+  { id: "bedrock/amazon.nova-pro-v1:0",                  label: "Amazon Nova Pro (Bedrock, BYOK)",            group: "Chat \u00b7 Bedrock", type: "chat", capabilities: ["vision"], provider: "bedrock", byok_alias: "amazon.nova-pro-v1:0" },
+
+  // TwelveLabs Pegasus 1.2 on Bedrock (v0.11.0, video-Q&A via InvokeModel, not Converse).
+  // Requires a video attachment. Region must be us-west-2 or eu-west-1.
+  // Configurable via AWS_REGION_PEGASUS; otherwise falls back to AWS_REGION.
+  { id: "bedrock/twelvelabs.pegasus-1-2-v1:0",           label: "Pegasus 1.2 (TwelveLabs/Bedrock, BYOK)",     group: "Chat \u00b7 Bedrock", type: "chat", capabilities: [], provider: "bedrock", byok_alias: "twelvelabs.pegasus-1-2-v1:0" },
 
   // xAI / Grok (BYOK via Bearer auth or stored keys, routed through AI Gateway)
   { id: "xai/grok-4.3",                                 label: "Grok 4.3 (xAI, BYOK)",                       group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai" },
@@ -132,11 +158,13 @@ const MODELS: ModelEntry[] = [
   { id: "@cf/leonardo/lucid-origin",                    label: "Lucid Origin (Leonardo)",      group: "Image Gen",            type: "image", capabilities: [] },
   { id: "@cf/leonardo/phoenix-1.0",                     label: "Phoenix 1.0 (Leonardo)",       group: "Image Gen",            type: "image", capabilities: [] },
   { id: "@cf/lykon/dreamshaper-8-lcm",                  label: "Dreamshaper 8 LCM (fast SD)",  group: "Image Gen",            type: "image", capabilities: [] },
+  { id: "openai/gpt-image-2-2026-04-21",                label: "GPT Image 2 (OpenAI, BYOK)",   group: "Image Gen",            type: "image", capabilities: [], provider: "openai", byok_alias: "gpt-image-2-2026-04-21" },
 
   // ---- Text-to-speech ----
   { id: "@cf/deepgram/aura-2-en",                       label: "Aura-2 English (Deepgram)",    group: "TTS",                  type: "tts",   capabilities: [] },
   { id: "@cf/deepgram/aura-2-es",                       label: "Aura-2 Spanish (Deepgram)",    group: "TTS",                  type: "tts",   capabilities: [] },
   { id: "@cf/myshell/melotts",                          label: "MeloTTS (multilingual)",       group: "TTS",                  type: "tts",   capabilities: [] },
+  { id: "openai/gpt-4o-mini-tts-2025-12-15",            label: "GPT-4o mini TTS (OpenAI, BYOK)", group: "TTS",                type: "tts",   capabilities: [], provider: "openai", byok_alias: "gpt-4o-mini-tts-2025-12-15" },
 
   // ---- Speech-to-text (Whisper) ----
   // Attach an audio file, pick a model, get the transcript. Audio file is
@@ -144,6 +172,8 @@ const MODELS: ModelEntry[] = [
   { id: "@cf/openai/whisper-large-v3-turbo",            label: "Whisper Large v3 Turbo (best)", group: "Speech-to-text",      type: "stt",   capabilities: [] },
   { id: "@cf/openai/whisper",                           label: "Whisper (general purpose)",    group: "Speech-to-text",       type: "stt",   capabilities: [] },
   { id: "@cf/openai/whisper-tiny-en",                   label: "Whisper Tiny EN (fast, beta)", group: "Speech-to-text",       type: "stt",   capabilities: [] },
+  { id: "openai/gpt-4o-transcribe",                     label: "GPT-4o Transcribe (OpenAI, BYOK)", group: "Speech-to-text",   type: "stt",   capabilities: [], provider: "openai", byok_alias: "gpt-4o-transcribe" },
+  { id: "openai/gpt-4o-mini-transcribe-2025-12-15",     label: "GPT-4o mini Transcribe (OpenAI, BYOK)", group: "Speech-to-text", type: "stt", capabilities: [], provider: "openai", byok_alias: "gpt-4o-mini-transcribe-2025-12-15" },
 
   // ---- Music generation (Unified Billing only) ----
   { id: "minimax/music-2.6",                            label: "MiniMax Music 2.6 (needs CF credits)", group: "Music Gen",     type: "music", capabilities: [], provider: "minimax" },
@@ -173,10 +203,10 @@ const WHISPER_MODEL = "@cf/openai/whisper-large-v3-turbo";
 // ---------- Types ----------
 
 interface InputAttachment {
-  type: "image" | "audio" | "video_frames";
+  type: "image" | "audio" | "video_frames" | "video_full";
   filename?: string;
   mime?: string;
-  data?: string;       // data URL (image / audio)
+  data?: string;       // data URL (image / audio / video_full)
   frames?: string[];   // data URLs (video_frames)
   duration?: number;
 }
@@ -219,10 +249,17 @@ interface PersistedVideoFramesAttachment {
   duration?: number;
   filename?: string;
 }
+interface PersistedVideoFullAttachment {
+  type: "video_full";
+  key: string;
+  mime?: string;
+  filename?: string;
+}
 type PersistedAttachment =
   | PersistedImageAttachment
   | PersistedAudioAttachment
-  | PersistedVideoFramesAttachment;
+  | PersistedVideoFramesAttachment
+  | PersistedVideoFullAttachment;
 
 interface OutputArtifact {
   key: string;
@@ -444,6 +481,18 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
       const fn = att.filename ? ` "${att.filename}"` : "";
       extraText.push(`[Video${fn}${dur}, ${frames.length} evenly-sampled frames attached below]`);
       persistedAtt.push({ type: "video_frames", keys, frame_count: keys.length, duration: att.duration, filename: att.filename });
+    } else if (att.type === "video_full") {
+      // Full video file upload for models that need the raw video (Pegasus 1.2).
+      // Stored in R2 so it appears in history; the dispatch reads it back from
+      // the InputAttachment.data field directly (we don't need to fetch it from
+      // R2 since it's already in this request).
+      const parsed = att.data ? parseDataUrl(att.data) : null;
+      if (!parsed) return json({ error: "Invalid video data URL" }, { status: 400 });
+      const bytes = base64ToBytes(parsed.base64);
+      const key = await r2Put(env, "in", parsed.mime, bytes, userEmail);
+      const fn = att.filename ? ` "${att.filename}"` : "";
+      extraText.push(`[Full video${fn} attached for video-aware model]`);
+      persistedAtt.push({ type: "video_full", key, mime: parsed.mime, filename: att.filename });
     }
   }
 
@@ -513,6 +562,9 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
   // text messages. Multimodal content (images) from prior turns is NOT
   // re-included; if the user wants to reference earlier images they can
   // re-attach. Current turn's attachments are still threaded into userContent.
+  // OpenAI and Bedrock accept system in messages (OpenAI: as role:"system";
+  // Bedrock Converse: as a separate `system` array param but converted from
+  // messages by callBedrockNova). Anthropic and Google take system separately.
   const wantsSystemInMessages = !(model.provider === "anthropic" || model.provider === "google");
   const messages: Array<unknown> = [];
   if (effectiveSystemPrompt && wantsSystemInMessages) {
@@ -540,6 +592,20 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
       const r = await callGoogle(env, model, effectiveSystemPrompt || undefined, messages);
       result = r.raw;
       logId = r.logId;
+    } else if (model.provider === "openai") {
+      const r = await callOpenAI(env, model, messages);
+      result = r.raw;
+      logId = r.logId;
+    } else if (model.provider === "bedrock") {
+      // Pegasus uses a totally different API shape (InvokeModel + video media);
+      // Nova family uses Converse. Route accordingly.
+      if (model.byok_alias?.startsWith("twelvelabs.pegasus")) {
+        const r = await callBedrockPegasus(env, model, body.user_input, body.attachments ?? []);
+        result = r.raw;
+      } else {
+        const r = await callBedrockNova(env, model, effectiveSystemPrompt || undefined, messages);
+        result = r.raw;
+      }
     } else {
       result = await aiRun(env, model.id, { messages });
       logId = aiLogId(env);
@@ -598,43 +664,50 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
 async function runImage(request: Request, env: Env, model: ModelEntry, body: ChatRequest): Promise<Response> {
   const userEmail = getUserEmail(request);
 
-  const params: Record<string, unknown> = {
-    prompt: body.user_input,
-    width: 1024,
-    height: 1024,
-    steps: 25,
-  };
-  if (body.system_prompt && body.system_prompt.trim()) {
-    params.negative_prompt = body.system_prompt;
-  }
-
-  // FLUX-1 schnell uses fewer steps and has no negative_prompt.
-  if (model.id === "@cf/black-forest-labs/flux-1-schnell") {
-    params.steps = 4;
-    delete params.negative_prompt;
-  }
+  // OpenAI image gen has a different API (POST /v1/images/generations with a
+  // different response shape). Route to a dedicated helper that returns the
+  // (bytes, mime) tuple, then share the R2-put + persist + respond tail.
+  let bytes: Uint8Array;
+  let mime: string;
+  let latency: number;
+  let logId: string | null = null;
 
   const start = Date.now();
-  let result: unknown;
-  let logId: string | null = null;
   try {
-    result = await aiRun(env, model.id, params);
-    logId = aiLogId(env);
+    if (model.provider === "openai") {
+      const r = await imageGenOpenAI(env, model, body.user_input);
+      bytes = r.bytes; mime = r.mime;
+    } else {
+      const params: Record<string, unknown> = {
+        prompt: body.user_input,
+        width: 1024,
+        height: 1024,
+        steps: 25,
+      };
+      if (body.system_prompt && body.system_prompt.trim()) {
+        params.negative_prompt = body.system_prompt;
+      }
+      // FLUX-1 schnell uses fewer steps and has no negative_prompt.
+      if (model.id === "@cf/black-forest-labs/flux-1-schnell") {
+        params.steps = 4;
+        delete params.negative_prompt;
+      }
+      const result = await aiRun(env, model.id, params);
+      logId = aiLogId(env);
+      // Response shape is { image: base64 } for FLUX-1 / Lucid / Phoenix.
+      const b64 = (result as { image?: string })?.image;
+      if (!b64 || typeof b64 !== "string") {
+        return json({ error: "Image generation returned no image", raw: result }, { status: 502 });
+      }
+      bytes = base64ToBytes(b64);
+      mime = "image/jpeg";
+    }
   } catch (err) {
     const m = err instanceof Error ? err.message : String(err);
     return json({ error: `Image generation failed: ${m}` }, { status: 502 });
   }
-  const latency = Date.now() - start;
+  latency = Date.now() - start;
 
-  // Response shape is { image: base64 } for FLUX-1 / Lucid / Phoenix.
-  const b64 = (result as { image?: string })?.image;
-  if (!b64 || typeof b64 !== "string") {
-    return json({ error: "Image generation returned no image", raw: result }, { status: 502 });
-  }
-  const bytes = base64ToBytes(b64);
-  // JPEG is the de facto output for FLUX-1; Leonardo also returns JPEG-ish.
-  // Sniff would be more correct but cost outweighs benefit at this scale.
-  const mime = "image/jpeg";
   const key = await r2Put(env, "out", mime, bytes, userEmail);
   const outputArtifact: OutputArtifact = { key, mime, type: "image" };
 
@@ -667,32 +740,76 @@ async function runImage(request: Request, env: Env, model: ModelEntry, body: Cha
   });
 }
 
+// OpenAI image gen via /v1/images/generations.
+// Body: { model, prompt, n, size, response_format: "b64_json" }
+// Response: { data: [{ b64_json: "..." }] }
+async function imageGenOpenAI(env: Env, model: ModelEntry, prompt: string): Promise<{ bytes: Uint8Array; mime: string }> {
+  if (!env.OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY not set");
+  }
+  const baseUrl = await (env.AI as unknown as {
+    gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
+  }).gateway(env.GATEWAY_ID).getUrl("openai");
+
+  const modelName = model.byok_alias ?? model.id.replace(/^openai\//, "");
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+  };
+  if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
+
+  const resp = await fetch(`${baseUrl}/images/generations`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      model: modelName,
+      prompt,
+      n: 1,
+      size: "1024x1024",
+      response_format: "b64_json",
+    }),
+  });
+  if (!resp.ok) {
+    throw new Error(`OpenAI image ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
+  }
+  const data = await resp.json() as { data?: Array<{ b64_json?: string }> };
+  const b64 = data.data?.[0]?.b64_json;
+  if (!b64) throw new Error("OpenAI image: no b64_json in response");
+  return { bytes: base64ToBytes(b64), mime: "image/png" };
+}
+
 // ---------- TTS ----------
 
 async function runTts(request: Request, env: Env, model: ModelEntry, body: ChatRequest): Promise<Response> {
   const userEmail = getUserEmail(request);
 
-  // Aura: { text }; MeloTTS: { prompt, lang? }. Send both keys defensively.
-  const params: Record<string, unknown> = { text: body.user_input, prompt: body.user_input };
+  let mime: string;
+  let bytes: Uint8Array;
+  let logId: string | null = null;
 
   const start = Date.now();
-  let resp: unknown;
-  let logId: string | null = null;
   try {
-    resp = await aiRun(env, model.id, params, true /* returnRawResponse */);
-    logId = aiLogId(env);
+    if (model.provider === "openai") {
+      const r = await ttsOpenAI(env, model, body.user_input);
+      mime = r.mime;
+      bytes = r.bytes;
+    } else {
+      // Aura: { text }; MeloTTS: { prompt, lang? }. Send both keys defensively.
+      const params: Record<string, unknown> = { text: body.user_input, prompt: body.user_input };
+      const resp = await aiRun(env, model.id, params, true /* returnRawResponse */);
+      logId = aiLogId(env);
+      if (!(resp instanceof Response)) {
+        return json({ error: "TTS returned non-Response shape", raw: resp }, { status: 502 });
+      }
+      mime = resp.headers.get("content-type") || "audio/mpeg";
+      bytes = new Uint8Array(await resp.arrayBuffer());
+    }
   } catch (err) {
     const m = err instanceof Error ? err.message : String(err);
     return json({ error: `TTS failed: ${m}` }, { status: 502 });
   }
   const latency = Date.now() - start;
 
-  // returnRawResponse gives us a Response object with audio bytes.
-  if (!(resp instanceof Response)) {
-    return json({ error: "TTS returned non-Response shape", raw: resp }, { status: 502 });
-  }
-  const mime = resp.headers.get("content-type") || "audio/mpeg";
-  const bytes = new Uint8Array(await resp.arrayBuffer());
   const key = await r2Put(env, "out", mime, bytes, userEmail);
   const outputArtifact: OutputArtifact = { key, mime, type: "audio" };
 
@@ -725,6 +842,43 @@ async function runTts(request: Request, env: Env, model: ModelEntry, body: ChatR
   });
 }
 
+// OpenAI TTS via /v1/audio/speech.
+// Body: { model, input, voice, response_format }
+// Response: raw audio bytes (not JSON). Default voice is "alloy".
+async function ttsOpenAI(env: Env, model: ModelEntry, input: string): Promise<{ bytes: Uint8Array; mime: string }> {
+  if (!env.OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY not set");
+  }
+  const baseUrl = await (env.AI as unknown as {
+    gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
+  }).gateway(env.GATEWAY_ID).getUrl("openai");
+
+  const modelName = model.byok_alias ?? model.id.replace(/^openai\//, "");
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+  };
+  if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
+
+  const resp = await fetch(`${baseUrl}/audio/speech`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      model: modelName,
+      input,
+      voice: "alloy",
+      response_format: "mp3",
+    }),
+  });
+  if (!resp.ok) {
+    throw new Error(`OpenAI TTS ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
+  }
+  return {
+    bytes: new Uint8Array(await resp.arrayBuffer()),
+    mime: resp.headers.get("content-type") || "audio/mpeg",
+  };
+}
+
 // ---------- Speech-to-text (Whisper) ----------
 //
 // Synchronous: user attaches an audio file and picks a Whisper model, worker
@@ -745,8 +899,12 @@ async function runStt(request: Request, env: Env, model: ModelEntry, body: ChatR
 
   let transcript: string;
   try {
-    const wr = await aiRun(env, model.id, { audio: parsed.base64 });
-    transcript = (wr as { text?: string })?.text?.trim() ?? "";
+    if (model.provider === "openai") {
+      transcript = await sttOpenAI(env, model, parsed.base64, parsed.mime, audioAtt.filename);
+    } else {
+      const wr = await aiRun(env, model.id, { audio: parsed.base64 });
+      transcript = (wr as { text?: string })?.text?.trim() ?? "";
+    }
   } catch (err) {
     const m = err instanceof Error ? err.message : String(err);
     return json({ error: `Transcription failed: ${m}` }, { status: 502 });
@@ -788,6 +946,48 @@ async function runStt(request: Request, env: Env, model: ModelEntry, body: ChatR
     conversation_id: row.conversation_id,
     turn_index: 0,
   });
+}
+
+// OpenAI transcription via /v1/audio/transcriptions.
+// Body: multipart/form-data with `file` (audio binary), `model`, `response_format`.
+// Response: { text: "transcript" } when response_format is "json".
+async function sttOpenAI(env: Env, model: ModelEntry, audioBase64: string, mime: string, filename?: string): Promise<string> {
+  if (!env.OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY not set");
+  }
+  const baseUrl = await (env.AI as unknown as {
+    gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
+  }).gateway(env.GATEWAY_ID).getUrl("openai");
+
+  const modelName = model.byok_alias ?? model.id.replace(/^openai\//, "");
+
+  // OpenAI's /audio/transcriptions endpoint expects multipart/form-data with
+  // the audio bytes as the `file` part. Workers have native FormData + Blob
+  // so we don't need a polyfill.
+  const audioBytes = base64ToBytes(audioBase64);
+  const fname = filename || (mime.includes("wav") ? "audio.wav" : mime.includes("mp3") || mime.includes("mpeg") ? "audio.mp3" : "audio.m4a");
+  const blob = new Blob([audioBytes], { type: mime });
+
+  const form = new FormData();
+  form.append("file", blob, fname);
+  form.append("model", modelName);
+  form.append("response_format", "json");
+
+  const headers: Record<string, string> = {
+    "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+  };
+  if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
+
+  const resp = await fetch(`${baseUrl}/audio/transcriptions`, {
+    method: "POST",
+    headers,
+    body: form,
+  });
+  if (!resp.ok) {
+    throw new Error(`OpenAI STT ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
+  }
+  const data = await resp.json() as { text?: string };
+  return data.text?.trim() ?? "";
 }
 
 // ---------- Music generation (MiniMax via Unified Billing) ----------
@@ -1294,6 +1494,226 @@ function transformToGoogle(
     systemInstruction: systemText ? { parts: [{ text: systemText }] } : undefined,
     contents,
   };
+}
+
+// ---------- OpenAI chat (BYOK, v0.11.0) ----------
+//
+// OpenAI uses the standard `messages` array with role: "system" | "user" | "assistant",
+// which matches our internal format directly. No transform needed beyond stripping
+// our internal message shapes if they contain attachments (we currently only support
+// text via OpenAI - for vision attachments through OpenAI add image_url content
+// parts later if needed).
+//
+// Routed through Cloudflare AI Gateway's OpenAI proxy. Authentication via the
+// OPENAI_API_KEY secret. The gateway preserves the OpenAI API schema 1:1 so
+// the request and response shapes are identical to the official API.
+
+async function callOpenAI(
+  env: Env,
+  model: ModelEntry,
+  messages: Array<unknown>
+): Promise<{ raw: unknown; logId: string | null }> {
+  if (!env.OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY not set; OpenAI BYOK requires the secret to be configured (npx wrangler secret put OPENAI_API_KEY)");
+  }
+
+  const baseUrl = await (env.AI as unknown as {
+    gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
+  }).gateway(env.GATEWAY_ID).getUrl("openai");
+
+  const modelName = model.byok_alias ?? model.id.replace(/^openai\//, "");
+
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+  };
+  if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
+
+  const resp = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      model: modelName,
+      messages,
+      max_tokens: 4096,
+    }),
+  });
+
+  const logId = resp.headers.get("cf-aig-log-id");
+  if (!resp.ok) {
+    throw new Error(`OpenAI ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
+  }
+  const raw = await resp.json();
+  return { raw, logId };
+}
+
+// ---------- Amazon Bedrock chat - Nova family (BYOK, v0.11.0) ----------
+//
+// Bedrock requires AWS SigV4 signed requests. We use the aws4fetch library to
+// handle signing (compact, designed for Workers runtime). All Nova models
+// (Nova 2 Lite, Nova 2 Pro, Nova Lite, Nova Pro) use the Converse API which
+// normalizes request/response shapes across model families.
+//
+// Converse API message shape transforms FROM our internal {role, content}
+// format TO Bedrock's:
+//   - role: "system" extracted to a top-level `system: [{text}]` array
+//   - role: "user"|"assistant" with content string becomes
+//     {role, content: [{text: "..."}]}
+//
+// Response shape: { output: { message: { content: [{ text: "..." }] } }, ... }
+// extractOutput already handles the .text field via a fall-through case
+// we'll add below.
+
+async function callBedrockNova(
+  env: Env,
+  model: ModelEntry,
+  systemPrompt: string | undefined,
+  messages: Array<unknown>
+): Promise<{ raw: unknown; logId: string | null }> {
+  if (!env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY) {
+    throw new Error("AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be set; Bedrock BYOK requires AWS credentials (npx wrangler secret put AWS_ACCESS_KEY_ID; npx wrangler secret put AWS_SECRET_ACCESS_KEY)");
+  }
+  const region = env.AWS_REGION || "us-east-1";
+  const modelName = model.byok_alias ?? model.id.replace(/^bedrock\//, "");
+
+  // Transform our messages array into Bedrock Converse format. System messages
+  // are pulled out separately; user/assistant become content-block arrays.
+  const bedrockMessages: Array<{ role: string; content: Array<{ text: string }> }> = [];
+  for (const msg of messages) {
+    const m = msg as { role: string; content: unknown };
+    if (m.role === "system") continue; // we use systemPrompt arg instead
+    if (typeof m.content === "string") {
+      bedrockMessages.push({ role: m.role, content: [{ text: m.content }] });
+    } else if (Array.isArray(m.content)) {
+      // Multi-part content (e.g. text + image). For now, concatenate text parts.
+      // TODO: pass through image parts as Bedrock image content blocks when adding vision.
+      const textParts = (m.content as Array<{ type?: string; text?: string }>)
+        .filter((p) => p.type === "text" || typeof p.text === "string")
+        .map((p) => p.text || "")
+        .join("\n");
+      bedrockMessages.push({ role: m.role, content: [{ text: textParts || "(empty)" }] });
+    }
+  }
+
+  const body: Record<string, unknown> = {
+    messages: bedrockMessages,
+    inferenceConfig: { maxTokens: 4096 },
+  };
+  if (systemPrompt) {
+    body.system = [{ text: systemPrompt }];
+  }
+
+  // Dynamic import so the aws4fetch bundle isn't loaded for users who only
+  // use other providers. Static type-only import avoided to keep things simple.
+  const { AwsClient } = await import("aws4fetch");
+  const awsClient = new AwsClient({
+    accessKeyId: env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
+    region,
+    service: "bedrock",
+  });
+
+  const url = `https://bedrock-runtime.${region}.amazonaws.com/model/${encodeURIComponent(modelName)}/converse`;
+
+  const resp = await awsClient.fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!resp.ok) {
+    throw new Error(`Bedrock Nova ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
+  }
+  const raw = await resp.json();
+  // logId: Bedrock doesn't return a Cloudflare-style log id. Pass null.
+  return { raw, logId: null };
+}
+
+// ---------- TwelveLabs Pegasus 1.2 on Bedrock (v0.11.0) ----------
+//
+// Pegasus is video-Q&A: takes a video file and a text prompt, returns text
+// analysis. Different from chat in that:
+//   - Doesn't use Converse API; uses InvokeModel directly
+//   - Requires a video attachment (validated in dispatch)
+//   - Body shape: {inputPrompt: string, mediaSource: {base64String|s3Location}}
+//   - Region restricted: us-west-2 or eu-west-1 only (cross-region inference
+//     from other US/EU regions can work; configurable via AWS_REGION_PEGASUS).
+//   - Bedrock InvokeModel payload limit is 25MB, so base64-encoded video must
+//     stay under roughly 18MB binary. Larger videos would require S3 (not
+//     supported in this build - we'd need to add an S3 binding).
+
+async function callBedrockPegasus(
+  env: Env,
+  model: ModelEntry,
+  prompt: string,
+  attachments: InputAttachment[]
+): Promise<{ raw: unknown; logId: string | null }> {
+  if (!env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY) {
+    throw new Error("AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be set for Pegasus BYOK");
+  }
+
+  // Find the first video attachment. Pegasus requires exactly one video.
+  // Frontend uploads as "video_full" (the raw video file as a data URL) when
+  // the selected model is Pegasus, rather than the default frame-extraction
+  // behavior used for vision-capable chat models.
+  const videoAtt = attachments.find((a) => a.type === "video_full");
+  if (!videoAtt) {
+    throw new Error("Pegasus 1.2 requires a video attachment. Attach an .mp4 (or similar) file before sending the prompt.");
+  }
+
+  // Decode the data URL to raw bytes, then re-encode as base64 (no data: prefix).
+  // InputAttachment.data is a "data:video/mp4;base64,AAAA..." string.
+  const dataUrl = videoAtt.data ?? "";
+  const commaIdx = dataUrl.indexOf(",");
+  if (commaIdx < 0) {
+    throw new Error("Pegasus: video attachment data URL is malformed");
+  }
+  const base64Raw = dataUrl.slice(commaIdx + 1);
+
+  // Hard size check. 18MB binary = ~24MB base64. Bedrock InvokeModel cap is 25MB.
+  // Conservatively reject videos that base64-encode to over 24MB.
+  const PEGASUS_MAX_BASE64_BYTES = 24 * 1024 * 1024;
+  if (base64Raw.length > PEGASUS_MAX_BASE64_BYTES) {
+    const mb = (base64Raw.length * 0.75 / (1024 * 1024)).toFixed(1);
+    throw new Error(
+      `Pegasus: video too large (~${mb}MB binary). Bedrock InvokeModel has a 25MB request limit; ` +
+      `videos must be under roughly 18MB. For larger videos you'd need S3 integration (not yet supported).`
+    );
+  }
+
+  // Region selection: Pegasus is only available in us-west-2 and eu-west-1.
+  // AWS_REGION_PEGASUS lets the operator pin Pegasus to a different region
+  // than the default Nova region (which is typically us-east-1).
+  const region = env.AWS_REGION_PEGASUS || env.AWS_REGION || "us-west-2";
+
+  const body = {
+    inputPrompt: prompt,
+    mediaSource: { base64String: base64Raw },
+    temperature: 0.2,
+  };
+
+  const { AwsClient } = await import("aws4fetch");
+  const awsClient = new AwsClient({
+    accessKeyId: env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
+    region,
+    service: "bedrock",
+  });
+
+  const modelName = model.byok_alias ?? "twelvelabs.pegasus-1-2-v1:0";
+  const url = `https://bedrock-runtime.${region}.amazonaws.com/model/${encodeURIComponent(modelName)}/invoke`;
+
+  const resp = await awsClient.fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json", "accept": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!resp.ok) {
+    throw new Error(`Pegasus ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
+  }
+  const raw = await resp.json();
+  return { raw, logId: null };
 }
 
 // ---------- Video generation (Unified Billing via env.AI.run) ----------
@@ -1814,6 +2234,23 @@ function extractOutput(result: unknown): string {
     if (text) return text;
   }
 
+  // Bedrock Converse API (Nova family): { output: { message: { content: [{ text }] } } }
+  const bedrockOutput = r?.output as { message?: { content?: Array<{ text?: string }> } } | undefined;
+  if (bedrockOutput?.message?.content) {
+    const text = bedrockOutput.message.content
+      .map((c) => c.text ?? "")
+      .join("");
+    if (text) return text;
+  }
+
+  // Bedrock Pegasus 1.2 (InvokeModel): { message: "...", finishReason: "..." }
+  // Some versions return { generations: [{ text }] } instead - cover both.
+  if (typeof r?.message === "string") return r.message as string;
+  const generations = r?.generations as Array<{ text?: string }> | undefined;
+  if (Array.isArray(generations) && typeof generations[0]?.text === "string") {
+    return generations[0].text;
+  }
+
   const out = r?.output as Array<unknown> | undefined;
   if (Array.isArray(out)) {
     const text = out
@@ -1832,12 +2269,14 @@ function extractOutput(result: unknown): string {
 
 function extractUsage(result: unknown): { in_: number | null; out_: number | null } {
   const r = result as Record<string, unknown>;
-  // OpenAI / Anthropic: usage object on result
+  // OpenAI / Anthropic / Bedrock: usage object on result.
+  // OpenAI uses prompt_tokens/completion_tokens; Anthropic uses input_tokens/output_tokens;
+  // Bedrock Converse uses inputTokens/outputTokens (camelCase).
   const u = r?.usage as Record<string, number> | undefined;
   if (u) {
     return {
-      in_:  u.prompt_tokens ?? u.input_tokens  ?? null,
-      out_: u.completion_tokens ?? u.output_tokens ?? null,
+      in_:  u.prompt_tokens ?? u.input_tokens ?? u.inputTokens ?? null,
+      out_: u.completion_tokens ?? u.output_tokens ?? u.outputTokens ?? null,
     };
   }
   // Google Gemini: usageMetadata
@@ -2008,6 +2447,7 @@ async function handleConversationDelete(request: Request, env: Env, id: string):
       for (const a of atts) {
         if (a.type === "image") keysToDelete.push(a.key);
         else if (a.type === "video_frames") keysToDelete.push(...(a.keys ?? []));
+        else if (a.type === "video_full") keysToDelete.push(a.key);
       }
     }
     if (row.output_artifact) {
@@ -2047,6 +2487,7 @@ async function handleHistoryDelete(request: Request, env: Env, id: number): Prom
     for (const a of atts) {
       if (a.type === "image") keysToDelete.push(a.key);
       else if (a.type === "video_frames") keysToDelete.push(...(a.keys ?? []));
+      else if (a.type === "video_full") keysToDelete.push(a.key);
       // audio has no R2 reference
     }
   }

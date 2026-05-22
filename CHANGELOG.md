@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.11.1
+
+- Expand OpenAI BYOK across model types per Conrad's confirmed model list:
+  - Image gen: `gpt-image-2-2026-04-21` via `/v1/images/generations` (returns base64 PNG; stored in R2 via the same artifact pipeline as Workers AI image gen).
+  - TTS: `gpt-4o-mini-tts-2025-12-15` via `/v1/audio/speech` (returns MP3 bytes; default voice "alloy", configurable later).
+  - STT: `gpt-4o-transcribe` and `gpt-4o-mini-transcribe-2025-12-15` via `/v1/audio/transcriptions` (multipart upload using native FormData/Blob).
+- Removed `openai/gpt-4.1` from the catalog since Conrad's confirmed list doesn't include it. Chat models remain GPT-5.5, GPT-5.4, GPT-5.4 mini.
+- New OpenAI-specific dispatch helpers: `imageGenOpenAI`, `ttsOpenAI`, `sttOpenAI`. Each routes through Cloudflare AI Gateway's OpenAI proxy using the existing `OPENAI_API_KEY` secret.
+
+**Not implemented this turn (deferred for architectural reasons):**
+
+OpenAI Realtime API models (`gpt-realtime-2`, `gpt-realtime-1.5`, `gpt-realtime-mini-2025-12-15`, `gpt-realtime-translate`, `gpt-realtime-whisper`) use WebSocket-based bidirectional audio streaming, not HTTP request/response. A Cloudflare Worker handler cannot hold a persistent duplex stream (same `waitUntil` cancellation problem we hit with video gen). The right architecture is:
+
+1. Worker endpoint mints an ephemeral session token via OpenAI's `/v1/realtime/sessions` server-side.
+2. Browser opens WebSocket directly to `wss://api.openai.com/v1/realtime?model=...` using that token.
+3. Browser handles full-duplex audio capture (MediaRecorder / WebRTC), playback, and transcript display.
+
+This is a substantial separate feature (~400-500 LOC across worker + frontend + UI). Deferred to a focused future session.
+
+## v0.11.0
+
+- Add OpenAI BYOK chat. Catalog ships GPT-5.5, GPT-5.4, GPT-5.4 mini, GPT-4.1. Routes through Cloudflare AI Gateway's OpenAI proxy. New `OPENAI_API_KEY` worker secret. Standard OpenAI messages-array format, no transform needed.
+- Add Amazon Bedrock BYOK chat (Nova family). Catalog ships Nova 2 Lite, Nova 2 Pro, Nova Lite, Nova Pro. All routed through Bedrock's Converse API which normalizes request/response shapes across model families. SigV4 signing handled by `aws4fetch` (compact, designed for Workers runtime; eliminates ~150 LOC of manual crypto signing).
+- Add TwelveLabs Pegasus 1.2 on Bedrock (video-Q&A). Different architecture from chat: uses `InvokeModel` (not Converse) with a `{inputPrompt, mediaSource}` body shape. Frontend uploads the full video as a new `video_full` attachment type (not the default frame-extraction used for vision-capable chat models). Limitations: Bedrock InvokeModel has a 25MB request limit (~18MB binary after base64); Pegasus is only available in us-west-2 and eu-west-1; Pegasus is single-shot per call so multi-turn requires re-attaching the video on each follow-up.
+- New worker secrets: `OPENAI_API_KEY`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`. New optional env vars: `AWS_REGION` (default us-east-1, used for Nova), `AWS_REGION_PEGASUS` (default us-west-2, used for Pegasus calls specifically).
+- New dependency: `aws4fetch ^1.0.18`. Run `npm install` after pulling.
+- New attachment type `video_full` (raw video upload) for Pegasus. Existing `video_frames` (canvas-extracted JPG frames) unchanged for other vision-capable chat models.
+- `extractOutput` and `extractUsage` extended to handle Bedrock's response shape (`output.message.content[].text`) and camelCase token fields (`inputTokens`/`outputTokens`).
+- No D1 migration required.
+
 ## v0.10.4
 
 - Add project favicon and PWA manifest. The mark is a stylized Greek phi (the first letter of "phusion" in skyphusion) in cyan and magenta on a deep navy rounded square. Ships as `favicon.svg` (vector, used by all modern browsers) with PNG fallbacks at 16/32/180/192/512 for older browsers, iOS, and Android home-screen installs. `manifest.webmanifest` lets the app be installed as a standalone PWA on mobile.

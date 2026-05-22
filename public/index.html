@@ -29,6 +29,15 @@
           <textarea id="system-prompt" rows="3" placeholder="optional"></textarea>
         </label>
       </div>
+      <div class="output-area">
+        <header class="output-header">
+          <span>output</span>
+          <span id="output-meta"></span>
+        </header>
+        <pre id="output" class="output"></pre>
+        <div id="output-artifact" class="output-artifact"></div>
+        <div id="loaded-attachments" class="loaded-attachments"></div>
+      </div>
       <div class="input-area">
         <label>
           <span id="user-input-label">your input</span>
@@ -43,15 +52,6 @@
           <button id="run" type="button">run</button>
         </div>
         <div id="attachments" class="attachments"></div>
-      </div>
-      <div class="output-area">
-        <header class="output-header">
-          <span>output</span>
-          <span id="output-meta"></span>
-        </header>
-        <pre id="output" class="output"></pre>
-        <div id="output-artifact" class="output-artifact"></div>
-        <div id="loaded-attachments" class="loaded-attachments"></div>
       </div>
     </main>
   </div>

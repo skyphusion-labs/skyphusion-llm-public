@@ -133,7 +133,7 @@ html, body {
 
 .workspace {
   display: grid;
-  grid-template-rows: auto auto 1fr;
+  grid-template-rows: auto 1fr auto;
   gap: 1rem;
   padding: 1.5rem;
   overflow: hidden;

@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.7.5
+
+- Flip workspace layout: output now sits in the middle (1fr, fills available space) and the input pins to the bottom. Controls (model picker, system prompt) stay at the top. Chat-style layout.
+
 ## v0.7.4
 
 - Clear the user-input box and refocus it after a successful submit so the next prompt can be typed immediately. Output, attachments, and system prompt all remain visible.

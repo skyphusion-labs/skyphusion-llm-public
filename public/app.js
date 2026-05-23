@@ -49,6 +49,7 @@ const VIDEO_FRAME_MAX_DIM = 1024;
 // surrounding text color via stroke="currentColor". Sized via CSS, not the
 // width/height attributes.
 const ICON_COPY = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="5" width="9" height="9" rx="1"/><path d="M11 5V3a1 1 0 0 0-1-1H3a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h2"/></svg>`;
+const ICON_EDIT = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11.5 1.5l3 3-8.5 8.5H3v-3z"/><path d="M9.5 3.5l3 3"/></svg>`;
 const ICON_RETRY = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><polyline points="13.5 1.5 13.5 4.5 10.5 4.5"/></svg>`;
 const ICON_CHECK = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 8 7 12 13 4"/></svg>`;
 
@@ -731,10 +732,11 @@ function renderTurnHTML(turn, index) {
   // Per-turn action buttons (v0.12.0+):
   //   - Copy: shown when there is output text to copy. Pure-artifact turns
   //     (image/audio/video without a text output) hide it.
-  //   - Retry: shown on completed or failed turns. Populates the input
-  //     textarea with this turn's user_input so the user can review or tweak
-  //     before resubmitting (intentionally not auto-submit, to avoid
-  //     burning credits on accidental clicks).
+  //   - Edit: populates the input textarea with this turn's user_input (and
+  //     switches the model picker and system prompt to match) so the user
+  //     can tweak before re-running. Does NOT submit.
+  //   - Retry: one-click resubmit. Switches model picker, system prompt,
+  //     and input to match this turn, then fires run() immediately.
   // Buttons are hidden while a turn is pending.
   let actionsBlock = "";
   if (!isPending) {
@@ -743,7 +745,8 @@ function renderTurnHTML(turn, index) {
       buttons.push(`<button class="turn-action" data-action="copy" data-turn="${index}" type="button" aria-label="Copy response" title="Copy">${ICON_COPY}</button>`);
     }
     if (turn.user_input) {
-      buttons.push(`<button class="turn-action" data-action="retry" data-turn="${index}" type="button" aria-label="Retry: put this prompt back in the input" title="Retry">${ICON_RETRY}</button>`);
+      buttons.push(`<button class="turn-action" data-action="edit" data-turn="${index}" type="button" aria-label="Edit this prompt and rerun" title="Edit">${ICON_EDIT}</button>`);
+      buttons.push(`<button class="turn-action" data-action="retry" data-turn="${index}" type="button" aria-label="Retry: resubmit this prompt unchanged" title="Retry">${ICON_RETRY}</button>`);
     }
     if (buttons.length) {
       actionsBlock = `<div class="turn-actions">${buttons.join("")}</div>`;
@@ -954,11 +957,8 @@ async function handleTurnAction(e) {
     return;
   }
 
-  if (action === "retry") {
-    // Populate the input with this turn's prompt and focus it. Deliberately
-    // not auto-submitting: lets the user inspect or tweak before re-running,
-    // and avoids accidental credit burn on misclick.
-    userInput.value = turn.user_input || "";
+  if (action === "edit") {
+    loadTurnIntoComposer(turn);
     userInput.focus();
     // Move cursor to end so a quick edit is natural.
     const end = userInput.value.length;
@@ -966,6 +966,33 @@ async function handleTurnAction(e) {
     userInput.scrollIntoView({ behavior: "smooth", block: "center" });
     return;
   }
+
+  if (action === "retry") {
+    // One-click resubmit: load this turn's settings into the composer, then
+    // fire run() immediately. The new generation appends as a new turn in
+    // the conversation. Attachments from the original turn are NOT carried
+    // forward (multi-turn continuation is text-only across all paths), so
+    // an attached-image retry will re-submit text only.
+    loadTurnIntoComposer(turn);
+    if (runBtn.disabled) return; // Already in-flight; don't double-fire.
+    run();
+    return;
+  }
+}
+
+// Shared by edit and retry. Restores the model picker, system prompt, and
+// user input to match the historical turn. Updates the affordance so the
+// composer's labels and visible fields (negative_prompt vs system, etc)
+// reflect the model type.
+function loadTurnIntoComposer(turn) {
+  if (turn.model && state.modelsById[turn.model]) {
+    modelSelect.value = turn.model;
+    updateAffordance();
+  }
+  if (typeof turn.system_prompt === "string") {
+    systemPrompt.value = turn.system_prompt;
+  }
+  userInput.value = turn.user_input || "";
 }
 
 userInput.addEventListener("keydown", (e) => {

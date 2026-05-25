@@ -1,4 +1,6 @@
 // skyphusion-llm-public worker. Routes:
+//   GET    /health                 liveness probe (no binding access, always 200)
+//   GET    /health/deep            deep check: D1, R2, Vectorize, AI gateway config
 //   GET    /api/models             list models with type + capabilities, return user email
 //   POST   /api/chat               run model, persist row, return result
 //   GET    /api/history            list this user's chats, newest first
@@ -349,6 +351,20 @@ function aiLogId(env: Env): string | null {
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    // Cheap liveness check. No binding access; sub-millisecond response.
+    // Use for high-frequency uptime polling (Kuma at 60s interval, etc).
+    if (url.pathname === "/health") {
+      return json({ ok: true, ts: Date.now() });
+    }
+
+    // Deep check: exercises D1, R2, Vectorize, and confirms the AI gateway
+    // is configured. Returns 503 if any check fails so an uptime monitor
+    // flips red. Slower than /health (50-200ms typical) so poll less
+    // frequently (5min interval works well).
+    if (url.pathname === "/health/deep" && request.method === "GET") {
+      return handleHealthDeep(env);
+    }
 
     if (url.pathname === "/api/models" && request.method === "GET") {
       return json({ models: MODELS, user: getUserEmail(request) });
@@ -2971,6 +2987,88 @@ async function handleArtifact(request: Request, env: Env, key: string): Promise<
   headers.set("cache-control", "private, max-age=3600");
   headers.set("content-disposition", `inline; filename="${filename}"`);
   return new Response(obj.body, { headers });
+}
+
+// ---------- Health checks ----------
+//
+// /health is a liveness probe: no binding access, always 200. Use for
+// frequent (60s) uptime polling.
+//
+// /health/deep exercises each external dependency once. Each check is timed
+// independently; the response body includes per-check ok/latency/error so
+// a partial outage is visible even though the overall HTTP status is 503.
+// Use for slower (5min) polling.
+//
+// Both endpoints sit behind Cloudflare Access. For Kuma to reach them you
+// need either an Access service token (recommended) or a bypass policy on
+// /health* in the Access app config.
+
+interface HealthCheckResult {
+  ok: boolean;
+  latency_ms: number;
+  error?: string;
+}
+
+async function handleHealthDeep(env: Env): Promise<Response> {
+  const checks: Record<string, HealthCheckResult> = {};
+
+  // D1: SELECT 1 round-trip. Verifies the binding works and the database
+  // is reachable. Doesn't touch any user data.
+  {
+    const t0 = Date.now();
+    try {
+      await env.DB.prepare(`SELECT 1 AS ok`).first();
+      checks.d1 = { ok: true, latency_ms: Date.now() - t0 };
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      checks.d1 = { ok: false, latency_ms: Date.now() - t0, error: m };
+    }
+  }
+
+  // R2: HEAD on a key that doesn't exist. Returns null on a working binding
+  // (no error). Validates auth and bucket reachability without creating or
+  // reading user data.
+  {
+    const t0 = Date.now();
+    try {
+      await env.R2.head("__healthcheck_nonexistent_key__");
+      checks.r2 = { ok: true, latency_ms: Date.now() - t0 };
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      checks.r2 = { ok: false, latency_ms: Date.now() - t0, error: m };
+    }
+  }
+
+  // Vectorize: describe() returns index metadata. Cheap, no vector ops.
+  {
+    const t0 = Date.now();
+    try {
+      await env.VEC.describe();
+      checks.vectorize = { ok: true, latency_ms: Date.now() - t0 };
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      checks.vectorize = { ok: false, latency_ms: Date.now() - t0, error: m };
+    }
+  }
+
+  // AI binding: just confirm GATEWAY_ID is set. We deliberately do NOT run
+  // an actual model here; even the cheapest model call burns neurons and a
+  // per-minute health probe would add up. If the secret is missing, every
+  // real chat request will fail anyway, so this is sufficient.
+  {
+    const t0 = Date.now();
+    if (env.GATEWAY_ID && typeof env.GATEWAY_ID === "string" && env.GATEWAY_ID.length > 0) {
+      checks.ai_config = { ok: true, latency_ms: Date.now() - t0 };
+    } else {
+      checks.ai_config = { ok: false, latency_ms: Date.now() - t0, error: "GATEWAY_ID not set" };
+    }
+  }
+
+  const allOk = Object.values(checks).every((c) => c.ok);
+  return json(
+    { ok: allOk, ts: Date.now(), checks },
+    { status: allOk ? 200 : 503 }
+  );
 }
 
 // ---------- LongRunWorkflow (v0.12.0) ----------

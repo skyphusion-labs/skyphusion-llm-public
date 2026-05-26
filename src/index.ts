@@ -330,6 +330,20 @@ async function r2Put(env: Env, prefix: "in" | "out", mime: string, bytes: Uint8A
   return key;
 }
 
+// Streaming variant: pipes a ReadableStream directly into R2 without
+// buffering the bytes in worker memory. Use this for large artifacts (video,
+// audio) where the source is a fetch response body. R2.put accepts
+// ReadableStream as the value parameter and will consume it as the upload
+// progresses, so peak memory stays bounded regardless of artifact size.
+async function r2PutStream(env: Env, prefix: "in" | "out", mime: string, stream: ReadableStream, userEmail: string): Promise<string> {
+  const key = `${prefix}/${crypto.randomUUID()}.${extFromMime(mime)}`;
+  await env.R2.put(key, stream, {
+    httpMetadata: { contentType: mime },
+    customMetadata: { user_email: userEmail },
+  });
+  return key;
+}
+
 async function r2DeleteSafe(env: Env, key: string): Promise<void> {
   try { await env.R2.delete(key); } catch { /* ignore */ }
 }
@@ -451,6 +465,36 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
   const userEmail = getUserEmail(request);
   const inputs: InputAttachment[] = body.attachments ?? [];
 
+  // Hot-path parallelization (v0.12.1): kick off the prior-turns SELECT and
+  // the RAG retrieve in the background while the attachment walk runs. None
+  // of the three depend on each other (the SELECT only needs the inbound
+  // conversation_id + user_email; retrieveContext only needs user_email +
+  // the raw user_input), so serializing them costs ~600-1500ms on
+  // multimodal+RAG turns. We await each promise at its existing use site
+  // below so the error surface is unchanged.
+  const conversationIdIn = body.conversation_id?.trim() || "";
+  const priorTurnsPromise: Promise<{
+    rows: Array<{ user_input: string; output: string; turn_index: number }>;
+  }> = conversationIdIn
+    ? env.DB.prepare(
+        `SELECT user_input, output, turn_index
+           FROM chats
+          WHERE conversation_id = ?
+            AND user_email = ?
+            AND status = 'done'
+            AND model_type = 'chat'
+          ORDER BY turn_index ASC`
+      )
+        .bind(conversationIdIn, userEmail)
+        .all<{ user_input: string; output: string; turn_index: number }>()
+        .then((r) => ({ rows: r.results ?? [] }))
+    : Promise.resolve({ rows: [] });
+
+  const retrievePromise: Promise<{ chunks: RetrievedChunk[]; error: string | null }> =
+    body.use_docs
+      ? retrieveContext(env, userEmail, body.user_input)
+      : Promise.resolve({ chunks: [], error: null });
+
   // Walk inputs: write images / video frames to R2, transcribe audio via
   // Whisper. Build three parallel structures used after the loop:
   //   - extraText: prompt snippets the LLM sees
@@ -491,13 +535,19 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
         return json({ error: `Model ${model.id} does not support vision. Video frames require a vision-capable chat model.` }, { status: 400 });
       }
       const frames = att.frames ?? [];
-      const keys: string[] = [];
-      for (const fdataUrl of frames) {
-        const parsed = parseDataUrl(fdataUrl);
-        if (!parsed) continue;
-        const bytes = base64ToBytes(parsed.base64);
-        const k = await r2Put(env, "in", parsed.mime, bytes, userEmail);
-        keys.push(k);
+      // Parse first (cheap, synchronous), then fan out R2 puts in parallel.
+      // Frames are independent: there's no ordering constraint between R2
+      // writes, only between the resulting `imageDataUrls` entries (which
+      // we preserve by iterating the same parsedFrames array twice).
+      const parsedFrames = frames
+        .map((fdataUrl) => ({ fdataUrl, parsed: parseDataUrl(fdataUrl) }))
+        .filter((p): p is { fdataUrl: string; parsed: { mime: string; base64: string } } => p.parsed !== null);
+      const keys = await Promise.all(
+        parsedFrames.map(({ parsed }) =>
+          r2Put(env, "in", parsed.mime, base64ToBytes(parsed.base64), userEmail)
+        )
+      );
+      for (const { fdataUrl } of parsedFrames) {
         imageDataUrls.push(fdataUrl);
       }
       const dur = att.duration ? ` ${att.duration.toFixed(1)}s` : "";
@@ -529,23 +579,14 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
   // (filtered to this user, completed chat turns only) and assemble a history
   // of user/assistant message pairs. The current turn appends to that history.
   // If no conversation_id, generate a new one for the first turn.
-  let conversationId = body.conversation_id?.trim() || "";
+  // The SELECT itself runs in parallel with the attachment walk (hoisted
+  // above as priorTurnsPromise); here we just consume the result.
+  let conversationId = conversationIdIn;
   let turnIndex = 0;
   const priorTurns: Array<{ user_input: string; output: string }> = [];
 
   if (conversationId) {
-    const prior = await env.DB.prepare(
-      `SELECT user_input, output, turn_index
-         FROM chats
-        WHERE conversation_id = ?
-          AND user_email = ?
-          AND status = 'done'
-          AND model_type = 'chat'
-        ORDER BY turn_index ASC`
-    )
-      .bind(conversationId, userEmail)
-      .all<{ user_input: string; output: string; turn_index: number }>();
-    const rows = prior.results ?? [];
+    const { rows } = await priorTurnsPromise;
     for (const r of rows) {
       // Skip empty/failed prior turns defensively.
       if (r.user_input && r.output) {
@@ -558,14 +599,10 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
     conversationId = crypto.randomUUID();
   }
 
-  // RAG retrieval (Pass 2) - per-turn, applies only to THIS turn's system prompt
-  let retrievedChunks: RetrievedChunk[] = [];
-  let retrievalError: string | null = null;
-  if (body.use_docs) {
-    const r = await retrieveContext(env, userEmail, body.user_input);
-    retrievedChunks = r.chunks;
-    retrievalError = r.error;
-  }
+  // RAG retrieval (Pass 2) - per-turn, applies only to THIS turn's system prompt.
+  // The retrieve itself runs in parallel with the attachment walk + prior-turns
+  // fetch (hoisted above as retrievePromise); here we just consume the result.
+  const { chunks: retrievedChunks, error: retrievalError } = await retrievePromise;
 
   // Build the effective system prompt: user-supplied prompt followed by
   // the retrieval block. If only one is present, use that one alone.
@@ -2062,33 +2099,24 @@ async function handleJobPoll(request: Request, env: Env, id: number): Promise<Re
       return json({ id: row.id, status: "failed", job_error: "Upstream reported done but no video_url" });
     }
 
-    let bytes: Uint8Array;
-    // We know this is a video gen result, so force the mime to video/mp4
-    // regardless of what the upstream CDN reports. Many CDNs serve MP4 as
-    // application/octet-stream, which would cause the R2 key to end in .bin
-    // and downloads to save as <uuid>.bin instead of <uuid>.mp4.
+    // Done. Stream-pipe the upstream video directly into R2 without buffering
+    // the bytes in worker memory. Combines what used to be a separate download
+    // (await aresp.arrayBuffer()) and r2Put step into one streaming put.
+    // Save: 5-30MB peak memory and ~1-5s on the user-visible "done" poll for
+    // typical Veo/Grok video outputs.
     const mime = "video/mp4";
+    let r2Key: string;
     try {
       const aresp = await fetch(pollResult.video_url);
       if (!aresp.ok) throw new Error(`Fetch ${aresp.status}`);
-      bytes = new Uint8Array(await aresp.arrayBuffer());
+      if (!aresp.body) throw new Error("Upstream response has no body");
+      r2Key = await r2PutStream(env, "out", mime, aresp.body, userEmail);
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
       await env.DB.prepare(`UPDATE chats SET status = 'failed', job_error = ? WHERE id = ?`)
-        .bind(`Video download failed: ${m}`, row.id)
+        .bind(`Video download/upload failed: ${m}`, row.id)
         .run();
-      return json({ id: row.id, status: "failed", job_error: `Video download failed: ${m}` });
-    }
-
-    let r2Key: string;
-    try {
-      r2Key = await r2Put(env, "out", mime, bytes, userEmail);
-    } catch (err) {
-      const m = err instanceof Error ? err.message : String(err);
-      await env.DB.prepare(`UPDATE chats SET status = 'failed', job_error = ? WHERE id = ?`)
-        .bind(`R2 upload failed: ${m}`, row.id)
-        .run();
-      return json({ id: row.id, status: "failed", job_error: `R2 upload failed: ${m}` });
+      return json({ id: row.id, status: "failed", job_error: `Video download/upload failed: ${m}` });
     }
 
     const outputArtifact: OutputArtifact = { key: r2Key, mime, type: "video" };

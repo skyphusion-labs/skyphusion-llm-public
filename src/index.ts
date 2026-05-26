@@ -95,15 +95,21 @@ interface ModelEntry {
   // provider API (e.g. "veo-3.1-fast-generate-001" for Gemini AI Studio).
   // Without this, video gen requires Unified Billing on the AI Gateway.
   byok_alias?: string;
+  // v0.13.0: when true, the model can be invoked via POST /api/chat/stream
+  // (server-sent events). Pass 1 covers Anthropic only; Pass 2+ will light
+  // up Workers AI, xAI, and Bedrock. Chat models only - irrelevant for
+  // image/tts/video/stt/music types.
+  streaming?: boolean;
 }
 
 const MODELS: ModelEntry[] = [
   // ---- Chat (text generation) ----
   // Anthropic (BYOK via x-api-key or stored keys, routed through AI Gateway)
-  { id: "anthropic/claude-opus-4-7",                    label: "Claude Opus 4.7 (Anthropic, BYOK)",          group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic" },
-  { id: "anthropic/claude-opus-4-6",                    label: "Claude Opus 4.6 (Anthropic, BYOK)",          group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic" },
-  { id: "anthropic/claude-sonnet-4-6",                  label: "Claude Sonnet 4.6 (Anthropic, BYOK)",        group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic" },
-  { id: "anthropic/claude-haiku-4-5",                   label: "Claude Haiku 4.5 (Anthropic, BYOK)",         group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic" },
+  // v0.13.0: streaming: true makes these eligible for POST /api/chat/stream.
+  { id: "anthropic/claude-opus-4-7",                    label: "Claude Opus 4.7 (Anthropic, BYOK)",          group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
+  { id: "anthropic/claude-opus-4-6",                    label: "Claude Opus 4.6 (Anthropic, BYOK)",          group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
+  { id: "anthropic/claude-sonnet-4-6",                  label: "Claude Sonnet 4.6 (Anthropic, BYOK)",        group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
+  { id: "anthropic/claude-haiku-4-5",                   label: "Claude Haiku 4.5 (Anthropic, BYOK)",         group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
 
   // OpenAI (v0.11.0, BYOK via OPENAI_API_KEY secret routed through AI Gateway's OpenAI proxy)
   { id: "openai/gpt-5.5",                                label: "GPT-5.5 (OpenAI, BYOK)",                     group: "Chat \u00b7 OpenAI", type: "chat", capabilities: ["vision"], provider: "openai", byok_alias: "gpt-5.5" },
@@ -386,6 +392,9 @@ export default {
     if (url.pathname === "/api/chat" && request.method === "POST") {
       return handleChat(request, env, ctx);
     }
+    if (url.pathname === "/api/chat/stream" && request.method === "POST") {
+      return handleChatStream(request, env, ctx);
+    }
     if (url.pathname === "/api/history" && request.method === "GET") {
       return handleHistoryList(request, env);
     }
@@ -457,6 +466,43 @@ async function handleChat(request: Request, env: Env, ctx: ExecutionContext): Pr
   if (model.type === "stt") return runStt(request, env, model, body);
   if (model.type === "music") return runMusic(request, env, ctx, model, body);
   return json({ error: `Unsupported model type: ${model.type}` }, { status: 500 });
+}
+
+// ---------- /api/chat/stream (v0.13.0) ----------
+//
+// Thin entry point. Validates input + model, gates by model.streaming +
+// model.provider (Pass 1 supports Anthropic only), then dispatches to
+// runChatStream. Non-chat types and non-streaming chat models bounce with
+// 400 here so the streaming runtime stays narrow.
+
+async function handleChatStream(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  void ctx; // the response body is a live stream; the worker stays alive while it's open.
+
+  let body: ChatRequest;
+  try {
+    body = await request.json<ChatRequest>();
+  } catch {
+    return json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  if (!body.model || !body.user_input) {
+    return json({ error: "model and user_input are required" }, { status: 400 });
+  }
+  const model = MODELS.find((x) => x.id === body.model);
+  if (!model) {
+    return json({ error: `Unknown model: ${body.model}` }, { status: 400 });
+  }
+  if (model.type !== "chat") {
+    return json({ error: `Streaming is only supported for chat models. Use /api/chat for ${model.type} models.` }, { status: 400 });
+  }
+  if (!model.streaming) {
+    return json({ error: `Model ${model.id} does not support streaming. Use /api/chat (non-streaming) or pick a streaming-capable model.` }, { status: 400 });
+  }
+  // Pass 1: Anthropic only. Pass 2 will add Workers AI; Pass 3 xAI; Pass 4 Bedrock.
+  if (model.provider !== "anthropic") {
+    return json({ error: `Streaming for provider '${model.provider}' is not yet implemented (Pass 1 supports Anthropic only).` }, { status: 501 });
+  }
+
+  return runChatStream(request, env, model, body);
 }
 
 // ---------- Chat (text generation, multimodal in) ----------
@@ -1329,6 +1375,396 @@ function transformToAnthropic(
   }
 
   return { system, messages: out };
+}
+
+// ---------- runChatStream + callAnthropicStream (v0.13.0) ----------
+//
+// Streaming counterpart of runChat. Shares the prelude contract (parallel
+// hoisting of priorTurnsPromise + retrievePromise overlapping the attachment
+// walk; multi-turn continuation; RAG system-prompt assembly) and diverges
+// at the model call: callAnthropicStream is an async generator that yields
+// normalized text deltas and usage events.
+//
+// Wire format on the response body (text/event-stream):
+//   data: {"type":"delta","text":"..."}
+//   data: {"type":"done","row_id":N,"latency_ms":N,"tokens_in":N|null,
+//          "tokens_out":N|null,"conversation_id":"...","turn_index":N}
+//   data: {"type":"error","message":"..."}
+//
+// Anthropic's native SSE event types (message_start, content_block_delta,
+// content_block_stop, message_delta, message_stop, ping, etc.) are stripped
+// inside callAnthropicStream and normalized to the envelope above.
+//
+// On client disconnect, the next writer.write() throws; we abort the
+// upstream Anthropic fetch via AbortController and exit without persisting
+// the partial response. Design decision B (Pass 1): drop partials.
+//
+// NOTE: the prelude here intentionally duplicates the prelude in runChat.
+// Both functions own the same shape but persist + respond differently. A
+// later pass may extract a shared helper; for Pass 1 the duplication is
+// bounded and easier to read than a parameterized abstraction.
+
+async function runChatStream(request: Request, env: Env, model: ModelEntry, body: ChatRequest): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const inputs: InputAttachment[] = body.attachments ?? [];
+
+  // Hot-path parallelization (mirrors runChat v0.12.1). Kick off SELECT +
+  // RAG retrieve before the attachment walk; await at the existing use sites.
+  const conversationIdIn = body.conversation_id?.trim() || "";
+  const priorTurnsPromise: Promise<{
+    rows: Array<{ user_input: string; output: string; turn_index: number }>;
+  }> = conversationIdIn
+    ? env.DB.prepare(
+        `SELECT user_input, output, turn_index
+           FROM chats
+          WHERE conversation_id = ?
+            AND user_email = ?
+            AND status = 'done'
+            AND model_type = 'chat'
+          ORDER BY turn_index ASC`
+      )
+        .bind(conversationIdIn, userEmail)
+        .all<{ user_input: string; output: string; turn_index: number }>()
+        .then((r) => ({ rows: r.results ?? [] }))
+    : Promise.resolve({ rows: [] });
+
+  const retrievePromise: Promise<{ chunks: RetrievedChunk[]; error: string | null }> =
+    body.use_docs
+      ? retrieveContext(env, userEmail, body.user_input)
+      : Promise.resolve({ chunks: [], error: null });
+
+  // Attachment walk. Reach completion before any bytes flow back; streaming
+  // helps with time-to-last-token, not time-to-first-token on multimodal turns.
+  const extraText: string[] = [];
+  const imageDataUrls: string[] = [];
+  const persistedAtt: PersistedAttachment[] = [];
+
+  for (const att of inputs) {
+    if (att.type === "image") {
+      if (!model.capabilities.includes("vision")) {
+        return json({ error: `Model ${model.id} does not support vision.` }, { status: 400 });
+      }
+      const parsed = att.data ? parseDataUrl(att.data) : null;
+      if (!parsed) return json({ error: "Invalid image data URL" }, { status: 400 });
+      const bytes = base64ToBytes(parsed.base64);
+      const key = await r2Put(env, "in", parsed.mime, bytes, userEmail);
+      imageDataUrls.push(att.data!);
+      persistedAtt.push({ type: "image", key, mime: parsed.mime, filename: att.filename });
+    } else if (att.type === "audio") {
+      const parsed = att.data ? parseDataUrl(att.data) : null;
+      if (!parsed) return json({ error: "Invalid audio data URL" }, { status: 400 });
+      try {
+        const wr = await aiRun(env, WHISPER_MODEL, { audio: parsed.base64 });
+        const text = (wr as { text?: string })?.text?.trim() ?? "";
+        const label = att.filename ? ` from ${att.filename}` : "";
+        extraText.push(text
+          ? `[Transcribed audio${label}]\n${text}`
+          : `[Audio attachment${label} transcribed to empty text]`);
+        persistedAtt.push({ type: "audio", mime: parsed.mime, filename: att.filename, transcript: text || null });
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err);
+        return json({ error: `Audio transcription failed: ${m}` }, { status: 502 });
+      }
+    } else if (att.type === "video_frames") {
+      if (!model.capabilities.includes("vision")) {
+        return json({ error: `Model ${model.id} does not support vision.` }, { status: 400 });
+      }
+      const frames = att.frames ?? [];
+      const parsedFrames = frames
+        .map((fdataUrl) => ({ fdataUrl, parsed: parseDataUrl(fdataUrl) }))
+        .filter((p): p is { fdataUrl: string; parsed: { mime: string; base64: string } } => p.parsed !== null);
+      const keys = await Promise.all(
+        parsedFrames.map(({ parsed }) =>
+          r2Put(env, "in", parsed.mime, base64ToBytes(parsed.base64), userEmail)
+        )
+      );
+      for (const { fdataUrl } of parsedFrames) {
+        imageDataUrls.push(fdataUrl);
+      }
+      const dur = att.duration ? ` ${att.duration.toFixed(1)}s` : "";
+      const fn = att.filename ? ` "${att.filename}"` : "";
+      extraText.push(`[Video${fn}${dur}, ${frames.length} evenly-sampled frames attached below]`);
+      persistedAtt.push({ type: "video_frames", keys, frame_count: keys.length, duration: att.duration, filename: att.filename });
+    } else if (att.type === "video_full") {
+      // Anthropic Messages API doesn't accept raw video. Reject explicitly
+      // so the user picks a different model rather than getting silent
+      // truncation. (Pegasus is the only video-aware model and it's non-streaming.)
+      return json({ error: "Anthropic streaming does not accept raw video attachments. Use a non-streaming model that supports video, or attach extracted frames instead." }, { status: 400 });
+    }
+  }
+
+  const userText = [body.user_input, ...extraText].filter(Boolean).join("\n\n");
+  const userContent: unknown = imageDataUrls.length
+    ? [{ type: "text", text: userText }, ...imageDataUrls.map((url) => ({ type: "image_url", image_url: { url } }))]
+    : userText;
+
+  // Consume the parallel-hoisted promises.
+  let conversationId = conversationIdIn;
+  let turnIndex = 0;
+  const priorTurns: Array<{ user_input: string; output: string }> = [];
+
+  if (conversationId) {
+    const { rows } = await priorTurnsPromise;
+    for (const r of rows) {
+      if (r.user_input && r.output) {
+        priorTurns.push({ user_input: r.user_input, output: r.output });
+      }
+    }
+    turnIndex = rows.length ? (rows[rows.length - 1].turn_index + 1) : 0;
+  } else {
+    conversationId = crypto.randomUUID();
+  }
+
+  const { chunks: retrievedChunks } = await retrievePromise;
+
+  const userSystemPrompt = body.system_prompt?.trim() ?? "";
+  const retrievalBlock = retrievedChunks.length ? formatRetrievalForSystemPrompt(retrievedChunks) : "";
+  const effectiveSystemPrompt =
+    userSystemPrompt && retrievalBlock ? `${userSystemPrompt}\n\n${retrievalBlock}` :
+    retrievalBlock || userSystemPrompt || "";
+
+  // Anthropic accepts system as a top-level field, so we don't push a
+  // system-role message into the array.
+  const messages: Array<unknown> = [];
+  for (const t of priorTurns) {
+    messages.push({ role: "user", content: t.user_input });
+    messages.push({ role: "assistant", content: t.output });
+  }
+  messages.push({ role: "user", content: userContent });
+
+  // TransformStream pattern: return `readable` as the response body, write
+  // SSE events to `writer`. The worker stays alive while writer is open, so
+  // the background IIFE doesn't need ctx.waitUntil.
+  const { readable, writable } = new TransformStream();
+  const writer = writable.getWriter();
+  const encoder = new TextEncoder();
+
+  // Emit one SSE event. Returns false if the writer is closed (client
+  // disconnected); caller uses this to short-circuit + abort upstream.
+  const emit = async (event: Record<string, unknown>): Promise<boolean> => {
+    try {
+      await writer.write(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const upstreamAbort = new AbortController();
+  const start = Date.now();
+
+  // Background IIFE drives the stream. Does NOT await; this function returns
+  // the Response immediately while the IIFE writes events to the body.
+  (async () => {
+    let accumulated = "";
+    let usageIn: number | null = null;
+    let usageOut: number | null = null;
+
+    try {
+      for await (const ev of callAnthropicStream(
+        env, model, effectiveSystemPrompt || undefined, messages, upstreamAbort.signal
+      )) {
+        if (ev.type === "text") {
+          accumulated += ev.text;
+          const ok = await emit({ type: "delta", text: ev.text });
+          if (!ok) {
+            // Client gone. Abort upstream so we stop paying for tokens
+            // and exit without persisting (Pass 1: drop partials).
+            upstreamAbort.abort();
+            return;
+          }
+        } else if (ev.type === "usage") {
+          if (ev.in_ !== null) usageIn = ev.in_;
+          if (ev.out_ !== null) usageOut = ev.out_;
+        }
+      }
+
+      const latency = Date.now() - start;
+
+      // Persist as a single row. retrieved_context is saved on the row so
+      // the History/Conversation views render citations the same way runChat
+      // does. ai_gateway_log_id is null: streaming responses from AI Gateway
+      // don't surface cf-aig-log-id on the proxied SSE response.
+      const row = await persistChat(env, {
+        userEmail,
+        model: model.id,
+        model_type: "chat",
+        system_prompt: body.system_prompt ?? null,
+        user_input: body.user_input,
+        output: accumulated,
+        output_artifact: null,
+        attachments: persistedAtt,
+        tokens_in: usageIn,
+        tokens_out: usageOut,
+        latency_ms: latency,
+        ai_gateway_log_id: null,
+        retrieved_context: retrievedChunks.length ? retrievedChunks : null,
+        conversation_id: conversationId,
+        turn_index: turnIndex,
+      });
+
+      await emit({
+        type: "done",
+        row_id: row.id,
+        latency_ms: latency,
+        tokens_in: usageIn,
+        tokens_out: usageOut,
+        conversation_id: conversationId,
+        turn_index: turnIndex,
+      });
+    } catch (err) {
+      // Self-triggered AbortError (we aborted because client disconnected)
+      // is expected; suppress it. Anything else is surfaced to the client
+      // as a terminal error event.
+      if (err instanceof Error && err.name === "AbortError") return;
+      const m = err instanceof Error ? err.message : String(err);
+      await emit({ type: "error", message: m });
+    } finally {
+      try { await writer.close(); } catch { /* writer may already be closed */ }
+    }
+  })();
+
+  return new Response(readable, {
+    headers: {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache, no-transform",
+      // Disable any in-path buffering. Cloudflare doesn't buffer streaming
+      // responses but downstream proxies (Nginx etc.) might; this is the
+      // standard hint to flush per-event.
+      "x-accel-buffering": "no",
+    },
+  });
+}
+
+// Normalized event shape yielded by callAnthropicStream. Future per-provider
+// stream adapters (callWorkersAIStream, callXaiStream, callBedrockNovaStream)
+// will yield the same shape so runChatStream's consumer loop stays generic.
+type AnthropicStreamEvent =
+  | { type: "text"; text: string }
+  | { type: "usage"; in_: number | null; out_: number | null };
+
+// Async generator: drives Anthropic's Messages API in streaming mode and
+// yields normalized events. Strips Anthropic's verbose SSE envelope
+// (message_start, content_block_start, content_block_delta, content_block_stop,
+// message_delta, message_stop, ping) to just text + usage.
+//
+// Anthropic emits usage in two places:
+//   - message_start: { usage: { input_tokens, output_tokens } } (initial small)
+//   - message_delta: { usage: { input_tokens, output_tokens } } (cumulative)
+// We yield both; the caller keeps the latest non-null value, so the final
+// message_delta wins for output_tokens and message_start typically wins for
+// input_tokens (it's a one-shot value).
+async function* callAnthropicStream(
+  env: Env,
+  model: ModelEntry,
+  systemPrompt: string | undefined,
+  messages: Array<unknown>,
+  signal: AbortSignal
+): AsyncGenerator<AnthropicStreamEvent> {
+  const { system, messages: aMessages } = transformToAnthropic(messages, systemPrompt);
+
+  const baseUrl = await (env.AI as unknown as {
+    gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
+  }).gateway(env.GATEWAY_ID).getUrl("anthropic");
+
+  const modelName = model.id.replace(/^anthropic\//, "");
+
+  const body: Record<string, unknown> = {
+    model: modelName,
+    max_tokens: 4096,
+    messages: aMessages,
+    stream: true,
+  };
+  if (system) body.system = system;
+
+  const headers: Record<string, string> = {
+    "anthropic-version": "2023-06-01",
+    "content-type": "application/json",
+    "accept": "text/event-stream",
+  };
+  if (env.ANTHROPIC_API_KEY) headers["x-api-key"] = env.ANTHROPIC_API_KEY;
+  if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
+
+  const resp = await fetch(`${baseUrl}/v1/messages`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+    signal,
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`Anthropic API ${resp.status}: ${errText.slice(0, 500)}`);
+  }
+  if (!resp.body) throw new Error("Anthropic returned no stream body");
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // SSE event boundaries are \n\n. Within an event, the fields we care
+      // about are `data: <json>` lines; everything else (event: name, id:,
+      // retry:) we ignore. Anthropic uses `event:` for the type and `data:`
+      // for the payload; the payload's own `type` field also carries the
+      // event kind, so we can rely on that alone.
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() ?? "";
+
+      for (const part of parts) {
+        if (!part.trim()) continue;
+
+        let dataPayload = "";
+        for (const line of part.split("\n")) {
+          if (line.startsWith("data: ")) dataPayload = line.slice(6);
+          else if (line.startsWith("data:")) dataPayload = line.slice(5);
+        }
+        if (!dataPayload || dataPayload === "[DONE]") continue;
+
+        let data: Record<string, unknown>;
+        try {
+          data = JSON.parse(dataPayload);
+        } catch {
+          continue;
+        }
+
+        const evType = data.type as string | undefined;
+        if (evType === "content_block_delta") {
+          const delta = data.delta as { type?: string; text?: string } | undefined;
+          if (delta?.type === "text_delta" && typeof delta.text === "string") {
+            yield { type: "text", text: delta.text };
+          }
+        } else if (evType === "message_start") {
+          const msg = data.message as { usage?: { input_tokens?: number; output_tokens?: number } } | undefined;
+          if (msg?.usage) {
+            yield {
+              type: "usage",
+              in_: msg.usage.input_tokens ?? null,
+              out_: msg.usage.output_tokens ?? null,
+            };
+          }
+        } else if (evType === "message_delta") {
+          const usage = data.usage as { input_tokens?: number; output_tokens?: number } | undefined;
+          if (usage) {
+            yield {
+              type: "usage",
+              in_: usage.input_tokens ?? null,
+              out_: usage.output_tokens ?? null,
+            };
+          }
+        }
+        // content_block_start, content_block_stop, message_stop, ping: ignored
+      }
+    }
+  } finally {
+    try { reader.releaseLock(); } catch { /* fine */ }
+  }
 }
 
 // ---------- xAI BYOK call ----------

@@ -54,8 +54,6 @@ interface Env {
   LONGRUN: Workflow;
   ANTHROPIC_API_KEY?: string; // optional; preferred is to store in AI Gateway dashboard
   XAI_API_KEY?: string;       // optional; preferred is to store in AI Gateway dashboard
-  GOOGLE_API_KEY?: string;    // optional; preferred is to store in AI Gateway dashboard
-  OPENAI_API_KEY?: string;    // v0.11.0: optional; for OpenAI BYOK chat
   // v0.11.0: AWS credentials for Bedrock BYOK. Scope IAM key to Bedrock invoke only.
   // AWS_REGION defaults to us-east-1 for Nova; Pegasus 1.2 requires us-west-2 or eu-west-1.
   AWS_ACCESS_KEY_ID?: string;
@@ -73,7 +71,6 @@ type Provider =
   | "anthropic"
   | "xai"
   | "google"
-  | "openai"
   | "bedrock"
   | "bytedance"
   | "minimax"
@@ -90,10 +87,9 @@ interface ModelEntry {
   capabilities: Array<"vision">;
   provider?: Provider; // defaults to "workers-ai" when omitted
   // For video models: if set, the worker uses the per-provider BYOK endpoint
-  // (Gemini AI Studio for google/*, xAI direct for xai/*) instead of the
-  // env.AI.run binding. The value is the model name expected by the direct
-  // provider API (e.g. "veo-3.1-fast-generate-001" for Gemini AI Studio).
-  // Without this, video gen requires Unified Billing on the AI Gateway.
+  // (xAI direct API for xai/*) instead of the env.AI.run binding. The value
+  // is the model name expected by the direct provider API. Without this,
+  // video gen requires Unified Billing on the AI Gateway.
   byok_alias?: string;
   // v0.13.0: when true, the model can be invoked via POST /api/chat/stream
   // (server-sent events). Pass 1 covers Anthropic only; Pass 2+ will light
@@ -110,11 +106,6 @@ const MODELS: ModelEntry[] = [
   { id: "anthropic/claude-opus-4-6",                    label: "Claude Opus 4.6 (Anthropic, BYOK)",          group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
   { id: "anthropic/claude-sonnet-4-6",                  label: "Claude Sonnet 4.6 (Anthropic, BYOK)",        group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
   { id: "anthropic/claude-haiku-4-5",                   label: "Claude Haiku 4.5 (Anthropic, BYOK)",         group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
-
-  // OpenAI (v0.11.0, BYOK via OPENAI_API_KEY secret routed through AI Gateway's OpenAI proxy)
-  { id: "openai/gpt-5.5",                                label: "GPT-5.5 (OpenAI, BYOK)",                     group: "Chat \u00b7 OpenAI", type: "chat", capabilities: ["vision"], provider: "openai", byok_alias: "gpt-5.5" },
-  { id: "openai/gpt-5.4",                                label: "GPT-5.4 (OpenAI, BYOK)",                     group: "Chat \u00b7 OpenAI", type: "chat", capabilities: ["vision"], provider: "openai", byok_alias: "gpt-5.4" },
-  { id: "openai/gpt-5.4-mini",                           label: "GPT-5.4 mini (OpenAI, BYOK)",                group: "Chat \u00b7 OpenAI", type: "chat", capabilities: ["vision"], provider: "openai", byok_alias: "gpt-5.4-mini" },
 
   // Amazon Bedrock Nova family (v0.11.0, BYOK via AWS SigV4, direct to bedrock-runtime)
   // All four go through Bedrock's Converse API (unified across model families).
@@ -133,12 +124,6 @@ const MODELS: ModelEntry[] = [
   { id: "xai/grok-4.20-multi-agent-0309",               label: "Grok 4.20 Multi-Agent (xAI, BYOK)",          group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai" },
   { id: "xai/grok-4.20-0309-reasoning",                 label: "Grok 4.20 Reasoning (xAI, BYOK)",            group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai" },
   { id: "xai/grok-build-0.1",                           label: "Grok Build 0.1 (xAI, BYOK, coding)",         group: "Chat \u00b7 xAI",       type: "chat", capabilities: [],         provider: "xai" },
-
-  // Google Gemini (BYOK via x-goog-api-key or stored keys, routed through AI Gateway)
-  { id: "google/gemini-3.5-flash",                      label: "Gemini 3.5 Flash (Google, BYOK)",            group: "Chat \u00b7 Google",    type: "chat", capabilities: ["vision"], provider: "google" },
-  { id: "google/gemini-3.1-pro-preview",                label: "Gemini 3.1 Pro (Google, BYOK)",              group: "Chat \u00b7 Google",    type: "chat", capabilities: ["vision"], provider: "google" },
-  { id: "google/gemini-3.1-flash",                      label: "Gemini 3.1 Flash (Google, BYOK)",            group: "Chat \u00b7 Google",    type: "chat", capabilities: ["vision"], provider: "google" },
-  { id: "google/gemini-2.5-pro",                        label: "Gemini 2.5 Pro (Google, BYOK)",              group: "Chat \u00b7 Google",    type: "chat", capabilities: ["vision"], provider: "google" },
 
   // Frontier
   { id: "@cf/moonshotai/kimi-k2.6",                     label: "Kimi K2.6 (1T)",               group: "Chat \u00b7 Frontier", type: "chat", capabilities: ["vision"], streaming: true },
@@ -173,13 +158,11 @@ const MODELS: ModelEntry[] = [
   { id: "@cf/leonardo/lucid-origin",                    label: "Lucid Origin (Leonardo)",      group: "Image Gen",            type: "image", capabilities: [] },
   { id: "@cf/leonardo/phoenix-1.0",                     label: "Phoenix 1.0 (Leonardo)",       group: "Image Gen",            type: "image", capabilities: [] },
   { id: "@cf/lykon/dreamshaper-8-lcm",                  label: "Dreamshaper 8 LCM (fast SD)",  group: "Image Gen",            type: "image", capabilities: [] },
-  { id: "openai/gpt-image-2-2026-04-21",                label: "GPT Image 2 (OpenAI, BYOK)",   group: "Image Gen",            type: "image", capabilities: [], provider: "openai", byok_alias: "gpt-image-2-2026-04-21" },
 
   // ---- Text-to-speech ----
   { id: "@cf/deepgram/aura-2-en",                       label: "Aura-2 English (Deepgram)",    group: "TTS",                  type: "tts",   capabilities: [] },
   { id: "@cf/deepgram/aura-2-es",                       label: "Aura-2 Spanish (Deepgram)",    group: "TTS",                  type: "tts",   capabilities: [] },
   { id: "@cf/myshell/melotts",                          label: "MeloTTS (multilingual)",       group: "TTS",                  type: "tts",   capabilities: [] },
-  { id: "openai/gpt-4o-mini-tts-2025-12-15",            label: "GPT-4o mini TTS (OpenAI, BYOK)", group: "TTS",                type: "tts",   capabilities: [], provider: "openai", byok_alias: "gpt-4o-mini-tts-2025-12-15" },
 
   // ---- Speech-to-text (Whisper) ----
   // Attach an audio file, pick a model, get the transcript. Audio file is
@@ -187,8 +170,6 @@ const MODELS: ModelEntry[] = [
   { id: "@cf/openai/whisper-large-v3-turbo",            label: "Whisper Large v3 Turbo (best)", group: "Speech-to-text",      type: "stt",   capabilities: [] },
   { id: "@cf/openai/whisper",                           label: "Whisper (general purpose)",    group: "Speech-to-text",       type: "stt",   capabilities: [] },
   { id: "@cf/openai/whisper-tiny-en",                   label: "Whisper Tiny EN (fast, beta)", group: "Speech-to-text",       type: "stt",   capabilities: [] },
-  { id: "openai/gpt-4o-transcribe",                     label: "GPT-4o Transcribe (OpenAI, BYOK)", group: "Speech-to-text",   type: "stt",   capabilities: [], provider: "openai", byok_alias: "gpt-4o-transcribe" },
-  { id: "openai/gpt-4o-mini-transcribe-2025-12-15",     label: "GPT-4o mini Transcribe (OpenAI, BYOK)", group: "Speech-to-text", type: "stt", capabilities: [], provider: "openai", byok_alias: "gpt-4o-mini-transcribe-2025-12-15" },
 
   // ---- Music generation (Unified Billing only) ----
   { id: "minimax/music-2.6",                            label: "MiniMax Music 2.6 (needs CF credits)", group: "Music Gen",     type: "music", capabilities: [], provider: "minimax" },
@@ -196,8 +177,6 @@ const MODELS: ModelEntry[] = [
   // ---- Video generation (Cloudflare Unified Billing via env.AI.run) ----
   // All routed through env.AI.run("provider/model", ...) - CF handles auth and
   // billing. No BYOK to xAI/Google/etc needed for these models.
-  { id: "google/veo-3.1",                               label: "Veo 3.1 (Google, BYOK)",                           group: "Video Gen", type: "video", capabilities: [], provider: "google",   byok_alias: "veo-3.1-generate-preview" },
-  { id: "google/veo-3.1-fast",                          label: "Veo 3.1 Fast (Google, BYOK)",                      group: "Video Gen", type: "video", capabilities: [], provider: "google",   byok_alias: "veo-3.1-fast-generate-001" },
   { id: "google/veo-3",                                 label: "Veo 3 (Google, needs CF credits)",                 group: "Video Gen", type: "video", capabilities: [], provider: "google" },
   { id: "google/veo-3-fast",                            label: "Veo 3 Fast (Google, needs CF credits)",            group: "Video Gen", type: "video", capabilities: [], provider: "google" },
   { id: "bytedance/seedance-2.0",                       label: "Seedance 2.0 (ByteDance, needs CF credits)",       group: "Video Gen", type: "video", capabilities: [], provider: "bytedance" },
@@ -662,20 +641,15 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
     userSystemPrompt && retrievalBlock ? `${userSystemPrompt}\n\n${retrievalBlock}` :
     retrievalBlock || userSystemPrompt || "";
 
-  // Build the message array. For providers that take system as a separate
-  // top-level param (Anthropic system, Google systemInstruction), we DON'T
-  // include the system role here - we pass effectiveSystemPrompt as the
-  // param instead. For providers that take messages-only (xAI, Workers AI),
-  // we DO include the system role.
+  // Build the message array. For Anthropic, system goes as a top-level field
+  // on the upstream request (handled inside callAnthropic), not in messages.
+  // For Workers AI, xAI, and Bedrock, we push a role:"system" message.
   //
   // Prior turns of this conversation go in as alternating user/assistant
   // text messages. Multimodal content (images) from prior turns is NOT
   // re-included; if the user wants to reference earlier images they can
   // re-attach. Current turn's attachments are still threaded into userContent.
-  // OpenAI and Bedrock accept system in messages (OpenAI: as role:"system";
-  // Bedrock Converse: as a separate `system` array param but converted from
-  // messages by callBedrockNova). Anthropic and Google take system separately.
-  const wantsSystemInMessages = !(model.provider === "anthropic" || model.provider === "google");
+  const wantsSystemInMessages = model.provider !== "anthropic";
   const messages: Array<unknown> = [];
   if (effectiveSystemPrompt && wantsSystemInMessages) {
     messages.push({ role: "system", content: effectiveSystemPrompt });
@@ -696,14 +670,6 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
       logId = r.logId;
     } else if (model.provider === "xai") {
       const r = await callXai(env, model, messages);
-      result = r.raw;
-      logId = r.logId;
-    } else if (model.provider === "google") {
-      const r = await callGoogle(env, model, effectiveSystemPrompt || undefined, messages);
-      result = r.raw;
-      logId = r.logId;
-    } else if (model.provider === "openai") {
-      const r = await callOpenAI(env, model, messages);
       result = r.raw;
       logId = r.logId;
     } else if (model.provider === "bedrock") {
@@ -784,12 +750,8 @@ async function runImage(request: Request, env: Env, model: ModelEntry, body: Cha
 
   const start = Date.now();
   try {
-    if (model.provider === "openai") {
-      const r = await imageGenOpenAI(env, model, body.user_input);
-      bytes = r.bytes; mime = r.mime;
-    } else {
-      // Two Cloudflare-side complications for Workers AI image gen as of
-      // 2026-Q1, both manifesting as either:
+    // Two Cloudflare-side complications for Workers AI image gen as of
+    // 2026-Q1, both manifesting as either:
       //   - AiError 5006 "required properties at '/' are 'multipart'", or
       //   - "AI Gateway does not support ReadableStreams yet"
       //
@@ -894,7 +856,6 @@ async function runImage(request: Request, env: Env, model: ModelEntry, body: Cha
         // FLUX.2 outputs PNG; the older JSON path returned JPEG historically.
         mime = isFlux2 ? "image/png" : "image/jpeg";
       }
-    }
   } catch (err) {
     const m = err instanceof Error ? err.message : String(err);
     return json({ error: `Image generation failed: ${m}` }, { status: 502 });
@@ -933,44 +894,6 @@ async function runImage(request: Request, env: Env, model: ModelEntry, body: Cha
   });
 }
 
-// OpenAI image gen via /v1/images/generations.
-// Body: { model, prompt, n, size, response_format: "b64_json" }
-// Response: { data: [{ b64_json: "..." }] }
-async function imageGenOpenAI(env: Env, model: ModelEntry, prompt: string): Promise<{ bytes: Uint8Array; mime: string }> {
-  if (!env.OPENAI_API_KEY) {
-    throw new Error("OPENAI_API_KEY not set");
-  }
-  const baseUrl = await (env.AI as unknown as {
-    gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
-  }).gateway(env.GATEWAY_ID).getUrl("openai");
-
-  const modelName = model.byok_alias ?? model.id.replace(/^openai\//, "");
-  const headers: Record<string, string> = {
-    "content-type": "application/json",
-    "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
-  };
-  if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
-
-  const resp = await fetch(`${baseUrl}/images/generations`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      model: modelName,
-      prompt,
-      n: 1,
-      size: "1024x1024",
-      response_format: "b64_json",
-    }),
-  });
-  if (!resp.ok) {
-    throw new Error(`OpenAI image ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
-  }
-  const data = await resp.json() as { data?: Array<{ b64_json?: string }> };
-  const b64 = data.data?.[0]?.b64_json;
-  if (!b64) throw new Error("OpenAI image: no b64_json in response");
-  return { bytes: base64ToBytes(b64), mime: "image/png" };
-}
-
 // ---------- TTS ----------
 
 async function runTts(request: Request, env: Env, model: ModelEntry, body: ChatRequest): Promise<Response> {
@@ -982,21 +905,15 @@ async function runTts(request: Request, env: Env, model: ModelEntry, body: ChatR
 
   const start = Date.now();
   try {
-    if (model.provider === "openai") {
-      const r = await ttsOpenAI(env, model, body.user_input);
-      mime = r.mime;
-      bytes = r.bytes;
-    } else {
-      // Aura: { text }; MeloTTS: { prompt, lang? }. Send both keys defensively.
-      const params: Record<string, unknown> = { text: body.user_input, prompt: body.user_input };
-      const resp = await aiRun(env, model.id, params, true /* returnRawResponse */);
-      logId = aiLogId(env);
-      if (!(resp instanceof Response)) {
-        return json({ error: "TTS returned non-Response shape", raw: resp }, { status: 502 });
-      }
-      mime = resp.headers.get("content-type") || "audio/mpeg";
-      bytes = new Uint8Array(await resp.arrayBuffer());
+    // Aura: { text }; MeloTTS: { prompt, lang? }. Send both keys defensively.
+    const params: Record<string, unknown> = { text: body.user_input, prompt: body.user_input };
+    const resp = await aiRun(env, model.id, params, true /* returnRawResponse */);
+    logId = aiLogId(env);
+    if (!(resp instanceof Response)) {
+      return json({ error: "TTS returned non-Response shape", raw: resp }, { status: 502 });
     }
+    mime = resp.headers.get("content-type") || "audio/mpeg";
+    bytes = new Uint8Array(await resp.arrayBuffer());
   } catch (err) {
     const m = err instanceof Error ? err.message : String(err);
     return json({ error: `TTS failed: ${m}` }, { status: 502 });
@@ -1035,43 +952,6 @@ async function runTts(request: Request, env: Env, model: ModelEntry, body: ChatR
   });
 }
 
-// OpenAI TTS via /v1/audio/speech.
-// Body: { model, input, voice, response_format }
-// Response: raw audio bytes (not JSON). Default voice is "alloy".
-async function ttsOpenAI(env: Env, model: ModelEntry, input: string): Promise<{ bytes: Uint8Array; mime: string }> {
-  if (!env.OPENAI_API_KEY) {
-    throw new Error("OPENAI_API_KEY not set");
-  }
-  const baseUrl = await (env.AI as unknown as {
-    gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
-  }).gateway(env.GATEWAY_ID).getUrl("openai");
-
-  const modelName = model.byok_alias ?? model.id.replace(/^openai\//, "");
-  const headers: Record<string, string> = {
-    "content-type": "application/json",
-    "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
-  };
-  if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
-
-  const resp = await fetch(`${baseUrl}/audio/speech`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      model: modelName,
-      input,
-      voice: "alloy",
-      response_format: "mp3",
-    }),
-  });
-  if (!resp.ok) {
-    throw new Error(`OpenAI TTS ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
-  }
-  return {
-    bytes: new Uint8Array(await resp.arrayBuffer()),
-    mime: resp.headers.get("content-type") || "audio/mpeg",
-  };
-}
-
 // ---------- Speech-to-text (Whisper) ----------
 //
 // Synchronous: user attaches an audio file and picks a Whisper model, worker
@@ -1092,12 +972,8 @@ async function runStt(request: Request, env: Env, model: ModelEntry, body: ChatR
 
   let transcript: string;
   try {
-    if (model.provider === "openai") {
-      transcript = await sttOpenAI(env, model, parsed.base64, parsed.mime, audioAtt.filename);
-    } else {
-      const wr = await aiRun(env, model.id, { audio: parsed.base64 });
-      transcript = (wr as { text?: string })?.text?.trim() ?? "";
-    }
+    const wr = await aiRun(env, model.id, { audio: parsed.base64 });
+    transcript = (wr as { text?: string })?.text?.trim() ?? "";
   } catch (err) {
     const m = err instanceof Error ? err.message : String(err);
     return json({ error: `Transcription failed: ${m}` }, { status: 502 });
@@ -1139,48 +1015,6 @@ async function runStt(request: Request, env: Env, model: ModelEntry, body: ChatR
     conversation_id: row.conversation_id,
     turn_index: 0,
   });
-}
-
-// OpenAI transcription via /v1/audio/transcriptions.
-// Body: multipart/form-data with `file` (audio binary), `model`, `response_format`.
-// Response: { text: "transcript" } when response_format is "json".
-async function sttOpenAI(env: Env, model: ModelEntry, audioBase64: string, mime: string, filename?: string): Promise<string> {
-  if (!env.OPENAI_API_KEY) {
-    throw new Error("OPENAI_API_KEY not set");
-  }
-  const baseUrl = await (env.AI as unknown as {
-    gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
-  }).gateway(env.GATEWAY_ID).getUrl("openai");
-
-  const modelName = model.byok_alias ?? model.id.replace(/^openai\//, "");
-
-  // OpenAI's /audio/transcriptions endpoint expects multipart/form-data with
-  // the audio bytes as the `file` part. Workers have native FormData + Blob
-  // so we don't need a polyfill.
-  const audioBytes = base64ToBytes(audioBase64);
-  const fname = filename || (mime.includes("wav") ? "audio.wav" : mime.includes("mp3") || mime.includes("mpeg") ? "audio.mp3" : "audio.m4a");
-  const blob = new Blob([audioBytes], { type: mime });
-
-  const form = new FormData();
-  form.append("file", blob, fname);
-  form.append("model", modelName);
-  form.append("response_format", "json");
-
-  const headers: Record<string, string> = {
-    "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
-  };
-  if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
-
-  const resp = await fetch(`${baseUrl}/audio/transcriptions`, {
-    method: "POST",
-    headers,
-    body: form,
-  });
-  if (!resp.ok) {
-    throw new Error(`OpenAI STT ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
-  }
-  const data = await resp.json() as { text?: string };
-  return data.text?.trim() ?? "";
 }
 
 // ---------- Music generation (MiniMax via Unified Billing) ----------
@@ -2023,172 +1857,6 @@ async function callXai(
   return { raw, logId };
 }
 
-// ---------- Google Gemini BYOK call ----------
-//
-// Direct fetch to AI Gateway's Google AI Studio provider endpoint. The
-// gateway wraps the call for observability, caching, and rate-limiting.
-//
-// Auth strategy: stored-keys-first. If env.GOOGLE_API_KEY is set, we send it
-// as x-goog-api-key (inline auth, takes priority at the gateway). If it
-// isn't, we omit the header and let the gateway inject the key you've stored
-// in dashboard > AI Gateway > Provider Keys.
-//
-// Google's wire format differs from both OpenAI and Anthropic: messages are
-// in a `contents` array with `parts` blocks, the system prompt lives in
-// `systemInstruction`, image input uses `inline_data` blocks, and the
-// assistant role is called `model`. We transform on the way in and unify
-// the response shape in extractOutput / extractUsage.
-
-async function callGoogle(
-  env: Env,
-  model: ModelEntry,
-  systemPrompt: string | undefined,
-  messages: Array<unknown>
-): Promise<{ raw: unknown; logId: string | null }> {
-  const { systemInstruction, contents } = transformToGoogle(messages, systemPrompt);
-
-  const baseUrl = await (env.AI as unknown as {
-    gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
-  }).gateway(env.GATEWAY_ID).getUrl("google-ai-studio");
-
-  // Strip "google/" prefix; Google's API expects just the model name (e.g. "gemini-3.5-flash").
-  const modelName = model.id.replace(/^google\//, "");
-
-  const body: Record<string, unknown> = {
-    contents,
-    generationConfig: { maxOutputTokens: 4096 },
-  };
-  if (systemInstruction) body.systemInstruction = systemInstruction;
-
-  const headers: Record<string, string> = {
-    "content-type": "application/json",
-  };
-  if (env.GOOGLE_API_KEY) headers["x-goog-api-key"] = env.GOOGLE_API_KEY;
-  if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
-
-  const resp = await fetch(`${baseUrl}/v1beta/models/${modelName}:generateContent`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
-
-  const logId = resp.headers.get("cf-aig-log-id");
-
-  if (!resp.ok) {
-    const errText = await resp.text();
-    throw new Error(`Google API ${resp.status}: ${errText.slice(0, 500)}`);
-  }
-
-  const raw = await resp.json();
-  return { raw, logId };
-}
-
-interface GooglePart {
-  text?: string;
-  inline_data?: { mime_type: string; data: string };
-}
-interface GoogleContent {
-  role: "user" | "model";
-  parts: GooglePart[];
-}
-
-function transformToGoogle(
-  messages: Array<unknown>,
-  systemPromptOverride: string | undefined
-): { systemInstruction: { parts: Array<{ text: string }> } | undefined; contents: GoogleContent[] } {
-  let systemText = systemPromptOverride && systemPromptOverride.trim() ? systemPromptOverride : "";
-  const contents: GoogleContent[] = [];
-
-  for (const m of messages) {
-    const msg = m as { role: string; content: unknown };
-    if (msg.role === "system") {
-      const text = typeof msg.content === "string" ? msg.content : "";
-      systemText = systemText ? `${systemText}\n\n${text}` : text;
-      continue;
-    }
-    if (msg.role !== "user" && msg.role !== "assistant") continue;
-
-    // Google calls the assistant role "model".
-    const role: "user" | "model" = msg.role === "assistant" ? "model" : "user";
-
-    if (typeof msg.content === "string") {
-      contents.push({ role, parts: [{ text: msg.content }] });
-      continue;
-    }
-    if (!Array.isArray(msg.content)) continue;
-
-    const parts: GooglePart[] = [];
-    for (const block of msg.content) {
-      const b = block as { type?: string; text?: string; image_url?: { url?: string } };
-      if (b.type === "text" && typeof b.text === "string") {
-        parts.push({ text: b.text });
-      } else if (b.type === "image_url" && b.image_url?.url) {
-        const parsed = parseDataUrl(b.image_url.url);
-        if (parsed) {
-          parts.push({ inline_data: { mime_type: parsed.mime, data: parsed.base64 } });
-        }
-      }
-    }
-    contents.push({ role, parts });
-  }
-
-  return {
-    systemInstruction: systemText ? { parts: [{ text: systemText }] } : undefined,
-    contents,
-  };
-}
-
-// ---------- OpenAI chat (BYOK, v0.11.0) ----------
-//
-// OpenAI uses the standard `messages` array with role: "system" | "user" | "assistant",
-// which matches our internal format directly. No transform needed beyond stripping
-// our internal message shapes if they contain attachments (we currently only support
-// text via OpenAI - for vision attachments through OpenAI add image_url content
-// parts later if needed).
-//
-// Routed through Cloudflare AI Gateway's OpenAI proxy. Authentication via the
-// OPENAI_API_KEY secret. The gateway preserves the OpenAI API schema 1:1 so
-// the request and response shapes are identical to the official API.
-
-async function callOpenAI(
-  env: Env,
-  model: ModelEntry,
-  messages: Array<unknown>
-): Promise<{ raw: unknown; logId: string | null }> {
-  if (!env.OPENAI_API_KEY) {
-    throw new Error("OPENAI_API_KEY not set; OpenAI BYOK requires the secret to be configured (npx wrangler secret put OPENAI_API_KEY)");
-  }
-
-  const baseUrl = await (env.AI as unknown as {
-    gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
-  }).gateway(env.GATEWAY_ID).getUrl("openai");
-
-  const modelName = model.byok_alias ?? model.id.replace(/^openai\//, "");
-
-  const headers: Record<string, string> = {
-    "content-type": "application/json",
-    "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
-  };
-  if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
-
-  const resp = await fetch(`${baseUrl}/chat/completions`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      model: modelName,
-      messages,
-      max_tokens: 4096,
-    }),
-  });
-
-  const logId = resp.headers.get("cf-aig-log-id");
-  if (!resp.ok) {
-    throw new Error(`OpenAI ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
-  }
-  const raw = await resp.json();
-  return { raw, logId };
-}
-
 // ---------- Amazon Bedrock chat - Nova family (BYOK, v0.11.0) ----------
 //
 // Bedrock requires AWS SigV4 signed requests. We use the aws4fetch library to
@@ -2398,7 +2066,7 @@ async function runVideo(
   void ctx;
   const userEmail = getUserEmail(request);
   const startedAt = new Date().toISOString();
-  const isBYOK = !!(model.byok_alias && (model.provider === "xai" || model.provider === "google"));
+  const isBYOK = !!(model.byok_alias && model.provider === "xai");
 
   // BYOK path: do the submit synchronously (one fast HTTP call, well within
   // the worker's request budget). Save the upstream job_id on the row so the
@@ -2408,11 +2076,7 @@ async function runVideo(
   if (isBYOK) {
     let submit: BYOKSubmitResult;
     try {
-      if (model.provider === "xai") {
-        submit = await submitVideoXai(env, model.byok_alias!, body.user_input);
-      } else {
-        submit = await submitVideoGoogle(env, model.byok_alias!, body.user_input);
-      }
+      submit = await submitVideoXai(env, model.byok_alias!, body.user_input);
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
       return json({ error: `Video submit failed: ${m}` }, { status: 502 });
@@ -2605,59 +2269,6 @@ async function pollVideoXai(env: Env, jobId: string): Promise<BYOKPollResult> {
   return { status: "pending" };
 }
 
-// Google Veo BYOK submit/poll - hits /google-ai-studio/v1beta/* through the gateway.
-
-async function submitVideoGoogle(env: Env, modelName: string, prompt: string): Promise<BYOKSubmitResult> {
-  const baseUrl = await (env.AI as unknown as {
-    gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
-  }).gateway(env.GATEWAY_ID).getUrl("google-ai-studio");
-
-  const headers: Record<string, string> = { "content-type": "application/json" };
-  if (env.GOOGLE_API_KEY) headers["x-goog-api-key"] = env.GOOGLE_API_KEY;
-  if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
-
-  const resp = await fetch(`${baseUrl}/v1beta/models/${modelName}:predictLongRunning`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      instances: [{ prompt }],
-      parameters: { aspectRatio: "16:9", durationSeconds: 8 },
-    }),
-  });
-  if (!resp.ok) throw new Error(`Google submit ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
-  const data = await resp.json() as { name?: string };
-  if (!data.name) throw new Error("Google submit returned no operation name");
-  return { job_id: data.name };
-}
-
-async function pollVideoGoogle(env: Env, operationName: string): Promise<BYOKPollResult> {
-  const baseUrl = await (env.AI as unknown as {
-    gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
-  }).gateway(env.GATEWAY_ID).getUrl("google-ai-studio");
-
-  const headers: Record<string, string> = {};
-  if (env.GOOGLE_API_KEY) headers["x-goog-api-key"] = env.GOOGLE_API_KEY;
-  if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
-
-  const resp = await fetch(`${baseUrl}/v1beta/${operationName}`, { headers });
-  if (!resp.ok) throw new Error(`Google poll ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
-  const data = await resp.json() as {
-    done?: boolean;
-    error?: { message?: string };
-    response?: {
-      generatedVideos?: Array<{ video?: { uri?: string; videoBytes?: string } }>;
-    };
-  };
-
-  if (data.error) return { status: "failed", error: data.error.message ?? "Unknown Google error" };
-  if (!data.done) return { status: "pending" };
-
-  const v = data.response?.generatedVideos?.[0]?.video;
-  if (v?.uri) return { status: "done", video_url: v.uri };
-  if (v?.videoBytes) return { status: "done", video_url: `data:video/mp4;base64,${v.videoBytes}` };
-  return { status: "failed", error: "Google reported done but returned no video uri or bytes" };
-}
-
 // ---------- Job polling endpoint ----------
 //
 // All real work happens in the waitUntil background task. This endpoint just
@@ -2700,17 +2311,13 @@ async function handleJobPoll(request: Request, env: Env, id: number): Promise<Re
     return json({ id: row.id, status: "failed", job_error: row.job_error });
   }
 
-  // Pending. For BYOK video gen (xAI/Google with a stored job_id), this is
-  // where the actual upstream poll happens - one round-trip per client poll,
-  // each in its own worker invocation budget. No more waitUntil cancellation.
-  if (row.status === "pending" && row.model_type === "video" && row.job_id && (row.job_provider === "xai" || row.job_provider === "google")) {
+  // Pending. For BYOK video gen (xAI with a stored job_id), this is where
+  // the actual upstream poll happens - one round-trip per client poll, each
+  // in its own worker invocation budget. No more waitUntil cancellation.
+  if (row.status === "pending" && row.model_type === "video" && row.job_id && row.job_provider === "xai") {
     let pollResult: BYOKPollResult;
     try {
-      if (row.job_provider === "xai") {
-        pollResult = await pollVideoXai(env, row.job_id);
-      } else {
-        pollResult = await pollVideoGoogle(env, row.job_id);
-      }
+      pollResult = await pollVideoXai(env, row.job_id);
     } catch (err) {
       // Transient upstream error - keep status pending, client will try again.
       console.error("handleJobPoll: upstream poll failed:", err instanceof Error ? err.message : String(err));
@@ -2800,15 +2407,6 @@ function extractOutput(result: unknown): string {
     if (text) return text;
   }
 
-  // Google Gemini: candidates[0].content.parts[].text
-  const candidates = r?.candidates as Array<{ content?: { parts?: Array<{ text?: string }> } }> | undefined;
-  if (Array.isArray(candidates) && Array.isArray(candidates[0]?.content?.parts)) {
-    const text = candidates[0].content.parts
-      .map((p) => (typeof p.text === "string" ? p.text : ""))
-      .join("");
-    if (text) return text;
-  }
-
   // Bedrock Converse API (Nova family): { output: { message: { content: [{ text }] } } }
   const bedrockOutput = r?.output as { message?: { content?: Array<{ text?: string }> } } | undefined;
   if (bedrockOutput?.message?.content) {
@@ -2852,14 +2450,6 @@ function extractUsage(result: unknown): { in_: number | null; out_: number | nul
     return {
       in_:  u.prompt_tokens ?? u.input_tokens ?? u.inputTokens ?? null,
       out_: u.completion_tokens ?? u.output_tokens ?? u.outputTokens ?? null,
-    };
-  }
-  // Google Gemini: usageMetadata
-  const um = r?.usageMetadata as Record<string, number> | undefined;
-  if (um) {
-    return {
-      in_:  um.promptTokenCount ?? null,
-      out_: um.candidatesTokenCount ?? null,
     };
   }
   return { in_: null, out_: null };

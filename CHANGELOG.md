@@ -1,5 +1,77 @@
 # Changelog
 
+## v0.14.0
+
+**Breaking:** removes OpenAI BYOK and the Gemini chat / Veo 3.1 video BYOK paths to consolidate around Anthropic + xAI + Bedrock BYOK and Unified Billing for everything else. Deployers who used OpenAI or Google BYOK will need to migrate to one of the remaining providers.
+
+- Catalog entries removed (13 total):
+  - OpenAI BYOK: `openai/gpt-5.5`, `openai/gpt-5.4`, `openai/gpt-5.4-mini`, `openai/gpt-image-2-2026-04-21`, `openai/gpt-4o-mini-tts-2025-12-15`, `openai/gpt-4o-transcribe`, `openai/gpt-4o-mini-transcribe-2025-12-15`.
+  - Google BYOK: `google/gemini-3.5-flash`, `google/gemini-3.1-pro-preview`, `google/gemini-3.1-flash`, `google/gemini-2.5-pro`, `google/veo-3.1`, `google/veo-3.1-fast`.
+- Preserved: `google/veo-3` and `google/veo-3-fast` (no `byok_alias`, route through Unified Billing via the `LongRunWorkflow` step pattern; still need CF credits to actually fire).
+- Worker code deletions: `callOpenAI`, `imageGenOpenAI`, `ttsOpenAI`, `sttOpenAI`, `callGoogle`, `transformToGoogle`, `GooglePart` / `GoogleContent` interfaces, `submitVideoGoogle`, `pollVideoGoogle`. All BYOK dispatch branches in `runChat`, `runImage`, `runTts`, `runStt`, `runVideo`, and `handleJobPoll` collapsed accordingly. Google fallback removed from both `extractOutput` (candidates[0].content.parts[].text) and `extractUsage` (usageMetadata).
+- `Env` interface: `OPENAI_API_KEY` and `GOOGLE_API_KEY` removed.
+- `Provider` type union: `"openai"` removed. `"google"` kept for the two veo-3 Unified Billing entries.
+- `runChat` `wantsSystemInMessages` simplified from `!(model.provider === "anthropic" || model.provider === "google")` to `model.provider !== "anthropic"`. Anthropic still takes system as a top-level field; everything else gets `role: "system"` in the messages array.
+- `runVideo` `isBYOK` simplified to `!!(model.byok_alias && model.provider === "xai")`. Only xAI Grok Imagine Video uses the per-provider BYOK video path now; everything else goes through the Workflow.
+- `handleJobPoll` BYOK branch reduced to `row.job_provider === "xai"` (was xai-or-google).
+- README, CONTRIBUTING, and `wrangler.example.toml` updated to drop OpenAI / Google BYOK references. The orphaned "Google Gemini models (BYOK)" content that was sitting headerless under the xAI section (likely from an earlier edit losing the `##` header) is also removed.
+- Net diff against `src/index.ts`: +26 / -388 lines across 24 hunks.
+
+**Deployer migration (existing v0.13.x deployments):**
+
+After deploying v0.14.0, drop the obsolete secrets so they don't sit unused:
+
+```
+npx wrangler secret delete OPENAI_API_KEY
+npx wrangler secret delete GOOGLE_API_KEY
+```
+
+Neither is fatal if forgotten; they're just inert.
+
+No D1 migration. No R2 migration. Existing rows that reference removed models will still render in history (the row stores the model ID as a string, not a foreign key into the catalog); attempting to continue or retry one of those conversations will fail at submit time with a clear error.
+
+## v0.13.0
+
+Rolls up four patches landed between v0.12.0 and v0.14.0: hot-path latency, SSE streaming Pass 1 (Anthropic), SSE streaming Pass 2 (Workers AI), and the image-gen workarounds for FLUX.2 plus the gateway-incompatible streaming-output models.
+
+**Hot-path latency:**
+
+- `runChat` prelude now overlaps the D1 prior-turns SELECT, the Vectorize RAG retrieve, and the attachment normalization walk. Previously these ran sequentially even though they're independent. Hoisted `priorTurnsPromise` and `retrievePromise` to fire at the top of the function and awaited only at the message-array assembly point.
+- Video-frame attachments now upload to R2 in parallel via `Promise.all` instead of an in-order `for await` loop. For an 8-frame video, this collapses ~600ms of sequential PUTs into a single round trip.
+- `handleJobPoll` streams the upstream artifact directly into R2 via a new `r2PutStream` helper that pipes `aresp.body` through the bucket without buffering the whole video into memory. Cuts peak memory on a 30MB video gen from ~30MB to a few hundred KB and shaves one full body-read pass off the latency.
+- Two try-blocks in `handleJobPoll` collapsed into one (the separation was historical and prevented sharing the streaming pipe).
+
+**SSE streaming (chat models only):**
+
+- New `POST /api/chat/stream` endpoint returns `text/event-stream`. Same request body shape as `POST /api/chat`. Response is a sequence of envelope events emitted via a `TransformStream`:
+  - `{ "type": "delta", "text": "..." }` for each token chunk as the model emits it.
+  - `{ "type": "done", "row_id": ..., "latency_ms": ..., "tokens_in": ..., "tokens_out": ..., "conversation_id": ..., "turn_index": ... }` once the model finishes. Token counts mirror the non-stream path.
+  - `{ "type": "error", "message": "..." }` on upstream failure.
+- New optional `streaming: boolean` flag on `ModelEntry`. Frontend can filter the catalog to streamable models for routing; the worker rejects stream requests for non-streaming models with HTTP 501.
+- Streaming wired for two providers in this release:
+  - **Pass 1 (Anthropic):** all four Claude entries (Opus 4.7 / 4.6, Sonnet 4.6, Haiku 4.5). Uses `callAnthropicStream` async generator that strips Anthropic's native SSE envelope (`message_start`, `content_block_delta`, etc.) and re-emits our flat envelope.
+  - **Pass 2 (Workers AI):** 19 `@cf/*` and `@hf/*` chat models flagged streaming. Uses `callWorkersAIStream` which calls `env.AI.run({stream: true})` and reads the returned `ReadableStream` of OpenAI-compatible SSE. The `AnthropicStreamEvent` internal type was renamed to `ProviderStreamEvent` since it now serves both backends.
+  - **Pass 3 (xAI Grok) and Pass 4 (Bedrock Nova):** still on the backlog. The `handleChatStream` validator returns 501 with a clear message for those.
+- Client disconnect handling: the worker holds an `AbortController` and aborts the upstream fetch when the SSE pipe closes. Partial tokens already buffered are dropped; no D1 row is persisted for an aborted stream. This matches the non-stream path's behavior (no partial rows).
+- Reasoning models (`@cf/openai/gpt-oss-120b`, `@cf/openai/gpt-oss-20b`, `@hf/.../qwq-32b`, `@cf/deepseek/deepseek-r1-distill-qwen-32b`) stream `<think>...</think>` blocks as part of the delta text. The frontend can fold these in the UI; the worker passes them through unchanged.
+- AI Gateway log ID is null on streaming rows. The gateway does not yet surface `cf-aig-log-id` on SSE responses. Once Cloudflare exposes it, plumbing it through is a one-line change.
+
+**Streaming client module (new file):**
+
+- `public/streaming-client.js`, a vanilla JS module with no dependencies. Exposes `streamChat(body, { onDelta, onDone, onError })` returning a `cancel()` function. Drop-in for any frontend that wants to wire the new endpoint without rewriting its existing chat code path. About 7.6KB. Includes integration notes in the file header.
+
+**Image generation workarounds:**
+
+- FLUX.2 (`@cf/black-forest-labs/flux-2-klein-9b`, `-klein-4b`, `-dev`) requires multipart input to `env.AI.run`. Two errors had been masking this: `AiError 5006: "required properties at '/' are 'multipart'"` from the AI binding, and `"AI Gateway does not support ReadableStreams yet"` when the gateway tried to proxy a stream-shaped input. Fix: build `FormData`, wrap it in `new Response(form)` to extract the boundary-bearing `Content-Type`, then pass `{ multipart: { body, contentType } }` to `env.AI.run`. Detected per-call via `model.id.startsWith("@cf/black-forest-labs/flux-2-")`.
+- Streaming-output models (`@cf/leonardo/phoenix-1.0`, `@cf/lykon/dreamshaper-8-lcm`) return a `ReadableStream` of PNG bytes rather than the usual `{ image: base64 }` JSON. The AI Gateway cannot proxy stream-output bodies either. Same fix as FLUX.2 input: bypass the gateway by calling `env.AI.run` directly without the `gateway: { id }` option, then detect the response shape at runtime (`result instanceof ReadableStream` -> drain to `Uint8Array`; else extract `result.image` as base64).
+- Five models now bypass the AI Gateway: the three FLUX.2 entries plus phoenix-1.0 and dreamshaper-8-lcm. Cost: `ai_gateway_log_id` is null on rows generated by these. Cloudflare's error text says "yet," so the bypass is expected to be temporary. The other two image models (`@cf/black-forest-labs/flux-1-schnell` and `@cf/leonardo/lucid-origin`) still route through the gateway normally.
+
+**Internal:**
+
+- No D1 migration. No R2 migration. No new worker secrets.
+- New worker file: `public/streaming-client.js` (must be served by the Assets binding, which already covers `public/*`).
+- Net diff against v0.12.0 across the four patches: roughly +700 / -100 lines. Most of it is the SSE machinery and the FLUX.2 multipart construction.
+
 ## v0.12.0
 
 - Unblock Unified Billing video and music generation by migrating from `ctx.waitUntil` to Cloudflare Workflows. Resolves the long-standing `waitUntil` cancellation issue: previously, jobs whose `env.AI.run` call exceeded the ~30-second post-response budget were cancelled mid-flight, leaving D1 rows stuck in `pending`. The new `LongRunWorkflow` class holds the blocking call alive across step boundaries (unlimited wall-clock per step for I/O-bound work) and retries each phase independently.

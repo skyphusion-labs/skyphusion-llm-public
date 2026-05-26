@@ -8,20 +8,19 @@ This project is maintained as time allows. Response times on issues and PRs may 
 
 ## Scope
 
-The project is a template for the Cloudflare AI stack: a single Worker that ties together Workers AI, AI Gateway, D1, R2, Vectorize, Workflows, and Cloudflare Access. Modalities covered: chat (text and vision), image generation, TTS, STT, video generation, music generation, and RAG over uploaded PDFs and spreadsheets. BYOK paths exist for Anthropic, xAI, Google, OpenAI, and Amazon Bedrock; Unified Billing paths exist for video and music via `env.AI.run`.
+The project is a template for the Cloudflare AI stack: a single Worker that ties together Workers AI, AI Gateway, D1, R2, Vectorize, Workflows, and Cloudflare Access. Modalities covered: chat (text and vision), image generation, TTS, STT, video generation, music generation, and RAG over uploaded PDFs and spreadsheets. BYOK paths exist for Anthropic, xAI, and Amazon Bedrock; Unified Billing paths cover the rest (video and music partners) via `env.AI.run`.
 
 PRs that fit:
 
 - New Workers AI models in the catalog (verify the model ID and the response shape against the model page on `developers.cloudflare.com/workers-ai/models/`)
 - Conversion of BYOK chat providers to Unified Billing where Cloudflare supports them (see "Adding a new model provider" below)
 - Per-provider param mapping for Unified Billing video models (the current baseline assumes Veo's param shape and sends the same to ByteDance / RunwayML / Alibaba / PixVerse / Vidu, which may reject or ignore some params; provider-specific mappers would fix this)
-- Better handling of provider-specific response shapes in `extractOutput` or in the per-provider dispatch helpers (`callAnthropic`, `callOpenAI`, `callXAI`, `callGoogle`, `callBedrockNova`)
-- Vision content parts for OpenAI and Bedrock Nova dispatch (frontend already gates on the `vision` capability flag, but the worker silently drops image parts today)
-- Streaming responses for chat models
-- Image-to-image input for FLUX 2 (the multipart binding)
-- OpenAI Realtime API support (ephemeral token endpoint + browser WebSocket + audio UI)
+- Better handling of provider-specific response shapes in `extractOutput` or in the per-provider dispatch helpers (`callAnthropic`, `callXai`, `callBedrockNova`, `callBedrockPegasus`)
+- Vision content parts for Bedrock Nova dispatch (frontend already gates on the `vision` capability flag, but the worker silently drops image parts today)
+- Streaming for the remaining providers: xAI (Pass 3, OpenAI-compatible SSE) and Bedrock Nova (Pass 4, eventstream binary frames). Anthropic and Workers AI are already wired.
+- Image-to-image input for FLUX 2 (the multipart binding already accepts up to 4 reference images; frontend needs the UI to attach them)
 - Audio extraction from uploaded video files (today video attachments are 8 keyframes only; pulling the audio track and feeding it to Whisper would give transcription plus visual analysis from one upload)
-- TTS voice picker (OpenAI: alloy/echo/fable/onyx/nova/shimmer, and equivalent for other providers)
+- TTS voice picker for Aura / MeloTTS variants
 - STT output formats (verbose_json, SRT, VTT)
 - Cross-conversation export to Markdown
 
@@ -46,7 +45,7 @@ Add a BYOK path only when:
 - The provider's billing model does not fit Unified Billing (Amazon Bedrock is the current example: requires AWS IAM credentials and is not proxied through Workers AI).
 - A deployer specifically wants their own quota or rate-limit ceiling with the provider, distinct from their Cloudflare account.
 
-If you add a BYOK entry, mark the catalog row with `{ provider: "<name>", byok_alias: "<provider-side-model-id>" }` and label it `(BYOK)` in the UI so deployers know to set the corresponding secret. Existing entries for Anthropic / xAI / Google / OpenAI / Bedrock are the reference pattern.
+If you add a BYOK entry, mark the catalog row with `{ provider: "<name>", byok_alias: "<provider-side-model-id>" }` and label it `(BYOK)` in the UI so deployers know to set the corresponding secret. Existing entries for Anthropic / xAI / Bedrock are the reference pattern.
 
 ## Long-running operations
 

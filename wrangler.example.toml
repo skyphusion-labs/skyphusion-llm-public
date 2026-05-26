@@ -2,8 +2,10 @@ name = "skyphusion-llm-public"
 main = "src/index.ts"
 compatibility_date = "2026-05-01"
 
-# AI binding. The unified binding handles both Workers AI and third-party
-# providers (OpenAI, Anthropic, Google, Mistral, etc.) under one call surface.
+# AI binding. The unified binding handles Workers AI models directly and routes
+# third-party Unified Billing models (video and music partners) through the
+# Cloudflare AI Gateway. BYOK chat providers (Anthropic, xAI, Bedrock) bypass
+# the binding and hit the gateway's per-provider endpoints with worker secrets.
 [ai]
 binding = "AI"
 
@@ -60,8 +62,7 @@ enabled = true
 #   GATEWAY_ID=your-gateway-slug
 #
 # Other worker secrets (also set via `npx wrangler secret put <NAME>`):
-#   ANTHROPIC_API_KEY, XAI_API_KEY, GOOGLE_API_KEY, OPENAI_API_KEY,
-#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+#   ANTHROPIC_API_KEY, XAI_API_KEY, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
 #   AWS_REGION (optional, defaults us-east-1; for Nova),
 #   AWS_REGION_PEGASUS (optional, defaults us-west-2; Pegasus only available
 #                       in us-west-2 or eu-west-1),

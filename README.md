@@ -15,7 +15,7 @@ A multimodal AI playground deployed as a single Cloudflare Worker. Chat across 3
 A working template for the Cloudflare AI stack. One Worker, no framework, no build step beyond TypeScript. The interesting parts are the patterns, not the model count:
 
 - **Unified `env.AI.run()` binding** drives every modality through one call surface: chat, vision input, image gen, TTS, STT, video gen (Unified Billing), and music gen.
-- **BYOK paths** for Anthropic Claude, xAI Grok, Google Gemini, OpenAI GPT, and Amazon Bedrock (Nova family plus TwelveLabs Pegasus 1.2). Each provider has its own dispatch helper that transforms our internal `messages` shape into the provider's format.
+- **BYOK paths** for Anthropic Claude, xAI Grok, and Amazon Bedrock (Nova family plus TwelveLabs Pegasus 1.2). Each provider has its own dispatch helper that transforms our internal `messages` shape into the provider's format.
 - **AI Gateway** wraps every call for observability, caching, and rate-limiting.
 - **D1** holds chat metadata, multi-turn conversation history, and RAG chunk text. **R2** holds all binary artifacts. **Vectorize** holds RAG embeddings (768-dim BGE-base). The chat row references R2 keys; nothing binary touches D1.
 - **Cloudflare Workflows** owns long-running Unified Billing video and music generation (30s to 3min jobs). The `LongRunWorkflow` class holds the blocking `env.AI.run` call alive across step boundaries that `ctx.waitUntil` cannot.
@@ -24,23 +24,21 @@ A working template for the Cloudflare AI stack. One Worker, no framework, no bui
 
 ## Features
 
-**Chat (39 models across 6 providers):**
+**Chat (28 models across 4 providers):**
 - Workers AI: Llama 4 Scout, Llama 3.x, Qwen 3 / 2.5, DeepSeek R1, Mistral, Gemma 4, Granite 4, Nemotron 3, GLM 4.7, Hermes, GPT-OSS 120B/20B, Kimi K2.6
 - Anthropic BYOK: Opus 4.7 / 4.6, Sonnet 4.6, Haiku 4.5
 - xAI BYOK: Grok 4.3, Grok 4.20 (multi-agent and reasoning variants), Grok Build 0.1
-- Google BYOK: Gemini 3.5 Flash, 3.1 Pro / Flash, 2.5 Pro
-- OpenAI BYOK: GPT-5.5, GPT-5.4, GPT-5.4 mini
 - Bedrock BYOK: Nova 2 Lite/Pro, Nova Lite/Pro, TwelveLabs Pegasus 1.2 (video-Q&A)
 
-**Image generation:** FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM, OpenAI GPT Image 2 (BYOK).
+**Image generation:** FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM.
 
-**Video generation:** Google Veo 3.1 / 3.1 Fast / 3 / 3 Fast, ByteDance Seedance 2.0 / 2.0 Fast, MiniMax Hailuo 2.3 / 2.3 Fast, RunwayML Gen-4.5, Alibaba HappyHorse 1.0, PixVerse v6 / v5.6, Vidu Q3 Pro / Q3 Turbo, xAI Grok Imagine Video. BYOK for xAI and the Veo 3.1 family; Unified Billing for the rest (durable via Cloudflare Workflows).
+**Video generation:** Google Veo 3 / 3 Fast (Unified Billing), ByteDance Seedance 2.0 / 2.0 Fast, MiniMax Hailuo 2.3 / 2.3 Fast, RunwayML Gen-4.5, Alibaba HappyHorse 1.0, PixVerse v6 / v5.6, Vidu Q3 Pro / Q3 Turbo, xAI Grok Imagine Video. BYOK for xAI; Unified Billing for the rest (durable via Cloudflare Workflows).
 
 **Music generation:** MiniMax Music 2.6 (Unified Billing, durable via Workflows).
 
-**Text-to-speech:** Aura-2 EN / ES, MeloTTS, OpenAI GPT-4o mini TTS (BYOK).
+**Text-to-speech:** Aura-2 EN / ES, MeloTTS.
 
-**Speech-to-text:** Whisper Large v3 Turbo / Whisper / Whisper Tiny EN, OpenAI GPT-4o Transcribe and mini Transcribe (BYOK).
+**Speech-to-text:** Whisper Large v3 Turbo / Whisper / Whisper Tiny EN.
 
 **RAG (Vectorize):** upload `.txt`, `.md`, `.pdf`, or `.xlsx`/`.xls` files via the sidebar. The worker chunks, embeds via BGE-base, and stores vectors in Vectorize plus text in D1. Per-page metadata for PDFs, per-sheet for XLSX. Toggle "use my docs" per turn to fold the top-5 nearest chunks into the system prompt before the LLM call.
 
@@ -199,7 +197,7 @@ The worker is the only public surface. R2 is private; the worker streams objects
 
 Video and music generation can take 1-3 minutes per call, which exceeds the ~30-second post-response budget that Cloudflare Workers gives to `ctx.waitUntil`. Two architectures handle this:
 
-**BYOK video** (xAI Grok Imagine Video, Google Veo with your API key) uses submit-and-poll: the worker submits the job synchronously (one fast HTTP call), persists the upstream job ID, and returns immediately. Each client poll of `/api/job/:id` triggers ONE fresh worker invocation that checks upstream status; when done, that invocation downloads to R2 and finalizes D1.
+**BYOK video** (xAI Grok Imagine Video) uses submit-and-poll: the worker submits the job synchronously (one fast HTTP call), persists the upstream job ID, and returns immediately. Each client poll of `/api/job/:id` triggers ONE fresh worker invocation that checks upstream status; when done, that invocation downloads to R2 and finalizes D1.
 
 **Unified Billing video and music** (Veo/Seedance/Hailuo/Gen-4.5/HappyHorse/PixVerse/Vidu/MiniMax Music via Cloudflare credits) uses [Cloudflare Workflows](https://developers.cloudflare.com/workflows/). The `LongRunWorkflow` class (defined at the bottom of `src/index.ts`) holds the blocking `env.AI.run` call alive across step boundaries and retries each phase independently. Workflow instance IDs are stored on the chats row as `job_id` for traceability.
 
@@ -224,7 +222,7 @@ Workers AI billing is per-token / per-image / per-minute depending on model. Fre
 
 D1 is roughly $0.75/GB-month for storage. R2 is roughly $0.015/GB-month with no egress fees inside Cloudflare. Free tiers on D1 and R2 cover small personal use indefinitely.
 
-Anthropic (Claude), xAI (Grok), and Google (Gemini) models bill against your own provider accounts via BYOK, not Cloudflare. See below.
+Anthropic (Claude) and xAI (Grok) models bill against your own provider accounts via BYOK, not Cloudflare. Amazon Bedrock models (Nova family, Pegasus 1.2) bill against your AWS account. See below.
 
 ## Anthropic models (BYOK)
 
@@ -283,41 +281,6 @@ The same `CF_AIG_TOKEN` secret applies if your gateway is authenticated.
 Note: Grok 4.x are reasoning models and expect `max_completion_tokens` rather than the legacy `max_tokens` field. The worker handles this internally. If you swap in older Grok variants (the grok-3 family was retired May 15, 2026), check xAI's docs for which field they expect.
 
 Billing: xAI charges your account directly. Pricing as of mid-2026: Grok 4.3 and Grok 4.20 variants at $1.25/$2.50 per million input/output tokens, Grok Build 0.1 at $1.00/$2.00. No Cloudflare markup.
-
-## Google Gemini models (BYOK)
-
-Gemini 3.5 Flash, Gemini 3.1 Pro, Gemini 3.1 Flash, and Gemini 2.5 Pro are routed via BYOK against your own Google AI Studio account. Same pattern as Anthropic and xAI: stored keys in the gateway dashboard (recommended) or inline Worker secret.
-
-Google's API differs from OpenAI: messages live in a `contents` array of `parts` blocks, system prompts go in `systemInstruction`, images use `inline_data` blocks, and the assistant role is called `model`. The worker handles the transform internally; the same UI works for all four providers.
-
-### Option A (recommended): Store the key in AI Gateway
-
-1. Get an API key from https://aistudio.google.com > Get API key
-2. Dashboard > AI > AI Gateway > Provider Keys > Add API Key > pick Google AI Studio > paste
-3. Try a Gemini model; the gateway injects the stored key automatically
-
-### Option B: Inline secret
-
-```
-npx wrangler secret put GOOGLE_API_KEY
-npm run deploy
-```
-
-The worker sends `x-goog-api-key` on every request, overriding any stored key.
-
-Billing: Google charges your account directly. Gemini 3.5 Flash and Gemini 3.1 Flash are roughly $0.30/$2.50 per million input/output tokens, Gemini 3.1 Pro is higher (premium reasoning tier), Gemini 2.5 Pro is at the older 2.5-family pricing. Check https://ai.google.dev/pricing for current rates.
-
-## OpenAI models (BYOK)
-
-OpenAI chat models route through Cloudflare AI Gateway's OpenAI proxy, using the standard `messages` array format. v0.11.0 ships GPT-5.5, GPT-5.4, GPT-5.4 mini, and GPT-4.1 in the catalog.
-
-Set the API key as a worker secret:
-```
-npx wrangler secret put OPENAI_API_KEY
-npm run deploy
-```
-
-Billing: OpenAI charges your account directly per https://openai.com/api/pricing/. GPT-5.5 Pro is premium-tier; GPT-5.4 mini is a good speed/cost daily driver. The worker sends `Authorization: Bearer $OPENAI_API_KEY` on every request, no stored-key fallback.
 
 ## Amazon Bedrock models (BYOK)
 
@@ -381,20 +344,18 @@ AWS charges your account directly per https://aws.amazon.com/bedrock/pricing/. N
 
 Video models have two possible routes through the AI Gateway:
 
-**Route A: Unified Billing via `env.AI.run`** (binding-based, 15 of 15 models). Cloudflare manages provider auth and bills your CF account directly. Requires opting into Unified Billing in the AI Gateway dashboard and funding it with credits. Per CF docs: BYOK is **not** supported for third-party models called through the AI binding.
+**Route A: Unified Billing via `env.AI.run`** (binding-based, 14 of 15 models). Cloudflare manages provider auth and bills your CF account directly. Requires opting into Unified Billing in the AI Gateway dashboard and funding it with credits. Per CF docs: BYOK is **not** supported for third-party models called through the AI binding.
 
-**Route B: BYOK via per-provider AI Gateway endpoints** (3 of 15 models). Hits `/grok/v1/videos/*` and `/google-ai-studio/v1beta/*` directly with your stored xAI and Google keys. Works today without Unified Billing.
+**Route B: BYOK via per-provider AI Gateway endpoints** (1 of 15 models). Hits `/grok/v1/videos/*` directly with your stored xAI key. Works today without Unified Billing.
 
-This deployment supports both. The router picks per-model based on a `byok_alias` field in the model catalog. If a model has `byok_alias` set and the provider is `xai` or `google`, the worker uses BYOK. Otherwise it uses `env.AI.run`, which will fail with code `2021: Invalid User Credentials` until Unified Billing is enabled.
+This deployment supports both. The router picks per-model based on a `byok_alias` field in the model catalog. If a model has `byok_alias` set and the provider is `xai`, the worker uses BYOK. Otherwise it uses `env.AI.run`, which will fail with code `2021: Invalid User Credentials` until Unified Billing is enabled.
 
 ### Model availability matrix
 
 | Model | Route | Works today | Notes |
 |---|---|---|---|
 | `xai/grok-imagine-video` | BYOK | yes (with XAI_API_KEY) | $0.05/sec, 8s default |
-| `google/veo-3.1-fast` | BYOK | yes (with GOOGLE_API_KEY) | aliases to `veo-3.1-fast-generate-001` |
-| `google/veo-3.1` | BYOK | yes (with GOOGLE_API_KEY) | aliases to `veo-3.1-generate-preview` |
-| `google/veo-3`, `google/veo-3-fast` | Unified | needs CF credits | no AI Studio direct equivalent listed |
+| `google/veo-3`, `google/veo-3-fast` | Unified | needs CF credits | route through `env.AI.run` |
 | `bytedance/seedance-2.0`, `seedance-2.0-fast` | Unified | needs CF credits | CF partner, no public API |
 | `minimax/hailuo-2.3`, `hailuo-2.3-fast` | Unified | needs CF credits | CF partner, no public API |
 | `runwayml/gen-4.5` | Unified | needs CF credits | CF partner |
@@ -427,7 +388,7 @@ If the job fails at any stage (provider error, poll timeout, download failure, R
 
 ### Defaults
 
-The worker submits with `duration: 8s`, `aspect_ratio: "16:9"`, `resolution: "720p"`, `generate_audio: true` for the Unified route. The BYOK route uses the xAI/Google-specific param shapes (`duration: 8` integer for xAI, `parameters: {durationSeconds, aspectRatio}` for Google). Per-model parameter customization is a v0.8.0 follow-on.
+The worker submits with `duration: 8s`, `aspect_ratio: "16:9"`, `resolution: "720p"`, `generate_audio: true` for the Unified route. The BYOK route uses the xAI-specific param shape (`duration: 8` integer). Per-model parameter customization is a v0.8.0 follow-on.
 
 ### Cost discipline
 
@@ -435,7 +396,7 @@ Video gen is the most expensive feature in this playground.
 
 - The worker has no per-user rate limiting. If you make the URL public, add rate limits at the AI Gateway level.
 - Each generation creates an R2 object (~5-30MB per 8s clip). Use `DELETE /api/history/:id` to clean up.
-- BYOK route prices: xAI Grok Imagine Video $0.05/sec ($0.40 per 8s clip). Veo via Gemini AI Studio per Google's pricing page.
+- BYOK route prices: xAI Grok Imagine Video $0.05/sec ($0.40 per 8s clip).
 - Unified Billing prices: visible at https://dash.cloudflare.com under AI > Models > [model] > Pricing. CF marks up upstream provider costs.
 
 ### Image-to-video
@@ -467,12 +428,14 @@ This is a Cloudflare-proxied (third-party) model, so it requires Unified Billing
 
 `MODELS` at the top of `src/index.ts`. Each entry has:
 
-- `id`: `@cf/{vendor}/{model}` for Workers AI, `anthropic/{model}` for BYOK Anthropic, `xai/{model}` for BYOK xAI, or `google/{model}` for BYOK Google Gemini
+- `id`: `@cf/{vendor}/{model}` for Workers AI, `anthropic/{model}` for BYOK Anthropic, `xai/{model}` for BYOK xAI, `bedrock/{model}` for BYOK Bedrock, or `google/{model}` / `bytedance/{model}` / `minimax/{model}` / etc. for Unified Billing video and music partners.
 - `label` for the dropdown
 - `group` for the optgroup heading
-- `type`: `"chat"` | `"image"` | `"tts"` | `"video"`
+- `type`: `"chat"` | `"image"` | `"tts"` | `"video"` | `"stt"` | `"music"`
 - `capabilities`: array. Currently only `"vision"` is recognized; applies to chat models only.
-- `provider` (optional): `"workers-ai"` (default) | `"anthropic"` (BYOK) | `"xai"` (BYOK) | `"google"` (BYOK). Drives the call dispatch.
+- `provider` (optional): `"workers-ai"` (default) | `"anthropic"` (BYOK) | `"xai"` (BYOK) | `"bedrock"` (BYOK) | `"google"` / `"bytedance"` / `"minimax"` / `"runwayml"` / `"alibaba"` / `"pixverse"` / `"vidu"` (Unified Billing). Drives the call dispatch.
+- `byok_alias` (optional): for Bedrock chat and xAI video, the upstream model name passed to the provider API.
+- `streaming` (optional, chat only): when `true`, the model is eligible for `POST /api/chat/stream`. Currently Anthropic and Workers AI streams are wired; xAI and Bedrock are planned.
 
 Full Workers AI catalog: https://developers.cloudflare.com/workers-ai/models/. Skip anything tagged "Planned deprecation."
 

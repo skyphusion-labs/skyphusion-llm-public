@@ -162,6 +162,8 @@ const attachments       = $("#attachments");
 const attachRow         = $("#attach-row");
 const useDocsRow        = $("#use-docs-row");
 const useDocsCheckbox   = $("#use-docs");
+const useWebSearchRow      = $("#use-web-search-row");
+const useWebSearchCheckbox = $("#use-web-search");
 const sidebarToggle     = $("#sidebar-toggle");
 const sidebarBackdrop   = $("#sidebar-backdrop");
 const layout            = document.querySelector(".layout");
@@ -273,7 +275,9 @@ function updateAffordance() {
 
   // Default: hide the use-docs toggle. The chat branch turns it on when
   // the user has uploaded at least one document.
+  // v0.17.0: also default-hide the web-search toggle; chat branch shows it.
   useDocsRow.hidden = true;
+  useWebSearchRow.hidden = true;
 
   if (m.type === "image") {
     systemPromptLabel.textContent = "negative prompt";
@@ -347,6 +351,8 @@ function updateAffordance() {
     // RAG: show the toggle only when chat is selected AND the user has
     // uploaded at least one document. Without docs there's nothing to retrieve.
     useDocsRow.hidden = state.documentCount === 0;
+    // v0.17.0: web search is always available on chat (no docs dependency).
+    useWebSearchRow.hidden = false;
   }
 }
 
@@ -621,11 +627,30 @@ function renderOutputArtifactHTML(oa) {
 }
 
 // Render retrieved chunks as an HTML fragment. Embedded inside a user turn
-// when RAG was used for that turn. Pass null/[] to get "".
+// when RAG and/or web search were used for that turn. Pass null/[] to get "".
+// v0.17.0: items can be either RAG chunks (no source_type, or source_type:"rag")
+// or web results (source_type:"web"). Renderer branches on source_type.
 function renderRetrievedChunksHTML(chunks) {
   if (!chunks || chunks.length === 0) return "";
   const items = chunks
     .map((c, i) => {
+      if (c.source_type === "web") {
+        const score = (typeof c.score === "number") ? ` \u00b7 score ${c.score.toFixed(3)}` : "";
+        const sourceLabel = c.source === "tavily" ? "tavily" : c.source === "wikipedia" ? "wikipedia" : "web";
+        return `
+        <details class="retrieved-chunk retrieved-web">
+          <summary>
+            <span class="rc-num">${i + 1}.</span>
+            <span class="rc-file">${escapeHtml(c.title || "?")}</span>
+            <span class="rc-meta">${escapeHtml(sourceLabel)}${score}</span>
+          </summary>
+          <pre class="rc-text"><a href="${escapeHtml(c.url || "#")}" target="_blank" rel="noopener noreferrer">${escapeHtml(c.url || "")}</a>
+
+${escapeHtml(c.snippet || "")}</pre>
+        </details>`;
+      }
+      // RAG chunk (the default for missing source_type, for back-compat with
+      // rows written before v0.17.0).
       const score = (typeof c.score === "number") ? c.score.toFixed(3) : "?";
       const loc =
         (c.page !== undefined && c.page !== null) ? ` \u00b7 page ${c.page}` :
@@ -642,9 +667,20 @@ function renderRetrievedChunksHTML(chunks) {
         </details>`;
     })
     .join("");
+  // Mixed-source label: when both RAG and web are present, count each.
+  const ragCount = chunks.filter((c) => c.source_type !== "web").length;
+  const webCount = chunks.filter((c) => c.source_type === "web").length;
+  let label;
+  if (ragCount && webCount) {
+    label = `retrieved context (${ragCount} doc${ragCount === 1 ? "" : "s"} + ${webCount} web)`;
+  } else if (webCount) {
+    label = `retrieved context (${webCount} web result${webCount === 1 ? "" : "s"})`;
+  } else {
+    label = `retrieved context (${ragCount} chunk${ragCount === 1 ? "" : "s"})`;
+  }
   return `
     <div class="retrieved-chunks">
-      <div class="rc-header">retrieved context (${chunks.length} chunk${chunks.length === 1 ? "" : "s"})</div>
+      <div class="rc-header">${escapeHtml(label)}</div>
       ${items}
     </div>`;
 }
@@ -980,6 +1016,11 @@ async function run() {
     // AND has documents to retrieve from.
     if (m.type === "chat" && useDocsCheckbox.checked && state.documentCount > 0) {
       requestBody.use_docs = true;
+    }
+    // v0.17.0: web search. Chat models only; no doc-count gate (Tavily +
+    // Wikipedia are always reachable from the worker).
+    if (m.type === "chat" && useWebSearchCheckbox.checked) {
+      requestBody.use_web_search = true;
     }
 
     const result = await api("/api/chat", {

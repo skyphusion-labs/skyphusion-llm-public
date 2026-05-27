@@ -3,7 +3,7 @@
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Typecheck](https://github.com/SkyPhusion/skyphusion-llm-public/actions/workflows/typecheck.yml/badge.svg)](https://github.com/SkyPhusion/skyphusion-llm-public/actions/workflows/typecheck.yml)
 
-A multimodal AI playground deployed as a single Cloudflare Worker. Chat across 39 text models from six providers, generate images, speech, videos, and music, transcribe audio, and run retrieval-augmented chat over your own PDFs and spreadsheets. One web UI behind Cloudflare Access; per-user history; R2 for all binary artifacts.
+A multimodal AI playground deployed as a single Cloudflare Worker. 28 chat models across 4 providers, image / TTS / STT / video / music generation, RAG over PDF and XLSX, opt-in web search via Tavily and Wikipedia, SSE streaming on supported chat models, and multi-turn conversations. One web UI behind Cloudflare Access, per-user history, R2 for all binary artifacts.
 
 <p align="center">
   <img src="docs/screenshot-desktop.jpg" alt="Desktop UI: image generation with FLUX-1 schnell" width="800"><br><br>
@@ -16,23 +16,25 @@ A working template for the Cloudflare AI stack. One Worker, no framework, no bui
 
 - **Unified `env.AI.run()` binding** drives every modality through one call surface: chat, vision input, image gen, TTS, STT, video gen (Unified Billing), and music gen.
 - **BYOK paths** for Anthropic Claude, xAI Grok, and Amazon Bedrock (Nova family plus TwelveLabs Pegasus 1.2). Each provider has its own dispatch helper that transforms our internal `messages` shape into the provider's format.
+- **SSE streaming** (v0.13.0+) for chat models on all four providers: Anthropic native SSE, Workers AI OpenAI-compatible SSE, xAI OpenAI-compatible SSE, and Bedrock Nova `vnd.amazon.eventstream` binary frames. Pegasus stays single-shot.
 - **AI Gateway** wraps every call for observability, caching, and rate-limiting.
 - **D1** holds chat metadata, multi-turn conversation history, and RAG chunk text. **R2** holds all binary artifacts. **Vectorize** holds RAG embeddings (768-dim BGE-base). The chat row references R2 keys; nothing binary touches D1.
 - **Cloudflare Workflows** owns long-running Unified Billing video and music generation (30s to 3min jobs). The `LongRunWorkflow` class holds the blocking `env.AI.run` call alive across step boundaries that `ctx.waitUntil` cannot.
 - **Cloudflare Access** gates the entire worker URL. The worker reads `Cf-Access-Authenticated-User-Email` to scope history per user; R2 objects carry `customMetadata.user_email` so cross-user access is impossible even if a UUID is guessed.
 - **Client-side video keyframe extraction** sends 8 evenly-spaced frames to vision-capable chat models instead of uploading the full video file. The exception is TwelveLabs Pegasus 1.2 on Bedrock, which takes the raw video file directly for proper temporal understanding (18MB cap per the Bedrock InvokeModel request limit).
+- **Collapsible model picker** (v0.15.0) groups the ~50 catalog entries across 6 modalities with capability badges (vision, stream) inline.
 
 ## Features
 
-**Chat (28 models across 4 providers):**
-- Workers AI: Llama 4 Scout, Llama 3.x, Qwen 3 / 2.5, DeepSeek R1, Mistral, Gemma 4, Granite 4, Nemotron 3, GLM 4.7, Hermes, GPT-OSS 120B/20B, Kimi K2.6
-- Anthropic BYOK: Opus 4.7 / 4.6, Sonnet 4.6, Haiku 4.5
-- xAI BYOK: Grok 4.3, Grok 4.20 (multi-agent and reasoning variants), Grok Build 0.1
-- Bedrock BYOK: Nova 2 Lite/Pro, Nova Lite/Pro, TwelveLabs Pegasus 1.2 (video-Q&A)
+**Chat (28 models across 4 providers; 23 stream-capable):**
+- Workers AI: Llama 4 Scout, Llama 3.x family, Qwen3 30B / QwQ 32B / Qwen2.5 Coder 32B, DeepSeek R1, Mistral Small 3.1, Gemma 4 26B / Gemma 3 12B, Granite 4 Micro, Nemotron 3 120B, GLM-4.7 Flash, Hermes 2 Pro, GPT-OSS 120B / 20B, Kimi K2.6
+- Anthropic BYOK: Opus 4.7, Opus 4.6, Sonnet 4.6, Haiku 4.5 (all streaming)
+- xAI BYOK: Grok 4.3, Grok 4.20 (Multi-Agent and Reasoning), Grok Build 0.1 (all streaming as of v0.16.0)
+- Bedrock BYOK: Nova 2 Lite/Pro, Nova Lite/Pro (all streaming as of v0.16.0), TwelveLabs Pegasus 1.2 (single-shot video Q&A)
 
-**Image generation:** FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM.
+**Image generation:** FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM. FLUX.2 models accept up to 4 reference images (v0.16.0) for image-to-image generation, downscaled client-side to 512px.
 
-**Video generation:** Google Veo 3 / 3 Fast (Unified Billing), ByteDance Seedance 2.0 / 2.0 Fast, MiniMax Hailuo 2.3 / 2.3 Fast, RunwayML Gen-4.5, Alibaba HappyHorse 1.0, PixVerse v6 / v5.6, Vidu Q3 Pro / Q3 Turbo, xAI Grok Imagine Video. BYOK for xAI; Unified Billing for the rest (durable via Cloudflare Workflows).
+**Video generation:** Google Veo 3 / 3 Fast (Unified Billing), ByteDance Seedance 2.0 / 2.0 Fast, MiniMax Hailuo 2.3 / 2.3 Fast, RunwayML Gen-4.5, Alibaba HappyHorse 1.0, PixVerse v6 / v5.6, Vidu Q3 Pro / Q3 Turbo, xAI Grok Imagine Video. BYOK for xAI, Unified Billing for the rest (durable via Cloudflare Workflows).
 
 **Music generation:** MiniMax Music 2.6 (Unified Billing, durable via Workflows).
 
@@ -42,9 +44,13 @@ A working template for the Cloudflare AI stack. One Worker, no framework, no bui
 
 **RAG (Vectorize):** upload `.txt`, `.md`, `.pdf`, or `.xlsx`/`.xls` files via the sidebar. The worker chunks, embeds via BGE-base, and stores vectors in Vectorize plus text in D1. Per-page metadata for PDFs, per-sheet for XLSX. Toggle "use my docs" per turn to fold the top-5 nearest chunks into the system prompt before the LLM call.
 
+**Web search (v0.17.0):** opt-in retrieval source that queries Tavily (general web) and Wikipedia (reference and lore) in parallel. Snippets folded into the system prompt the same way RAG chunks are. Per-turn toggle. Tavily requires `TAVILY_API_KEY`; Wikipedia needs no setup. See [Web search](#web-search) below.
+
+**Streaming (v0.13.0+):** `POST /api/chat/stream` returns SSE for any chat model flagged `streaming: true` in the catalog. Token deltas surface as `{ type: "delta", text: "..." }` events, terminal completion as `{ type: "done", ... }` with token counts and conversation IDs. Client disconnect aborts the upstream model call immediately.
+
 **Multi-turn conversations:** `conversation_id` plus `turn_index` on chat rows. Continuing a conversation pulls prior turns and assembles a full message history for the next call. Mixed-model conversations allowed (start with Llama, continue with Claude). Text-only on continuation; prior images, audio, and video are not re-sent.
 
-**UI:** capability-aware mode switching (vision-only attachment types; image-mode UI re-skin to "negative prompt"; TTS / STT / video / music hide irrelevant inputs), per-user replay-able history with attachments and generated artifacts, optgrouped model dropdown, Enter to send / Shift+Enter for newline.
+**UI:** collapsible model picker with per-modality groups and capability badges (v0.15.0), capability-aware mode switching (vision-only attachment types; image-mode UI re-skin to "negative prompt"; TTS / STT / video / music hide irrelevant inputs), FLUX.2 reference image attach UI (v0.16.0), per-turn web-search toggle (v0.17.0), per-user replay-able history with attachments and generated artifacts, Enter to send / Shift+Enter for newline.
 
 **Auth:** Cloudflare Access on the worker URL. Per-user history and R2 ownership checks via `Cf-Access-Authenticated-User-Email`. Free up to 50 seats on Zero Trust.
 
@@ -52,14 +58,14 @@ A working template for the Cloudflare AI stack. One Worker, no framework, no bui
 
 - One Worker, TypeScript, no framework
 - `env.AI` unified binding routed through Cloudflare AI Gateway
-- D1 for chat history rows and RAG chunk text
+- D1 for chat history rows, multi-turn conversations, and RAG chunk text
 - R2 for input and output artifact bytes
 - Vectorize for RAG embeddings (768-dim, cosine)
 - Cloudflare Workflows for long-running Unified Billing video and music generation
 - Static frontend served via Workers Assets
 - Cloudflare Access in front for auth
 
-Roughly 3100 LOC in TypeScript, plus ~1800 LOC of vanilla JS, CSS, HTML, and SQL.
+Roughly 4100 LOC TypeScript in `src/index.ts`, plus ~2200 LOC vanilla JS / CSS / HTML in `public/`, plus schema.sql.
 
 ## Quickstart
 
@@ -141,7 +147,17 @@ Cloudflare Zero Trust is free up to 50 seats, so a small team is free.
 
 After this, hitting the worker URL shows the Access login screen. Authenticated requests reach the worker with `Cf-Access-Authenticated-User-Email`, which scopes both history and R2 artifact access per user.
 
-### 7. Local development
+### 7. Optional: web search (Tavily)
+
+For the v0.17.0 web-search feature, set a Tavily API key (free tier: 1000 searches/month):
+
+```
+npx wrangler secret put TAVILY_API_KEY
+```
+
+Without this, the "search the web" toggle still works but falls back to Wikipedia only. See [Web search](#web-search) below.
+
+### 8. Local development
 
 `wrangler dev` does not run Cloudflare Access. The worker falls back to `user_email = 'anonymous'` for local runs. Do not expose your local dev port to the public internet.
 
@@ -162,13 +178,17 @@ Each version that touches `wrangler.example.toml` documents the exact TOML block
 ## Architecture
 
 ```
-                    Browser (Cloudflare Access login)
+                  Browser (Cloudflare Access login)
                               |
                               v
-                    Worker (single fetch handler)
-                    /        |         \
-                  AI         D1          R2
-              (Gateway)  (metadata)  (artifact bytes)
+                  Worker (single fetch handler)
+        /        |       |        |       |          \
+       AI       D1      R2     Vectorize Workflows  ASSETS
+   (Gateway) (metadata)(bytes)  (RAG)   (long jobs) (static)
+       |
+   +---+---+
+   |       |
+ Tavily  Wikipedia    (web search, v0.17.0)
 ```
 
 The worker is the only public surface. R2 is private; the worker streams objects through `GET /api/artifact/*` after verifying ownership via `customMetadata.user_email` on the R2 object.
@@ -177,17 +197,25 @@ The worker is the only public surface. R2 is private; the worker streams objects
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET    | `/api/models`       | List available models with capability flags |
-| POST   | `/api/chat`         | Run a model. Dispatches by model type. |
-| GET    | `/api/history`      | List the caller's chats |
-| GET    | `/api/history/:id`  | One chat row with full attachment + output references |
-| DELETE | `/api/history/:id`  | Delete a chat row and clean up its R2 objects |
-| GET    | `/api/artifact/*`   | Stream an R2 object, gated by ownership |
+| GET    | `/api/models`             | List available models with capability flags (`streaming`, `vision`, `group`) |
+| POST   | `/api/chat`               | Run a model. Dispatches by model type. |
+| POST   | `/api/chat/stream`        | SSE streaming variant for chat models flagged `streaming: true` |
+| GET    | `/api/conversations`      | List the caller's conversations (grouped by `conversation_id`) |
+| GET    | `/api/conversations/:id`  | Full transcript for a conversation |
+| DELETE | `/api/conversations/:id`  | Cascade delete of all turns plus R2 artifacts |
+| GET    | `/api/history/:id`        | One chat row with full attachment + output references |
+| DELETE | `/api/history/:id`        | Delete a single chat row and clean up its R2 objects |
+| GET    | `/api/job/:id`            | Poll an async video / music generation job's status |
+| GET    | `/api/documents`          | List uploaded RAG documents |
+| POST   | `/api/documents`          | Upload, chunk, embed, and store a doc |
+| GET    | `/api/documents/:id`      | Document metadata plus first chunks preview |
+| DELETE | `/api/documents/:id`      | Cascade delete of doc, chunks, vectors, and original R2 file |
+| GET    | `/api/artifact/*`         | Stream an R2 object, gated by ownership |
 
 ### Model types
 
 - `chat`: text generation. Accepts vision attachments on vision-capable models. Audio attachments are transcribed via Whisper. Video attachments are 8 client-extracted keyframes.
-- `image`: text-to-image generation. The system prompt field becomes the negative prompt. Output is a JPEG in R2.
+- `image`: text-to-image generation. The system prompt field becomes the negative prompt. FLUX.2 models additionally accept up to 4 reference images (v0.16.0). Output is a JPEG/PNG in R2.
 - `tts`: text-to-speech. Output is audio (MP3 or model-default container) in R2.
 - `stt`: speech-to-text transcription. Input audio, output text.
 - `video`: text-to-video generation. Long-running (30s-3min); see "Long-running jobs" below.
@@ -208,11 +236,11 @@ The `[[workflows]]` binding in `wrangler.toml` declares this. Two operational no
 
 ## Multimodal handling
 
-**Images.** Native `image_url` content blocks to vision-capable chat models. Downscaled to 1280px max dimension client-side. 4 MB raw cap.
+**Images.** Native `image_url` content blocks to vision-capable chat models. Downscaled to 1280px max dimension client-side. 4 MB raw cap. FLUX.2 reference images (image-gen, not chat) use a separate 512px max-dim path.
 
 **Audio.** Transcribed via `@cf/openai/whisper-large-v3-turbo` before the model call. Transcript text is prepended to the user message. Raw audio is dropped (not stored). 20 MB cap.
 
-**Video.** Client-side keyframe extraction via HTML5 video + canvas. Eight evenly-spaced frames are pulled at upload time and sent as image content blocks to a vision-capable chat model. The original video file is never uploaded to the worker. This is sampled-frames understanding, not true temporal video reasoning. For true video, route through Gemini 2.5/3 Pro via the AI Gateway third-party path. 100 MB cap is a browser-side sanity limit.
+**Video.** Client-side keyframe extraction via HTML5 video + canvas. Eight evenly-spaced frames are pulled at upload time and sent as image content blocks to a vision-capable chat model. The original video file is never uploaded to the worker. This is sampled-frames understanding, not true temporal video reasoning. For raw video understanding, use TwelveLabs Pegasus 1.2 on Bedrock (full file upload, 18MB cap). 100 MB cap on regular video uploads is a browser-side sanity limit.
 
 ## Storage and cost
 
@@ -222,11 +250,13 @@ Workers AI billing is per-token / per-image / per-minute depending on model. Fre
 
 D1 is roughly $0.75/GB-month for storage. R2 is roughly $0.015/GB-month with no egress fees inside Cloudflare. Free tiers on D1 and R2 cover small personal use indefinitely.
 
-Anthropic (Claude) and xAI (Grok) models bill against your own provider accounts via BYOK, not Cloudflare. Amazon Bedrock models (Nova family, Pegasus 1.2) bill against your AWS account. See below.
+Anthropic (Claude) and xAI (Grok) models bill against your own provider accounts via BYOK, not Cloudflare. Amazon Bedrock models (Nova family, Pegasus 1.2) bill against your AWS account. Tavily web search bills against your Tavily account (1000 searches/month free tier). See per-provider sections below.
 
 ## Anthropic models (BYOK)
 
-The Anthropic entries in the model menu (Claude Opus 4.6, Sonnet 4.6, Haiku 4.5) are routed via BYOK (Bring Your Own Key) rather than Cloudflare Unified Billing. The `env.AI.run()` binding doesn't support BYOK for third-party models, so the worker hits the AI Gateway's Anthropic provider endpoint directly with Anthropic-native payloads. The gateway still wraps the call for observability, caching, and rate-limiting.
+The Anthropic entries in the model menu (Claude Opus 4.7, Opus 4.6, Sonnet 4.6, Haiku 4.5) are routed via BYOK (Bring Your Own Key) rather than Cloudflare Unified Billing. The `env.AI.run()` binding doesn't support BYOK for third-party models, so the worker hits the AI Gateway's Anthropic provider endpoint directly with Anthropic-native payloads. The gateway still wraps the call for observability, caching, and rate-limiting.
+
+All four Claude entries support SSE streaming (v0.13.0). Streaming events normalize to the same envelope as Workers AI/xAI/Bedrock streams, so the client doesn't see Anthropic's native event vocabulary.
 
 There are two ways to authenticate, and the worker supports both:
 
@@ -263,6 +293,8 @@ Billing: Anthropic charges your account at their per-token rates. There's no Clo
 
 Grok 4.3, Grok 4.20 (Multi-Agent and Reasoning variants), and Grok Build 0.1 are routed via BYOK against your own xAI account. Same patterns as Anthropic above: stored keys in the gateway dashboard (recommended) or inline Worker secret. xAI is OpenAI-compatible so no message transform is needed.
 
+All four Grok entries support SSE streaming as of v0.16.0. The streaming path requests `stream_options.include_usage: true` so token counts arrive in the final pre-`[DONE]` frame.
+
 ### Option A (recommended): Store the key in AI Gateway
 
 1. Get an API key from https://console.x.ai > API Keys > Create API Key
@@ -286,9 +318,9 @@ Billing: xAI charges your account directly. Pricing as of mid-2026: Grok 4.3 and
 
 v0.11.0 adds Bedrock support via AWS SigV4 signing using the `aws4fetch` library. Two model families are wired up:
 
-**Nova (Amazon's chat models)**: Nova 2 Lite, Nova 2 Pro, Nova Lite, Nova Pro. All routed through Bedrock's Converse API, which normalizes request/response shapes across model families.
+**Nova (Amazon's chat models)**: Nova 2 Lite, Nova 2 Pro, Nova Lite, Nova Pro. All routed through Bedrock's Converse API, which normalizes request/response shapes across model families. All four Nova entries support SSE streaming as of v0.16.0, using Bedrock's `ConverseStream` endpoint and the `vnd.amazon.eventstream` binary framing protocol (parser lives in `callBedrockNovaStream`).
 
-**Pegasus 1.2 (TwelveLabs video-Q&A)**: Single-shot video understanding. Takes a video file + prompt, returns text analysis. Uses Bedrock's `InvokeModel` endpoint with a video-specific request body.
+**Pegasus 1.2 (TwelveLabs video-Q&A)**: Single-shot video understanding. Takes a video file + prompt, returns text analysis. Uses Bedrock's `InvokeModel` endpoint with a video-specific request body. Does NOT stream; the model produces one complete analysis per call.
 
 ### Setup
 
@@ -374,34 +406,34 @@ The "needs CF credits" entries appear in the menu but will fail until you enable
 
 ### Architecture
 
-Both routes share the same fire-and-forget pattern:
+Unified Billing video and music run through Cloudflare Workflows (v0.12.0+). The `LongRunWorkflow` class invokes the model, downloads the artifact, uploads to R2, and finalizes the D1 row across independently-retryable steps. BYOK video (xAI) uses a separate submit-and-poll pattern with no workflow involvement (the upstream xAI API is async-natively).
 
-1. Client POSTs to `/api/chat` with a video model. Worker writes a `status='pending'` row to D1 and returns immediately with `{ id, status: "pending" }`.
-2. Generation runs in the background via `ctx.waitUntil()`:
-   - **Unified route:** single `env.AI.run("provider/model", ...)` call blocks until the video is ready, then we download and re-host.
-   - **BYOK route:** submit to the per-provider endpoint, sleep+poll every 5s for up to 5 minutes, then download and re-host.
-3. Background task uploads the video bytes to your R2 bucket and updates the D1 row to `status='done'`.
-4. Client polls `GET /api/job/:id` every 5 seconds. This endpoint just reads D1 (no provider calls), so polling is essentially free.
+1. Client POSTs to `/api/chat` with a video model. Worker writes a `status='pending'` row to D1 and returns immediately with `{ id, status: "pending", job_id }`.
+2. Background work:
+   - **Unified route:** Workflow instance starts; the `LongRunWorkflow` class blocks on `env.AI.run("provider/model", ...)` until the video is ready, then downloads and re-hosts.
+   - **BYOK route:** worker submits to `api.x.ai/v1/videos/generations`, persists the upstream job ID, and returns. Each client poll triggers a fresh worker invocation that checks upstream status.
+3. When complete, the worker (Unified) or job-poll handler (BYOK) uploads video bytes to your R2 bucket and updates the D1 row to `status='done'`.
+4. Client polls `GET /api/job/:id` every 5 seconds. For Unified, this endpoint reads D1 only (no provider calls). For BYOK, each poll triggers an upstream status check.
 5. Frontend renders `<video controls>` pointing at `/api/artifact/:key` once `status='done'`.
 
-If the job fails at any stage (provider error, poll timeout, download failure, R2 upload error), the row gets `status='failed'` with a descriptive `job_error`. The history list shows a warning icon and the chat detail view shows the error message.
+If the job fails at any stage, the row gets `status='failed'` with a descriptive `job_error`. The history list shows a warning icon and the chat detail view shows the error message.
 
 ### Defaults
 
-The worker submits with `duration: 8s`, `aspect_ratio: "16:9"`, `resolution: "720p"`, `generate_audio: true` for the Unified route. The BYOK route uses the xAI-specific param shape (`duration: 8` integer). Per-model parameter customization is a v0.8.0 follow-on.
+The worker submits with `duration: 8s`, `aspect_ratio: "16:9"`, `resolution: "720p"`, `generate_audio: true` for the Unified route. The BYOK route uses the xAI-specific param shape (`duration: 8` integer). Per-model parameter customization is a backlog item; param-shape iteration for individual partners as each is exercised in production.
 
 ### Cost discipline
 
 Video gen is the most expensive feature in this playground.
 
 - The worker has no per-user rate limiting. If you make the URL public, add rate limits at the AI Gateway level.
-- Each generation creates an R2 object (~5-30MB per 8s clip). Use `DELETE /api/history/:id` to clean up.
+- Each generation creates an R2 object (~5-30MB per 8s clip). Use `DELETE /api/history/:id` or `DELETE /api/conversations/:id` to clean up.
 - BYOK route prices: xAI Grok Imagine Video $0.05/sec ($0.40 per 8s clip).
 - Unified Billing prices: visible at https://dash.cloudflare.com under AI > Models > [model] > Pricing. CF marks up upstream provider costs.
 
-### Image-to-video
+### Image-to-video (BYOK only)
 
-Most of these models support image-to-video via an `image_input` parameter (base64-encoded reference image). The UI doesn't yet expose this; it's a v0.8.0 follow-on. The Alibaba HH1 model is image-to-video only; selecting it without supplying an image will fail.
+The xAI BYOK route exposes an `image_input` parameter for image-to-video on supported models. The UI does not yet expose this in the standard composer; you can wire it in via the worker request body manually if needed. The Alibaba HH1 model is image-to-video only and requires an input image; selecting it without one will fail.
 
 ## Speech-to-text (Whisper, standalone)
 
@@ -416,7 +448,7 @@ Whisper is hosted on Workers AI (no Unified Billing needed).
 
 ## Music generation (MiniMax Music 2.6)
 
-Same fire-and-forget architecture as video gen, single model in the catalog: `minimax/music-2.6`. Generates full songs with vocals from a style/mood prompt and optional lyrics, or instrumental tracks. Output is an MP3 stored in R2.
+Same Workflow-based architecture as Unified Billing video gen, single model in the catalog: `minimax/music-2.6`. Generates full songs with vocals from a style/mood prompt and optional lyrics, or instrumental tracks. Output is an MP3 stored in R2.
 
 Input fields:
 - `user_input` -> `prompt` (style/mood/genre, ~10-300 chars). Example: `"Indie folk, melancholic, introspective, longing, solitary walk, coffee shop"`
@@ -424,24 +456,156 @@ Input fields:
 
 This is a Cloudflare-proxied (third-party) model, so it requires Unified Billing on the gateway. It will fail with the same `2021: Invalid User Credentials` error as the other 12 video models until credits are funded.
 
+## Image generation
+
+Seven models in the catalog: FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM. All run through Workers AI; no BYOK or Unified Billing required.
+
+### FLUX.2 reference images (v0.16.0)
+
+The three FLUX-2 models (Klein 9B, Klein 4B, Dev) accept up to 4 reference images for image-to-image generation. When you select a FLUX-2 model in the image-gen UI, an attach row appears alongside the prompt and negative-prompt fields. Pick up to 4 images; each is downscaled client-side to 512px max dimension (per the model spec) and sent as `input_image_0` through `input_image_3` multipart form fields.
+
+FLUX-1 schnell, Lucid Origin, Phoenix 1.0, and Dreamshaper 8 LCM are text-to-image only; no reference image input.
+
+### Gateway routing quirks
+
+As of 2026-Q1, three Workers AI image-gen models have transport-layer incompatibilities with the AI Gateway:
+
+- **FLUX-2 family** requires multipart-form input. Gateway can't proxy stream input.
+- **Phoenix 1.0** and **Dreamshaper 8 LCM** return ReadableStream output. Gateway can't proxy stream output.
+
+The worker detects these models and bypasses the gateway, calling `env.AI.run` directly. Cost: no AI Gateway observability/caching for these specific models (the persisted row's `ai_gateway_log_id` stays null). FLUX-1 schnell and Lucid Origin work through the gateway normally.
+
+## Retrieval-Augmented Generation
+
+Upload `.txt`, `.md`, `.pdf`, or `.xlsx`/`.xls` files via the sidebar; the worker chunks them (~500 chars with 50-char overlap), embeds each chunk via `@cf/baai/bge-base-en-v1.5` (768-dim, free Workers AI), and upserts to a Vectorize index. Chunks are also stored in D1 keyed by their Vectorize vector_id so retrieval can look up source text from a vector hit.
+
+### Using docs in a chat
+
+Pick any chat model, check the "use my docs" box that appears next to the run button (only visible when you have at least one document uploaded), and hit Run. The worker embeds your prompt, queries Vectorize for the top 5 nearest chunks, looks up their text in D1, and folds them into the system prompt before calling the LLM.
+
+The retrieved chunks appear above the model's response with filename, chunk index, and similarity score, so you can see exactly what context was used. Click the score row to expand the chunk's full text. The retrieved context is persisted with the chat row, so reloading from history shows the same chunks.
+
+### Setup (one-time, before deploying for the first time)
+
+```
+# Create the Vectorize index (768 dimensions for BGE-base, cosine similarity)
+npx wrangler vectorize create skyphusion-llm-vec --dimensions=768 --metric=cosine
+
+# Apply the full schema (idempotent; creates documents + chunks tables and the
+# retrieved_context column on chats if missing)
+npx wrangler d1 execute skyphusion-llm-public --remote --file=schema.sql
+```
+
+### Constraints
+
+- **File types**: `.txt`, `.md`, `.markdown`, `.pdf`, `.xlsx`, `.xls`. Scanned/image-only PDFs are not supported (they need OCR, deferred). Modern PDFs created from Word/Pages/LaTeX/Google Docs export work fine.
+- **Max file size**: 10MB per upload.
+- **Knowledge base**: per-user (scoped by `Cf-Access-Authenticated-User-Email`). All your uploaded docs are one corpus.
+- **Retrieval default**: top-K = 5 chunks. Change `RETRIEVE_TOP_K` in the worker if you want more or fewer.
+- **Chunks store the raw text in D1**. R2 keeps the original file too for audit and potential re-processing on a future model swap.
+- **Chunking boundaries**: For PDFs, chunks never cross page boundaries (so the "page X" metadata stays meaningful). For XLSX/XLS, chunks never cross sheet boundaries. For TXT/MD, no such boundary; chunks flow freely.
+- **Source location**: Retrieved chunks show their page (PDFs) or sheet name (spreadsheets) in the UI, and that location is also included in the system prompt the model sees.
+- **Deleting a document** cleans up: vector IDs in Vectorize, chunk rows in D1, the document row in D1, and the original file in R2.
+- **Worker bundle size**: with `unpdf` (~500KB) and `xlsx` (~500KB) bundled, the compressed worker exceeds the free-tier 1MB limit. **Workers Paid plan ($5/month) is required as of v0.11.0.**
+
+**Note on the xlsx dependency:** SheetJS stopped publishing to the npm registry several years ago; the `xlsx` name on npm is permanently stuck at 0.18.5. We install directly from SheetJS's CDN tarball URL (`https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz`), which gives us the current maintained version. The package still imports as `xlsx` so the code is unchanged. To upgrade, change the URL in `package.json` to point at the new version's tarball.
+
+## Web search
+
+An opt-in retrieval source (v0.17.0) that queries the web at request time and folds the snippets into the system prompt. Runs in parallel with RAG, so a single turn can pull from both your uploaded docs and the web. Designed for creative work, worldbuilding, and "what's current" questions where you want your model to do the synthesis rather than a search engine's pre-summary.
+
+### How it works
+
+When you check the "search the web" toggle next to the run button (chat models only), the worker fires two parallel queries on each turn:
+
+1. **Tavily** for general web results. Cleaned snippets, no full-page fetches. Requires `TAVILY_API_KEY`; without it, this source is silently skipped.
+2. **Wikipedia** for reference and lore. No API key needed. Returns titles + HTML-stripped snippets via the public MediaWiki search endpoint.
+
+Both have an 8-second per-source timeout. If one fails or times out, the other still returns its hits. Results are persisted in the same `retrieved_context` column alongside any RAG chunks from the same turn, with a `source_type` discriminator so the UI can render web results (title + clickable URL + snippet) distinctly from doc chunks.
+
+Per-turn opt-in: the toggle is not sticky across turns. Each turn decides independently whether to search. Web search and RAG can be on simultaneously; the model sees both in the system prompt.
+
+### Setup
+
+Optional Tavily key (skip if you only want Wikipedia):
+
+1. Sign up at https://tavily.com and create an API key. Free tier is 1000 searches per month.
+2. Load it as a Worker secret:
+   ```
+   npx wrangler secret put TAVILY_API_KEY
+   ```
+3. Redeploy.
+
+No D1 migration. No new bindings. Wikipedia works with no setup at all.
+
+### Caveats worth knowing
+
+- **Token budget.** Each turn with web search on adds roughly 1500-3000 tokens to the system prompt (Tavily defaults to 5 snippets, Wikipedia to 3). Long campaigns or document-heavy RAG turns may push against your model's context window.
+- **Tavily costs.** After the free tier, Tavily is ~$0.005 per search. Auto-search-every-turn would be wasteful; the per-turn toggle is intentional.
+- **No fact-checking.** Web snippets are supplementary context, not authoritative. The system prompt tells the model so. Verify anything that matters before quoting it.
+- **Wikipedia User-Agent.** The worker identifies itself per Wikimedia's policy. If you fork to a different repo name, update the UA string in `searchWikipedia` so you're not lumped in with anonymous scrapers.
+
+### When it shines
+
+- **Worldbuilding lore**: "Norse trickster mythology," "Edo period yokai," "Welsh place name etymology." Wikipedia alone covers most of this.
+- **Current events**: who holds an office, what just happened in the news.
+- **Mixed RAG + web**: your campaign uses a setting bible (uploaded as a doc) plus real-world historical detail. Toggle both; the model sees both context blocks.
+- **Niche reference**: "17th-century apothecary daily routine," "Victorian funeral customs," anything where you want flavor without writing it yourself.
+
+### When to leave it off
+
+- Timeless concepts (math, physics, philosophy). Adds latency and noise.
+- Anything already covered by your RAG corpus where the model just needs to synthesize across it.
+- Pure prose work (rewriting, formatting, translation) where retrieval isn't relevant.
+
+If your use case is the legal-research pattern (citation accuracy matters, sources need to be verifiable in court), this is the wrong tool. Curated periodic ingest into Vectorize is the right shape for that, not query-time search.
+
+## Streaming
+
+`POST /api/chat/stream` accepts the same request body as `POST /api/chat` and returns `text/event-stream`. Available for any chat model flagged `streaming: true` in the catalog (23 models as of v0.16.0, covering all four providers).
+
+Wire format:
+
+```
+data: {"type":"delta","text":"..."}
+data: {"type":"done","row_id":N,"latency_ms":N,"tokens_in":N|null,
+       "tokens_out":N|null,"conversation_id":"...","turn_index":N}
+```
+
+Or, on error:
+
+```
+data: {"type":"error","message":"..."}
+```
+
+Provider-native event types (Anthropic's `message_start`/`content_block_delta`/etc., Bedrock's `vnd.amazon.eventstream` binary frames, xAI/Workers AI OpenAI-style `data: [DONE]` sentinel) are normalized server-side. The client sees only the envelope above.
+
+Client disconnect aborts the upstream model call immediately via `AbortSignal`, stopping the token meter mid-generation. Partial responses are NOT persisted; only complete turns reach D1.
+
+A reference client lives at `public/streaming-client.js` (drop-in vanilla-JS module). The frontend automatically picks the streaming endpoint when the selected model has `streaming: true`.
+
+Note: AI Gateway does not surface `cf-aig-log-id` on proxied SSE responses, so streamed turns have `ai_gateway_log_id: null` in D1. Non-streamed turns still get the log ID.
+
 ## Editing the model menu
 
 `MODELS` at the top of `src/index.ts`. Each entry has:
 
 - `id`: `@cf/{vendor}/{model}` for Workers AI, `anthropic/{model}` for BYOK Anthropic, `xai/{model}` for BYOK xAI, `bedrock/{model}` for BYOK Bedrock, or `google/{model}` / `bytedance/{model}` / `minimax/{model}` / etc. for Unified Billing video and music partners.
-- `label` for the dropdown
-- `group` for the optgroup heading
+- `label` for the picker
+- `group` for the picker section heading
 - `type`: `"chat"` | `"image"` | `"tts"` | `"video"` | `"stt"` | `"music"`
 - `capabilities`: array. Currently only `"vision"` is recognized; applies to chat models only.
 - `provider` (optional): `"workers-ai"` (default) | `"anthropic"` (BYOK) | `"xai"` (BYOK) | `"bedrock"` (BYOK) | `"google"` / `"bytedance"` / `"minimax"` / `"runwayml"` / `"alibaba"` / `"pixverse"` / `"vidu"` (Unified Billing). Drives the call dispatch.
 - `byok_alias` (optional): for Bedrock chat and xAI video, the upstream model name passed to the provider API.
-- `streaming` (optional, chat only): when `true`, the model is eligible for `POST /api/chat/stream`. Currently Anthropic and Workers AI streams are wired; xAI and Bedrock are planned.
+- `streaming` (optional, chat only): when `true`, the model is eligible for `POST /api/chat/stream`. As of v0.16.0, Anthropic / Workers AI / xAI / Bedrock Nova are all wired. Bedrock Pegasus is single-shot (no streaming).
 
 Full Workers AI catalog: https://developers.cloudflare.com/workers-ai/models/. Skip anything tagged "Planned deprecation."
 
 ## Migrating an existing deployment
 
-If you deployed an earlier version, apply the schema deltas before redeploying. For v0.7.0 (video generation), add the job-state columns:
+Schema deltas have been cumulative; if you deployed an earlier version, apply each migration in order before redeploying. v0.13.0 onward have NOT touched the D1 schema; only v0.7.0 through v0.10.0 require migrations.
+
+For v0.7.0 (video generation):
 
 ```
 npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE chats ADD COLUMN status TEXT NOT NULL DEFAULT 'done'"
@@ -451,46 +615,20 @@ npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE ch
 npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE chats ADD COLUMN job_started_at TEXT"
 ```
 
-For v0.8.0 (RAG Pass 1), create the Vectorize index and apply the new tables. Run the full `schema.sql` against the remote D1 (the `CREATE TABLE IF NOT EXISTS` lines for `documents` and `chunks` will create them without touching `chats`):
+For v0.8.0 (RAG Pass 1):
 
 ```
 npx wrangler vectorize create skyphusion-llm-vec --dimensions=768 --metric=cosine
 npx wrangler d1 execute skyphusion-llm-public --remote --file=schema.sql
 ```
 
-Then redeploy. Old rows default to `status='done'` so they render unchanged. Add the same statements with `--local` instead of `--remote` if you also have a local D1 instance to update.
-
-## Retrieval-Augmented Generation
-
-Pass 1 built the ingestion pipeline; Pass 2 wires it into chat. Upload `.txt` or `.md` files via the sidebar; the worker chunks them (~500 chars with 50-char overlap), embeds each chunk via `@cf/baai/bge-base-en-v1.5` (768-dim, free Workers AI), and upserts to a Vectorize index. Chunks are also stored in D1 keyed by their Vectorize vector_id so retrieval can look up source text from a vector hit.
-
-### Using docs in a chat
-
-Pick any chat model, check the "use my docs" box that appears next to the run button (only visible when you have at least one document uploaded), and hit Run. The worker embeds your prompt, queries Vectorize for the top 5 nearest chunks, looks up their text in D1, and folds them into the system prompt before calling the LLM.
-
-The retrieved chunks appear above the model's response with filename, chunk index, and similarity score, so you can see exactly what context was used. Click the score row to expand the chunk's full text. The retrieved context is persisted with the chat row, so reloading from history shows the same chunks.
-
-### Setup (one-time, before deploying v0.8.x for the first time)
-
-```
-# Create the Vectorize index (768 dimensions for BGE-base, cosine similarity)
-npx wrangler vectorize create skyphusion-llm-vec --dimensions=768 --metric=cosine
-
-# Create the new D1 tables (documents + chunks) and add the retrieved_context column
-npx wrangler d1 execute skyphusion-llm-public --remote --file=schema.sql
-```
-
-### Pass 2 migration (if upgrading from v0.8.0)
-
-The `chats` table gained a `retrieved_context TEXT` column. Apply it with:
+For v0.8.1 (RAG Pass 2):
 
 ```
 npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE chats ADD COLUMN retrieved_context TEXT"
 ```
 
-### Phase 3A migration (if upgrading from v0.8.x)
-
-The `chunks` table gained two columns for source-location metadata: `page` (PDFs) and `sheet` (XLSX/XLS). The bundle also pulls in `unpdf` and `xlsx`, so you'll need to run `npm install` after pulling the new package.json.
+For v0.8.2 (Phase 3A, RAG over PDF + XLSX):
 
 ```
 npm install
@@ -498,13 +636,7 @@ npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE ch
 npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE chunks ADD COLUMN sheet TEXT"
 ```
 
-**Note on the xlsx dependency:** SheetJS stopped publishing to the npm registry several years ago; the `xlsx` name on npm is permanently stuck at 0.18.5. We use SheetJS's recommended pattern of installing directly from their CDN tarball URL (`https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz`), which gives us the current maintained version (0.20.3 as of this writing) with security patches. The package still imports as `xlsx` so the code is unchanged. To upgrade to a newer SheetJS release later, change the URL in `package.json` to point at the new version's tarball.
-
-The `VEC` binding is already in `wrangler.toml`. Redeploy after these commands.
-
-### Multi-turn migration (if upgrading from v0.9.x to v0.10.0)
-
-The `chats` table gained `conversation_id` and `turn_index` columns. The frontend now groups chats into conversations in the sidebar, and the output area renders a transcript instead of a single response.
+For v0.10.0 (multi-turn conversations):
 
 ```
 npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE chats ADD COLUMN conversation_id TEXT"
@@ -513,19 +645,18 @@ npx wrangler d1 execute skyphusion-llm-public --remote --command "UPDATE chats S
 npx wrangler d1 execute skyphusion-llm-public --remote --command "CREATE INDEX IF NOT EXISTS idx_chats_conversation ON chats(conversation_id, turn_index)"
 ```
 
-Old chats stay accessible as single-turn conversations under `legacy-<id>` keys. Redeploy after migrating.
+For v0.12.0 (wrangler.toml restructure): see the CHANGELOG entry for the exact `[[workflows]]` and `[observability]` blocks to paste into your local `wrangler.toml`, plus the `GATEWAY_ID` move from `[vars]` to a worker secret.
 
-### Constraints
+For v0.14.0 (BYOK removal of OpenAI and Google): drop the now-unused secrets if you want a clean state:
 
-- **File types**: `.txt`, `.md`, `.markdown`, `.pdf`, `.xlsx`, `.xls`. Scanned/image-only PDFs are not yet supported (they need OCR, which is a future Phase 3B). Modern PDFs created from Word/Pages/LaTeX/Google Docs export work fine.
-- **Max file size**: 10MB per upload.
-- **Knowledge base**: per-user (scoped by `Cf-Access-Authenticated-User-Email`). All your uploaded docs are one corpus.
-- **Retrieval default**: top-K = 5 chunks. Change `RETRIEVE_TOP_K` in the worker if you want more or fewer.
-- **Chunks store the raw text in D1**. R2 keeps the original file too for audit and potential re-processing on a future model swap.
-- **Chunking boundaries**: For PDFs, chunks never cross page boundaries (so the "page X" metadata stays meaningful). For XLSX/XLS, chunks never cross sheet boundaries. For TXT/MD, no such boundary - chunks flow freely.
-- **Source location**: Retrieved chunks show their page (PDFs) or sheet name (spreadsheets) in the UI, and that location is also included in the system prompt the model sees.
-- **Deleting a document** cleans up: vector IDs in Vectorize, chunk rows in D1, the document row in D1, and the original file in R2.
-- **Worker bundle size**: with `unpdf` (~500KB) and `xlsx` (~500KB) bundled, the compressed worker exceeds the free-tier 1MB limit. **Workers paid plan ($5/month) is required as of Phase 3A.**
+```
+npx wrangler secret delete OPENAI_API_KEY
+npx wrangler secret delete GOOGLE_API_KEY
+```
+
+Neither is fatal if left in place; they're just inert.
+
+v0.13.0, v0.15.0, v0.16.0, v0.17.0: no D1 migrations. v0.17.0 adds an optional `TAVILY_API_KEY` secret for the web-search feature; skip it and the feature falls back to Wikipedia only.
 
 ## Local type check
 
@@ -537,13 +668,16 @@ Runs `tsc --noEmit`. The Workers build uses esbuild and skips type checking, so 
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). PRs welcome, especially for:
+See [CONTRIBUTING.md](CONTRIBUTING.md). PRs welcome. Current backlog items that would be especially welcome:
 
-- Additional Workers AI model entries
-- Provider-specific response-shape handling in `extractOutput`
-- True video understanding via Gemini routing
-- Streaming responses for chat
-- Image-to-image input for FLUX-2
+- **Tests for the parsers and transforms**: the Bedrock `vnd.amazon.eventstream` parser (`callBedrockNovaStream`) and the SSE parsers for xAI / Workers AI are unvalidated against real upstream responses. A few golden fixtures plus Vitest would catch a lot.
+- **Discriminated-union refactor of `InputAttachment`**: currently a flat shape with optional fields; a proper tagged union would surface real assumptions in the code.
+- **Provider-shared request builders**: `callXai` + `callXaiStream` share ~30 lines, same for `callBedrockNova` + `callBedrockNovaStream`. Factor out URL/headers/body builders.
+- **Upstream BYOK video poll throttle**: client polls every 5s, each currently triggers an upstream call. Adding `last_upstream_check_at` to the chats row would let us throttle to ~1 upstream call per 20-30s while keeping client UX responsive.
+- **Accessibility on the v0.15.0 model picker**: keyboard-accessible (uses `<details>`) but missing `role="combobox"`, `aria-expanded`, `aria-controls`.
+- **RAG chunking quality**: fixed-size chunking within page/sheet boundaries; recursive separator splitting would substantially improve retrieval on technical and legal docs.
+- **True video understanding via Gemini routing**: the existing 8-keyframe sampling is a workaround; Gemini 2.5 / 3 Pro could handle real temporal video reasoning.
+- **Additional Workers AI model entries**: new arrivals show up in the CF catalog regularly.
 
 ## Security
 
@@ -555,4 +689,4 @@ See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
 ## Acknowledgements
 
-Built on Cloudflare Workers, Workers AI, AI Gateway, D1, R2, and Cloudflare Access. Image generation models courtesy of Black Forest Labs and Leonardo.Ai. Text-to-speech via Deepgram. Speech-to-text via OpenAI Whisper. I would also like to think M for inspiring, UX critique, and locating bug after bug :P.
+Built on Cloudflare Workers, Workers AI, AI Gateway, D1, R2, Vectorize, Workflows, and Cloudflare Access. Image generation models courtesy of Black Forest Labs and Leonardo.Ai. Text-to-speech via Deepgram. Speech-to-text via OpenAI Whisper. Web search via Tavily and Wikipedia. With thanks to M for inspiration, UX critique, and locating bug after bug.

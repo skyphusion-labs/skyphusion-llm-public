@@ -66,4 +66,6 @@ enabled = true
 #   AWS_REGION (optional, defaults us-east-1; for Nova),
 #   AWS_REGION_PEGASUS (optional, defaults us-west-2; Pegasus only available
 #                       in us-west-2 or eu-west-1),
-#   CF_AIG_TOKEN (optional, only if Authenticated Gateway is enabled).
+#   CF_AIG_TOKEN (optional, only if Authenticated Gateway is enabled),
+#   TAVILY_API_KEY (optional, v0.17.0; for the web-search retrieval source.
+#                   When unset, web search falls back to Wikipedia only).

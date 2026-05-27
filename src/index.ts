@@ -61,6 +61,9 @@ interface Env {
   AWS_REGION?: string;
   AWS_REGION_PEGASUS?: string; // optional override for Pegasus calls
   CF_AIG_TOKEN?: string;      // only needed if gateway has Authenticated Gateway enabled
+  // v0.17.0: Tavily Search API key for the optional web-search retrieval source.
+  // Optional: when unset, web search uses Wikipedia only (no key required).
+  TAVILY_API_KEY?: string;
 }
 
 // ---------- Model catalog ----------
@@ -211,10 +214,14 @@ interface ChatRequest {
   user_input: string;
   attachments?: InputAttachment[];
   use_docs?: boolean;   // Pass 2: when true, retrieve top-K chunks from Vectorize and inject as context
+  use_web_search?: boolean;  // v0.17.0: when true, query Tavily + Wikipedia and inject snippets as context
   conversation_id?: string;  // Multi-turn: when present, continue an existing conversation
 }
 
 interface RetrievedChunk {
+  // v0.17.0: discriminator. Omitted on existing rows (pre-v0.17.0) and on new
+  // RAG-only rows; readers treat "missing" as "rag" for back-compat.
+  source_type?: "rag";
   document_id: number;
   filename: string;
   chunk_index: number;
@@ -223,6 +230,19 @@ interface RetrievedChunk {
   page?: number | null;     // PDFs only
   sheet?: string | null;    // XLSX/XLS only
 }
+
+// v0.17.0: web-search result, stored alongside RAG chunks in the same
+// retrieved_context column. The frontend renders branches on source_type.
+interface RetrievedWebResult {
+  source_type: "web";
+  source: "tavily" | "wikipedia";
+  url: string;
+  title: string;
+  snippet: string;          // already HTML-stripped
+  score?: number;           // Tavily provides a relevance score; Wikipedia does not
+}
+
+type RetrievedItem = RetrievedChunk | RetrievedWebResult;
 
 interface PersistedImageAttachment {
   type: "image";
@@ -534,6 +554,14 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
       ? retrieveContext(env, userEmail, body.user_input)
       : Promise.resolve({ chunks: [], error: null });
 
+  // v0.17.0: web search runs in parallel with RAG retrieval and the
+  // attachment walk. Per-source timeouts + catches inside searchWeb bound
+  // the worst-case latency to WEB_SEARCH_TIMEOUT_MS.
+  const webSearchPromise: Promise<{ results: RetrievedWebResult[]; error: string | null }> =
+    body.use_web_search
+      ? searchWeb(env, body.user_input)
+      : Promise.resolve({ results: [], error: null });
+
   // Walk inputs: write images / video frames to R2, transcribe audio via
   // Whisper. Build three parallel structures used after the loop:
   //   - extraText: prompt snippets the LLM sees
@@ -643,13 +671,20 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
   // fetch (hoisted above as retrievePromise); here we just consume the result.
   const { chunks: retrievedChunks, error: retrievalError } = await retrievePromise;
 
+  // v0.17.0: web-search retrieval, same parallelism pattern as RAG.
+  const { results: webResults, error: webSearchError } = await webSearchPromise;
+  const allRetrieved: RetrievedItem[] = [...retrievedChunks, ...webResults];
+
   // Build the effective system prompt: user-supplied prompt followed by
-  // the retrieval block. If only one is present, use that one alone.
+  // the retrieval block(s). Order: user prompt, then RAG (more specific
+  // to this user's corpus), then web (more general). Either or both
+  // retrieval blocks may be empty.
   const userSystemPrompt = body.system_prompt?.trim() ?? "";
   const retrievalBlock = retrievedChunks.length ? formatRetrievalForSystemPrompt(retrievedChunks) : "";
-  const effectiveSystemPrompt =
-    userSystemPrompt && retrievalBlock ? `${userSystemPrompt}\n\n${retrievalBlock}` :
-    retrievalBlock || userSystemPrompt || "";
+  const webBlock = webResults.length ? formatWebForSystemPrompt(webResults) : "";
+  const effectiveSystemPrompt = [userSystemPrompt, retrievalBlock, webBlock]
+    .filter(Boolean)
+    .join("\n\n");
 
   // Build the message array. For Anthropic, system goes as a top-level field
   // on the upstream request (handled inside callAnthropic), not in messages.
@@ -718,7 +753,7 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
     tokens_out: usage.out_,
     latency_ms: latency,
     ai_gateway_log_id: logId,
-    retrieved_context: retrievedChunks.length ? retrievedChunks : null,
+    retrieved_context: allRetrieved.length ? allRetrieved : null,
     conversation_id: conversationId,
     turn_index: turnIndex,
   });
@@ -735,13 +770,16 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
     ai_gateway_log_id: logId,
     transcripts: extraText,
     retrieved_chunks: retrievedChunks,
+    web_results: webResults,
     conversation_id: conversationId,
     turn_index: turnIndex,
-    // Diagnostic: when use_docs was on, include the exact text that went into
-    // the model as the system prompt, plus any retrieval error. Inspect via
-    // browser DevTools to verify the retrieval block reached the model.
-    effective_system_prompt: body.use_docs ? effectiveSystemPrompt : undefined,
+    // Diagnostic: when either retrieval source was on, include the exact text
+    // that went into the model as the system prompt, plus per-source errors.
+    // Inspect via browser DevTools to verify the retrieval block reached
+    // the model.
+    effective_system_prompt: (body.use_docs || body.use_web_search) ? effectiveSystemPrompt : undefined,
     retrieval_error: body.use_docs ? retrievalError : undefined,
+    web_search_error: body.use_web_search ? webSearchError : undefined,
   });
 }
 
@@ -1156,7 +1194,7 @@ interface PersistArgs {
   job_provider?: string | null;
   job_error?: string | null;
   job_started_at?: string | null;
-  retrieved_context?: RetrievedChunk[] | null;
+  retrieved_context?: RetrievedItem[] | null;
   conversation_id?: string | null;
   turn_index?: number | null;
 }
@@ -1382,6 +1420,12 @@ async function runChatStream(request: Request, env: Env, model: ModelEntry, body
       ? retrieveContext(env, userEmail, body.user_input)
       : Promise.resolve({ chunks: [], error: null });
 
+  // v0.17.0: web search runs in parallel with RAG retrieval, same as runChat.
+  const webSearchPromise: Promise<{ results: RetrievedWebResult[]; error: string | null }> =
+    body.use_web_search
+      ? searchWeb(env, body.user_input)
+      : Promise.resolve({ results: [], error: null });
+
   // Attachment walk. Reach completion before any bytes flow back; streaming
   // helps with time-to-last-token, not time-to-first-token on multimodal turns.
   const extraText: string[] = [];
@@ -1465,12 +1509,15 @@ async function runChatStream(request: Request, env: Env, model: ModelEntry, body
   }
 
   const { chunks: retrievedChunks } = await retrievePromise;
+  const { results: webResults } = await webSearchPromise;
+  const allRetrieved: RetrievedItem[] = [...retrievedChunks, ...webResults];
 
   const userSystemPrompt = body.system_prompt?.trim() ?? "";
   const retrievalBlock = retrievedChunks.length ? formatRetrievalForSystemPrompt(retrievedChunks) : "";
-  const effectiveSystemPrompt =
-    userSystemPrompt && retrievalBlock ? `${userSystemPrompt}\n\n${retrievalBlock}` :
-    retrievalBlock || userSystemPrompt || "";
+  const webBlock = webResults.length ? formatWebForSystemPrompt(webResults) : "";
+  const effectiveSystemPrompt = [userSystemPrompt, retrievalBlock, webBlock]
+    .filter(Boolean)
+    .join("\n\n");
 
   // Build the message array. For providers that take system as a separate
   // top-level param (Anthropic), we DON'T include a system role here;
@@ -1550,8 +1597,10 @@ async function runChatStream(request: Request, env: Env, model: ModelEntry, body
 
       // Persist as a single row. retrieved_context is saved on the row so
       // the History/Conversation views render citations the same way runChat
-      // does. ai_gateway_log_id is null: streaming responses from AI Gateway
-      // don't surface cf-aig-log-id on the proxied SSE response.
+      // does. v0.17.0: web-search results are stored in the same column with
+      // a source_type discriminator. ai_gateway_log_id is null: streaming
+      // responses from AI Gateway don't surface cf-aig-log-id on the proxied
+      // SSE response.
       const row = await persistChat(env, {
         userEmail,
         model: model.id,
@@ -1565,7 +1614,7 @@ async function runChatStream(request: Request, env: Env, model: ModelEntry, body
         tokens_out: usageOut,
         latency_ms: latency,
         ai_gateway_log_id: null,
-        retrieved_context: retrievedChunks.length ? retrievedChunks : null,
+        retrieved_context: allRetrieved.length ? allRetrieved : null,
         conversation_id: conversationId,
         turn_index: turnIndex,
       });
@@ -2875,7 +2924,7 @@ async function handleHistoryGet(request: Request, env: Env, id: number): Promise
     ...row,
     attachments: row.attachments ? safeParseJson<PersistedAttachment[]>(row.attachments) : null,
     output_artifact: row.output_artifact ? safeParseJson<OutputArtifact>(row.output_artifact) : null,
-    retrieved_context: row.retrieved_context ? safeParseJson<RetrievedChunk[]>(row.retrieved_context) : null,
+    retrieved_context: row.retrieved_context ? safeParseJson<RetrievedItem[]>(row.retrieved_context) : null,
   });
 }
 
@@ -2966,7 +3015,7 @@ async function handleConversationGet(request: Request, env: Env, id: string): Pr
     ...row,
     attachments: row.attachments ? safeParseJson<PersistedAttachment[]>(row.attachments) : null,
     output_artifact: row.output_artifact ? safeParseJson<OutputArtifact>(row.output_artifact) : null,
-    retrieved_context: row.retrieved_context ? safeParseJson<RetrievedChunk[]>(row.retrieved_context) : null,
+    retrieved_context: row.retrieved_context ? safeParseJson<RetrievedItem[]>(row.retrieved_context) : null,
   }));
 
   return json({ conversation_id: id, turns });
@@ -3085,6 +3134,15 @@ const CHUNK_TARGET_CHARS = 500;
 const CHUNK_OVERLAP_CHARS = 50;
 const EMBED_BATCH_SIZE = 16;       // BGE accepts batches; 16 keeps requests small
 const DOC_MAX_BYTES = 10 * 1024 * 1024;  // 10MB upload cap
+
+// v0.17.0: web-search retrieval limits and timeouts. Both upstreams are
+// time-bounded per source so a slow Tavily doesn't block on a working
+// Wikipedia (or vice versa). Counts kept small to bound context-token spend
+// when the toggle is on; a typical use_web_search:true request adds roughly
+// 1500-3000 tokens to the system prompt.
+const TAVILY_MAX_RESULTS    = 5;
+const WIKIPEDIA_MAX_RESULTS = 3;
+const WEB_SEARCH_TIMEOUT_MS = 8000;
 
 // Phase 3A: extended file type support. The arrays are kept simple - both
 // mime check AND filename-extension check pass through if either matches,
@@ -3373,6 +3431,154 @@ function formatRetrievalForSystemPrompt(chunks: RetrievedChunk[]): string {
     "You have access to the following excerpts from the user's uploaded documents.",
     "Use them when they are relevant to the user's query. If they don't answer the question,",
     "say so plainly rather than guessing or hallucinating.",
+    "",
+    body,
+  ].join("\n");
+}
+
+// ---------- Web search (v0.17.0) ----------
+//
+// Optional retrieval source: Tavily for general web, Wikipedia for lore /
+// reference. Both run in parallel; failure of one doesn't kill the other.
+// Per-source timeouts (WEB_SEARCH_TIMEOUT_MS) prevent a slow upstream from
+// blocking the whole turn.
+//
+// Tavily requires an API key (TAVILY_API_KEY). When unset, the Tavily call
+// is silently skipped and only Wikipedia runs. Wikipedia needs no key.
+//
+// Results are persisted to the existing retrieved_context column alongside
+// RAG chunks, with source_type discriminator. The frontend renders branches
+// on source_type to show the source URL for web results.
+
+async function searchWeb(
+  env: Env,
+  query: string
+): Promise<{ results: RetrievedWebResult[]; error: string | null }> {
+  const q = query.trim();
+  if (!q) return { results: [], error: null };
+
+  // Each upstream is wrapped in its own timeout + catch so a single failure
+  // doesn't abort the other. Partial results are better than nothing.
+  const tavilyPromise: Promise<RetrievedWebResult[]> = env.TAVILY_API_KEY
+    ? searchTavily(env.TAVILY_API_KEY, q).catch(() => [])
+    : Promise.resolve([]);
+  const wikipediaPromise: Promise<RetrievedWebResult[]> = searchWikipedia(q).catch(() => []);
+
+  const [tavily, wikipedia] = await Promise.all([tavilyPromise, wikipediaPromise]);
+  const results = [...tavily, ...wikipedia];
+
+  // Empty results is fine; it just means the query didn't match anything in
+  // either source. Real per-source failures are swallowed by the .catch above
+  // so the other source can still return its hits. If you want surfaced
+  // diagnostics on partial failures, lift the per-source catches into
+  // labeled results.
+  return { results, error: null };
+}
+
+async function searchTavily(apiKey: string, query: string): Promise<RetrievedWebResult[]> {
+  const body = {
+    api_key: apiKey,
+    query,
+    search_depth: "basic",
+    include_answer: false,           // we want raw snippets, not Tavily's pre-summary
+    include_raw_content: false,      // snippets only; full pages blow up token budget
+    max_results: TAVILY_MAX_RESULTS,
+  };
+
+  const resp = await fetch("https://api.tavily.com/search", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(WEB_SEARCH_TIMEOUT_MS),
+  });
+  if (!resp.ok) {
+    throw new Error(`Tavily ${resp.status}: ${(await resp.text()).slice(0, 200)}`);
+  }
+  const data = await resp.json() as {
+    results?: Array<{ title?: string; url?: string; content?: string; score?: number }>;
+  };
+  const items = data.results ?? [];
+  return items
+    .filter((r) => r.url && r.title)
+    .map((r): RetrievedWebResult => ({
+      source_type: "web",
+      source: "tavily",
+      url: r.url!,
+      title: r.title!,
+      snippet: (r.content ?? "").trim(),
+      score: typeof r.score === "number" ? r.score : undefined,
+    }));
+}
+
+async function searchWikipedia(query: string): Promise<RetrievedWebResult[]> {
+  // Wikipedia's search endpoint returns titles + HTML snippets in one call.
+  // origin=* is required for CORS, but harmless server-side too. We don't
+  // hit /page/summary per result (would be N+1 round-trips); the search
+  // snippet is enough for most creative-work queries.
+  const url = new URL("https://en.wikipedia.org/w/api.php");
+  url.searchParams.set("action", "query");
+  url.searchParams.set("list", "search");
+  url.searchParams.set("srsearch", query);
+  url.searchParams.set("srlimit", String(WIKIPEDIA_MAX_RESULTS));
+  url.searchParams.set("srprop", "snippet");
+  url.searchParams.set("format", "json");
+  url.searchParams.set("origin", "*");
+
+  const resp = await fetch(url.toString(), {
+    headers: {
+      // Wikimedia asks for a descriptive User-Agent identifying the tool.
+      // See https://meta.wikimedia.org/wiki/User-Agent_policy
+      "user-agent": "skyphusion-llm-public/0.17.0 (https://github.com/SkyPhusion/skyphusion-llm-public)",
+    },
+    signal: AbortSignal.timeout(WEB_SEARCH_TIMEOUT_MS),
+  });
+  if (!resp.ok) {
+    throw new Error(`Wikipedia ${resp.status}: ${(await resp.text()).slice(0, 200)}`);
+  }
+  const data = await resp.json() as {
+    query?: { search?: Array<{ title?: string; snippet?: string; pageid?: number }> };
+  };
+  const items = data.query?.search ?? [];
+  return items
+    .filter((r) => r.title && r.pageid !== undefined)
+    .map((r): RetrievedWebResult => ({
+      source_type: "web",
+      source: "wikipedia",
+      url: `https://en.wikipedia.org/?curid=${r.pageid}`,
+      title: r.title!,
+      // Snippet comes back as HTML with <span class="searchmatch">...</span>
+      // around matched terms. Strip tags and decode the few entities that
+      // Wikipedia commonly emits. Good enough for an LLM context block.
+      snippet: stripWikipediaSnippet(r.snippet ?? ""),
+    }));
+}
+
+function stripWikipediaSnippet(html: string): string {
+  return html
+    .replace(/<[^>]+>/g, "")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function formatWebForSystemPrompt(results: RetrievedWebResult[]): string {
+  if (results.length === 0) return "";
+  const body = results
+    .map((r, i) => {
+      const sourceLabel = r.source === "tavily" ? "Web" : "Wikipedia";
+      return `[${sourceLabel} ${i + 1}, "${r.title}" (${r.url})]\n${r.snippet}`;
+    })
+    .join("\n\n---\n\n");
+  return [
+    "You have access to the following snippets retrieved from web search.",
+    "Treat these as supplementary context, not authoritative fact. Quote URLs",
+    "verbatim if citing a source. If the snippets don't answer the question,",
+    "say so plainly rather than fabricating.",
     "",
     body,
   ].join("\n");

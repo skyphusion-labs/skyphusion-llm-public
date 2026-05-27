@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.17.0
+
+Adds web-search as an opt-in retrieval source alongside RAG. Tavily (general web) + Wikipedia (reference and lore) queried in parallel; results folded into the system prompt the same way RAG chunks already are. Designed for creative work and worldbuilding, where you want the model to do synthesis rather than a search engine's pre-summary.
+
+### Worker
+
+- New `searchWeb()` helper hitting Tavily (POST `/search` with `include_answer:false`, `include_raw_content:false`, max 5 snippets) and Wikipedia (MediaWiki search API, max 3 snippets, HTML-stripped). Both run via `Promise.all` with per-source 8-second timeouts and per-source try/catch, so one failing or timing out never kills the other.
+- `ChatRequest` gains `use_web_search?: boolean`. `Env` gains optional `TAVILY_API_KEY`. When the key is unset, Tavily is silently skipped and only Wikipedia runs.
+- `RetrievedChunk` extended with an optional `source_type?: "rag"` discriminator (existing rows without the field are treated as RAG for back-compat). New `RetrievedWebResult` type with `source_type: "web"`, `source: "tavily" | "wikipedia"`, `url`, `title`, `snippet`, optional `score`. Union type `RetrievedItem` covers both.
+- Effective system prompt assembly in both `runChat` and `runChatStream` becomes a three-part filter+join: user prompt, then RAG block (if present), then web block (if present). Either or both retrieval blocks may be empty.
+- Persistence: the existing `retrieved_context` D1 column now stores a unified `RetrievedItem[]` array combining RAG chunks and web results from the same turn, discriminated by `source_type`. No schema migration; the column was already JSON.
+- New chat response field `web_results` (parallel to existing `retrieved_chunks`). Diagnostics: `effective_system_prompt` now surfaces when either `use_docs` or `use_web_search` was on; new `web_search_error` field mirrors the existing `retrieval_error` field.
+
+### Frontend
+
+- `index.html`: new `<label id="use-web-search-row">` next to the existing `<label id="use-docs-row">` in the bottom row.
+- `app.js`: new element refs (`useWebSearchRow`, `useWebSearchCheckbox`). `updateAffordance` enables the toggle for chat models only (no doc-count gate). `sendChat` request body plumbs `use_web_search: true` when toggle is checked and model is chat. `renderRetrievedChunksHTML` branches on `source_type`: web results show title + clickable URL + snippet with a `retrieved-web` class modifier; RAG chunks render unchanged. Mixed-source label ("retrieved context (N docs + M web)") handles turns that use both.
+
+### Wikipedia compliance
+
+The worker sends a descriptive `User-Agent` identifying the project and repo URL per Wikimedia's User-Agent policy. If you fork to a different repo name, update the UA string in `searchWikipedia`.
+
+### Token budget
+
+A turn with `use_web_search:true` adds roughly 1500-3000 tokens to the system prompt (Tavily 5 + Wikipedia 3 by default). The per-turn toggle is intentional; auto-search every turn would waste tokens and Tavily credits.
+
+### What this is not
+
+This is query-time web search for creative work and current-events questions. It is NOT designed for legal research, citation-accurate work, or anywhere paraphrase drift or hallucinated URLs could cause harm. For that pattern, curated periodic ingest into Vectorize (with `source_type`, `source_url`, `content_hash` columns on `documents`) is the right shape.
+
+### Touch points
+
+- `src/index.ts`: 16 hunks (+207 / -18)
+- `public/index.html`: 1 hunk (+4 / -0)
+- `public/app.js`: 5 hunks (+42 / -2)
+- `wrangler.example.toml`: 1 hunk (+2 / -1, comment block only)
+
+No D1 migration. No new dependencies. New optional worker secret: `TAVILY_API_KEY` (skip it and Wikipedia-only is the fallback).
+
 ## v0.16.0
 
 Three additions filling in gaps from v0.13.0 (streaming foundation) and v0.14.0 (BYOK simplification). Each lands as its own commit; the v0.16.0 tag goes on the third.

@@ -1926,11 +1926,17 @@ async function* callWorkersAIStream(
 // Note: Grok 4.x models are reasoning models that expect max_completion_tokens
 // rather than the older max_tokens field.
 
-async function callXai(
+// v0.17.2: shared request builder for both callXai (non-streaming) and
+// callXaiStream (SSE). All the URL/headers/body construction lives here;
+// callers differ only in whether they pass `signal`, whether they read
+// `cf-aig-log-id`, and how they consume the response body.
+
+async function prepareXaiRequest(
   env: Env,
   model: ModelEntry,
-  messages: Array<unknown>
-): Promise<{ raw: unknown; logId: string | null }> {
+  messages: Array<unknown>,
+  opts: { stream: boolean },
+): Promise<{ url: string; headers: Record<string, string>; body: string }> {
   const baseUrl = await (env.AI as unknown as {
     gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
   }).gateway(env.GATEWAY_ID).getUrl("grok");
@@ -1943,6 +1949,12 @@ async function callXai(
     messages,
     max_completion_tokens: 4096,
   };
+  if (opts.stream) {
+    body.stream = true;
+    // include_usage:true asks xAI to send token counts in the final pre-[DONE]
+    // chunk. Without this, usage stays null on streamed responses.
+    body.stream_options = { include_usage: true };
+  }
 
   const headers: Record<string, string> = {
     "content-type": "application/json",
@@ -1950,11 +1962,21 @@ async function callXai(
   if (env.XAI_API_KEY) headers["Authorization"] = `Bearer ${env.XAI_API_KEY}`;
   if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
 
-  const resp = await fetch(`${baseUrl}/v1/chat/completions`, {
-    method: "POST",
+  return {
+    url: `${baseUrl}/v1/chat/completions`,
     headers,
     body: JSON.stringify(body),
-  });
+  };
+}
+
+async function callXai(
+  env: Env,
+  model: ModelEntry,
+  messages: Array<unknown>
+): Promise<{ raw: unknown; logId: string | null }> {
+  const { url, headers, body } = await prepareXaiRequest(env, model, messages, { stream: false });
+
+  const resp = await fetch(url, { method: "POST", headers, body });
 
   const logId = resp.headers.get("cf-aig-log-id");
 
@@ -1991,30 +2013,12 @@ async function* callXaiStream(
   messages: Array<unknown>,
   signal: AbortSignal
 ): AsyncGenerator<ProviderStreamEvent> {
-  const baseUrl = await (env.AI as unknown as {
-    gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
-  }).gateway(env.GATEWAY_ID).getUrl("grok");
+  const { url, headers, body } = await prepareXaiRequest(env, model, messages, { stream: true });
 
-  const modelName = model.id.replace(/^xai\//, "");
-
-  const body: Record<string, unknown> = {
-    model: modelName,
-    messages,
-    max_completion_tokens: 4096,
-    stream: true,
-    stream_options: { include_usage: true },
-  };
-
-  const headers: Record<string, string> = {
-    "content-type": "application/json",
-  };
-  if (env.XAI_API_KEY) headers["Authorization"] = `Bearer ${env.XAI_API_KEY}`;
-  if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
-
-  const resp = await fetch(`${baseUrl}/v1/chat/completions`, {
+  const resp = await fetch(url, {
     method: "POST",
     headers,
-    body: JSON.stringify(body),
+    body,
     signal,
   });
 
@@ -2094,12 +2098,19 @@ async function* callXaiStream(
 // extractOutput already handles the .text field via a fall-through case
 // we'll add below.
 
-async function callBedrockNova(
+// v0.17.2: shared request builder for both callBedrockNova (non-streaming)
+// and callBedrockNovaStream (eventstream). All the AWS client setup, model-
+// name resolution, message transform, and URL construction lives here. The
+// only thing that differs between the two callers is the endpoint suffix
+// (converse vs converse-stream), driven by opts.stream.
+
+async function prepareBedrockNovaRequest(
   env: Env,
   model: ModelEntry,
   systemPrompt: string | undefined,
-  messages: Array<unknown>
-): Promise<{ raw: unknown; logId: string | null }> {
+  messages: Array<unknown>,
+  opts: { stream: boolean },
+) {
   if (!env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY) {
     throw new Error("AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be set; Bedrock BYOK requires AWS credentials (npx wrangler secret put AWS_ACCESS_KEY_ID; npx wrangler secret put AWS_SECRET_ACCESS_KEY)");
   }
@@ -2134,7 +2145,7 @@ async function callBedrockNova(
   }
 
   // Dynamic import so the aws4fetch bundle isn't loaded for users who only
-  // use other providers. Static type-only import avoided to keep things simple.
+  // use other providers.
   const { AwsClient } = await import("aws4fetch");
   const awsClient = new AwsClient({
     accessKeyId: env.AWS_ACCESS_KEY_ID,
@@ -2143,12 +2154,27 @@ async function callBedrockNova(
     service: "bedrock",
   });
 
-  const url = `https://bedrock-runtime.${region}.amazonaws.com/model/${encodeURIComponent(modelName)}/converse`;
+  // Endpoint suffix: converse for sync, converse-stream for SSE.
+  const endpoint = opts.stream ? "converse-stream" : "converse";
+  const url = `https://bedrock-runtime.${region}.amazonaws.com/model/${encodeURIComponent(modelName)}/${endpoint}`;
+
+  return { awsClient, url, bodyJson: JSON.stringify(body) };
+}
+
+async function callBedrockNova(
+  env: Env,
+  model: ModelEntry,
+  systemPrompt: string | undefined,
+  messages: Array<unknown>
+): Promise<{ raw: unknown; logId: string | null }> {
+  const { awsClient, url, bodyJson } = await prepareBedrockNovaRequest(
+    env, model, systemPrompt, messages, { stream: false },
+  );
 
   const resp = await awsClient.fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+    body: bodyJson,
   });
 
   if (!resp.ok) {
@@ -2208,49 +2234,14 @@ async function* callBedrockNovaStream(
   messages: Array<unknown>,
   signal: AbortSignal
 ): AsyncGenerator<ProviderStreamEvent> {
-  if (!env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY) {
-    throw new Error("AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be set for Bedrock BYOK streaming.");
-  }
-  const region = env.AWS_REGION || "us-east-1";
-  const modelName = model.byok_alias ?? model.id.replace(/^bedrock\//, "");
-
-  // Same Converse message transform as callBedrockNova.
-  const bedrockMessages: Array<{ role: string; content: Array<{ text: string }> }> = [];
-  for (const msg of messages) {
-    const m = msg as { role: string; content: unknown };
-    if (m.role === "system") continue; // we use systemPrompt arg instead
-    if (typeof m.content === "string") {
-      bedrockMessages.push({ role: m.role, content: [{ text: m.content }] });
-    } else if (Array.isArray(m.content)) {
-      const textParts = (m.content as Array<{ type?: string; text?: string }>)
-        .filter((p) => p.type === "text" || typeof p.text === "string")
-        .map((p) => p.text || "")
-        .join("\n");
-      bedrockMessages.push({ role: m.role, content: [{ text: textParts || "(empty)" }] });
-    }
-  }
-
-  const body: Record<string, unknown> = {
-    messages: bedrockMessages,
-    inferenceConfig: { maxTokens: 4096 },
-  };
-  if (systemPrompt) body.system = [{ text: systemPrompt }];
-
-  const { AwsClient } = await import("aws4fetch");
-  const awsClient = new AwsClient({
-    accessKeyId: env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
-    region,
-    service: "bedrock",
-  });
-
-  // Endpoint suffix: converse-stream (not converse).
-  const url = `https://bedrock-runtime.${region}.amazonaws.com/model/${encodeURIComponent(modelName)}/converse-stream`;
+  const { awsClient, url, bodyJson } = await prepareBedrockNovaRequest(
+    env, model, systemPrompt, messages, { stream: true },
+  );
 
   const resp = await awsClient.fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+    body: bodyJson,
     signal,
   });
 

@@ -1,5 +1,66 @@
 # Changelog
 
+## v0.16.0
+
+Three additions filling in gaps from v0.13.0 (streaming foundation) and v0.14.0 (BYOK simplification). Each lands as its own commit; the v0.16.0 tag goes on the third.
+
+### SSE Pass 3: xAI Grok streaming
+
+All four xAI catalog entries (grok-4.3, grok-4.20-multi-agent-0309, grok-4.20-0309-reasoning, grok-build-0.1) gain `streaming: true` and route to a new `callXaiStream` async generator.
+
+xAI exposes standard OpenAI-compatible SSE: `data: {choices:[{delta:{content}}]}` frames terminated by `data: [DONE]`. With `stream_options.include_usage: true` (which we set), the final frame before [DONE] carries token counts. The generator parses both and yields normalized text + usage events into the existing flat ProviderStreamEvent envelope.
+
+Transport is direct fetch through AI Gateway's xAI proxy (`/v1/chat/completions`), not the env.AI binding; same shape as the non-streaming `callXai` it sits beside. AbortSignal is forwarded to fetch() so client disconnect cancels the upstream call mid-generation (saving tokens).
+
+handleChatStream's provider gate now allows "xai" alongside "anthropic" and Workers AI. runChatStream dispatch refactored from a ternary to if/else-if/else chain so adding providers is a one-line append.
+
+### SSE Pass 4: Bedrock Nova streaming
+
+The four Nova catalog entries (nova-2-lite, nova-2-pro, nova-lite, nova-pro) gain `streaming: true` and route to a new `callBedrockNovaStream` async generator. Pegasus stays as-is; it's single-shot video Q&A using InvokeModel, not ConverseStream-eligible.
+
+The hard part is the wire format. Bedrock uses `application/vnd.amazon.eventstream`, a binary framing protocol. Each frame:
+
+  [4 bytes BE]  total_length
+  [4 bytes BE]  headers_length
+  [4 bytes BE]  prelude_crc       (CRC32 of first 8 bytes, skipped)
+  [N bytes]     headers           (name/type/value triplets)
+  [M bytes]     payload           (JSON for the events we care about)
+  [4 bytes BE]  message_crc       (skipped)
+
+  payload_bytes M = total_length - 16 - headers_length
+
+The header parser handles type 7 (UTF-8 string with 2-byte BE length prefix) directly; that's what `:message-type`, `:event-type`, and `:content-type` use. Other header types (booleans, integers, byte arrays, UUIDs) are length-tabulated and skipped defensively, so an unknown header type can't desync the stream.
+
+Event types we react to:
+- `contentBlockDelta` produces a text delta (`{delta:{text:"..."}}`)
+- `metadata` produces a usage event (`{usage:{inputTokens, outputTokens}}`)
+- `exception` (via `:message-type=exception`) throws with the payload's `message` field
+
+Other event types (messageStart, contentBlockStart, contentBlockStop, messageStop) carry no info for the flat envelope and are ignored.
+
+Endpoint suffix is `converse-stream` (not `converse`). aws4fetch signs the request with SigV4 and forwards the `signal` option to fetch(), so AbortSignal-based cancellation works the same as xAI and Workers AI.
+
+The handleChatStream gate now also permits "bedrock". The catalog `streaming` flag is the real filter; Pegasus would fail the `model.streaming` check above the provider gate anyway.
+
+### FLUX.2 reference images
+
+Cloudflare's FLUX.2 models (Klein 9B, Klein 4B, Dev) accept up to 4 reference images as multipart form fields `input_image_0` through `input_image_3`, each at most 512x512 px.
+
+**Worker (src/index.ts):** runImage's FLUX.2 multipart branch now iterates `body.attachments` after the prompt/width/height/negative_prompt fields. For each image attachment (`type === "image"` with `data` set, up to 4), parse the data URL via `parseDataUrl`, decode base64 to bytes, wrap in a Blob, and append as `input_image_{0..3}`. Beyond 4 silently skipped; the frontend caps client-side too.
+
+**Frontend (public/app.js):** Two new constants at the top: `FLUX2_REF_IMAGE_MAX_DIM = 512` and `MAX_FLUX2_REF_IMAGES = 4`. Then two function patches.
+
+First, `updateAffordance` for image-mode models now detects FLUX.2 (id prefix `@cf/black-forest-labs/flux-2-`) and shows the attach row with the hint `"optional: up to 4 reference images (downscaled to 512px)"`. Other image-gen models still hide the attach row.
+
+Second, `handleFiles` for image uploads has a FLUX.2 branch that bypasses the `modelSupports("vision")` check; the vision capability flag is for input analysis, not for using images as generation references. The branch counts existing image attachments, throws on the 5th, and downscales to 512 px (via `FLUX2_REF_IMAGE_MAX_DIM`) instead of the chat-side 1280.
+
+### Touch points
+
+- `src/index.ts`: 9 hunks total (+361 / -17)
+- `public/app.js`: 3 hunks (+40 / -8)
+
+No D1 migration. No R2 migration. No new dependencies. No new worker secrets.
+
 ## v0.15.0
 
 UI: replace the flat `<select>` model dropdown with a collapsible picker.

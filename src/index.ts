@@ -120,10 +120,10 @@ const MODELS: ModelEntry[] = [
   { id: "bedrock/twelvelabs.pegasus-1-2-v1:0",           label: "Pegasus 1.2 (TwelveLabs/Bedrock, BYOK)",     group: "Chat \u00b7 Bedrock", type: "chat", capabilities: [], provider: "bedrock", byok_alias: "twelvelabs.pegasus-1-2-v1:0" },
 
   // xAI / Grok (BYOK via Bearer auth or stored keys, routed through AI Gateway)
-  { id: "xai/grok-4.3",                                 label: "Grok 4.3 (xAI, BYOK)",                       group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai" },
-  { id: "xai/grok-4.20-multi-agent-0309",               label: "Grok 4.20 Multi-Agent (xAI, BYOK)",          group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai" },
-  { id: "xai/grok-4.20-0309-reasoning",                 label: "Grok 4.20 Reasoning (xAI, BYOK)",            group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai" },
-  { id: "xai/grok-build-0.1",                           label: "Grok Build 0.1 (xAI, BYOK, coding)",         group: "Chat \u00b7 xAI",       type: "chat", capabilities: [],         provider: "xai" },
+  { id: "xai/grok-4.3",                                 label: "Grok 4.3 (xAI, BYOK)",                       group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai", streaming: true },
+  { id: "xai/grok-4.20-multi-agent-0309",               label: "Grok 4.20 Multi-Agent (xAI, BYOK)",          group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai", streaming: true },
+  { id: "xai/grok-4.20-0309-reasoning",                 label: "Grok 4.20 Reasoning (xAI, BYOK)",            group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai", streaming: true },
+  { id: "xai/grok-build-0.1",                           label: "Grok Build 0.1 (xAI, BYOK, coding)",         group: "Chat \u00b7 xAI",       type: "chat", capabilities: [],         provider: "xai", streaming: true },
 
   // Frontier
   { id: "@cf/moonshotai/kimi-k2.6",                     label: "Kimi K2.6 (1T)",               group: "Chat \u00b7 Frontier", type: "chat", capabilities: ["vision"], streaming: true },
@@ -476,13 +476,17 @@ async function handleChatStream(request: Request, env: Env, ctx: ExecutionContex
   if (!model.streaming) {
     return json({ error: `Model ${model.id} does not support streaming. Use /api/chat (non-streaming) or pick a streaming-capable model.` }, { status: 400 });
   }
-  // Pass 2: Anthropic + Workers AI. Pass 3 will add xAI; Pass 4 Bedrock.
+  // Pass 3: Anthropic + Workers AI + xAI. Pass 4 will add Bedrock.
   // Workers AI catalog entries omit `provider` (the type allows this and the
   // ModelEntry default per the type comment is "workers-ai"); BYOK providers
   // set it explicitly.
   const isWorkersAI = !model.provider;
-  if (model.provider !== "anthropic" && !isWorkersAI) {
-    return json({ error: `Streaming for provider '${model.provider}' is not yet implemented (Pass 2 supports Anthropic and Workers AI; Pass 3+ will add xAI and Bedrock).` }, { status: 501 });
+  if (
+    model.provider !== "anthropic" &&
+    model.provider !== "xai" &&
+    !isWorkersAI
+  ) {
+    return json({ error: `Streaming for provider '${model.provider}' is not yet implemented (Pass 3 supports Anthropic, Workers AI, and xAI; Pass 4 will add Bedrock).` }, { status: 501 });
   }
 
   return runChatStream(request, env, model, body);
@@ -1491,10 +1495,14 @@ async function runChatStream(request: Request, env: Env, model: ModelEntry, body
     try {
       // Dispatch per provider. All generators yield the same ProviderStreamEvent
       // shape so the consumer loop is provider-agnostic.
-      const streamGenerator: AsyncGenerator<ProviderStreamEvent> =
-        model.provider === "anthropic"
-          ? callAnthropicStream(env, model, effectiveSystemPrompt || undefined, messages, upstreamAbort.signal)
-          : callWorkersAIStream(env, model, messages, upstreamAbort.signal);
+      let streamGenerator: AsyncGenerator<ProviderStreamEvent>;
+      if (model.provider === "anthropic") {
+        streamGenerator = callAnthropicStream(env, model, effectiveSystemPrompt || undefined, messages, upstreamAbort.signal);
+      } else if (model.provider === "xai") {
+        streamGenerator = callXaiStream(env, model, messages, upstreamAbort.signal);
+      } else {
+        streamGenerator = callWorkersAIStream(env, model, messages, upstreamAbort.signal);
+      }
 
       for await (const ev of streamGenerator) {
         if (ev.type === "text") {
@@ -1855,6 +1863,116 @@ async function callXai(
 
   const raw = await resp.json();
   return { raw, logId };
+}
+
+// ---------- callXaiStream (v0.13.x Pass 3) ----------
+//
+// Async generator: drives an xAI Grok model via direct fetch with stream:true
+// and yields normalized text + usage events.
+//
+// xAI uses standard OpenAI-compatible SSE:
+//   data: {"choices":[{"delta":{"content":"..."}}]}        // per chunk
+//   data: {"choices":[],"usage":{...}}                      // final usage chunk
+//   data: [DONE]                                            // terminal sentinel
+//
+// The usage chunk only fires when stream_options.include_usage:true is set
+// on the request, which we do. The gateway proxies the SSE body through
+// transparently.
+//
+// Abort handling: fetch() takes the AbortSignal directly. When the client
+// disconnects, runChatStream aborts the controller and the upstream fetch
+// is cancelled mid-stream, releasing the worker invocation immediately.
+
+async function* callXaiStream(
+  env: Env,
+  model: ModelEntry,
+  messages: Array<unknown>,
+  signal: AbortSignal
+): AsyncGenerator<ProviderStreamEvent> {
+  const baseUrl = await (env.AI as unknown as {
+    gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
+  }).gateway(env.GATEWAY_ID).getUrl("grok");
+
+  const modelName = model.id.replace(/^xai\//, "");
+
+  const body: Record<string, unknown> = {
+    model: modelName,
+    messages,
+    max_completion_tokens: 4096,
+    stream: true,
+    stream_options: { include_usage: true },
+  };
+
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+  };
+  if (env.XAI_API_KEY) headers["Authorization"] = `Bearer ${env.XAI_API_KEY}`;
+  if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
+
+  const resp = await fetch(`${baseUrl}/v1/chat/completions`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+    signal,
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`xAI API ${resp.status}: ${errText.slice(0, 500)}`);
+  }
+  if (!resp.body) {
+    throw new Error("xAI streaming: response body missing");
+  }
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() ?? "";
+
+      for (const part of parts) {
+        if (!part.trim()) continue;
+        let payload = "";
+        for (const line of part.split("\n")) {
+          if (line.startsWith("data: ")) payload = line.slice(6);
+          else if (line.startsWith("data:")) payload = line.slice(5);
+        }
+        if (!payload || payload === "[DONE]") continue;
+
+        let data: {
+          choices?: Array<{ delta?: { content?: string } }>;
+          usage?: { prompt_tokens?: number; completion_tokens?: number };
+        };
+        try {
+          data = JSON.parse(payload);
+        } catch {
+          continue;
+        }
+
+        const text = data.choices?.[0]?.delta?.content;
+        if (typeof text === "string" && text.length > 0) {
+          yield { type: "text", text };
+        }
+
+        if (data.usage) {
+          yield {
+            type: "usage",
+            in_: data.usage.prompt_tokens ?? null,
+            out_: data.usage.completion_tokens ?? null,
+          };
+        }
+      }
+    }
+  } finally {
+    try { reader.releaseLock(); } catch { /* fine */ }
+  }
 }
 
 // ---------- Amazon Bedrock chat - Nova family (BYOK, v0.11.0) ----------

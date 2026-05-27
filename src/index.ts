@@ -797,6 +797,24 @@ async function runImage(request: Request, env: Env, model: ModelEntry, body: Cha
           // binding ignores unknown form fields rather than erroring.
           form.append("negative_prompt", body.system_prompt);
         }
+
+        // Reference images (v0.16.0): FLUX.2 accepts up to 4 input images
+        // via input_image_0..input_image_3 form fields. Each must be at most
+        // 512x512 (the frontend downscales before upload). We silently cap
+        // beyond 4 rather than erroring, so a user who picks 5 just doesn't
+        // see the 5th show up; the picker UI also caps at 4 client-side.
+        const inputs: InputAttachment[] = body.attachments ?? [];
+        let refIdx = 0;
+        for (const att of inputs) {
+          if (refIdx >= 4) break;
+          if (att.type !== "image" || !att.data) continue;
+          const parsed = parseDataUrl(att.data);
+          if (!parsed) continue;
+          const blob = new Blob([base64ToBytes(parsed.base64)], { type: parsed.mime });
+          form.append(`input_image_${refIdx}`, blob, att.filename || `ref-${refIdx}.png`);
+          refIdx++;
+        }
+
         const formResponse = new Response(form);
         runParams = {
           multipart: {

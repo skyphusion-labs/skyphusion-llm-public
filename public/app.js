@@ -172,6 +172,11 @@ const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
 const IMAGE_MAX_DIM   = 1280;
 const VIDEO_FRAMES    = 8;
 const VIDEO_FRAME_MAX_DIM = 1024;
+// FLUX.2 reference image input (v0.16.0): each reference image must be
+// <=512x512 per the Cloudflare model spec; the form takes up to 4 of them
+// via input_image_0..input_image_3.
+const FLUX2_REF_IMAGE_MAX_DIM = 512;
+const MAX_FLUX2_REF_IMAGES    = 4;
 
 // Inline SVG icons for per-turn action buttons (v0.12.0+). Kept as raw strings
 // rather than fetched assets to avoid an extra request and to inherit the
@@ -275,9 +280,20 @@ function updateAffordance() {
     systemPrompt.placeholder = "things to avoid in the image (optional)";
     userInputLabel.textContent = "image prompt";
     userInput.placeholder = "describe the image";
-    attachRow.style.display = "none";
-    state.pendingAttachments = [];
-    renderAttachments();
+
+    // FLUX.2 (v0.16.0) accepts up to 4 reference images via input_image_0..3.
+    // For the rest of the image models, no attach UI.
+    const isFlux2 = m.id.startsWith("@cf/black-forest-labs/flux-2-");
+    if (isFlux2) {
+      attachRow.style.display = "flex";
+      fileInput.accept = "image/*";
+      attachHint.textContent = `optional: up to ${MAX_FLUX2_REF_IMAGES} reference images (downscaled to ${FLUX2_REF_IMAGE_MAX_DIM}px)`;
+      attachHint.classList.remove("warn");
+    } else {
+      attachRow.style.display = "none";
+      state.pendingAttachments = [];
+      renderAttachments();
+    }
   } else if (m.type === "tts") {
     systemPromptLabel.textContent = "system prompt";
     systemPrompt.placeholder = "(unused for TTS)";
@@ -423,11 +439,28 @@ async function handleFiles(files) {
   for (const file of files) {
     try {
       if (file.type.startsWith("image/")) {
-        if (!modelSupports("vision")) throw new Error("Current model doesn't support vision");
-        if (file.size > MAX_IMAGE_BYTES) throw new Error(`Image too large (${fmtBytes(file.size)} > ${fmtBytes(MAX_IMAGE_BYTES)})`);
-        const raw = await readAsDataUrl(file);
-        const data = await downscaleImage(raw, IMAGE_MAX_DIM);
-        state.pendingAttachments.push({ type: "image", mime: file.type, filename: file.name, data });
+        // FLUX.2 image-mode accepts reference images even though its catalog
+        // entry doesn't list the "vision" capability (the capability flag is
+        // for analyzing input, not for using images as gen references). For
+        // FLUX.2 specifically: cap at 4 attachments and downscale harder.
+        const m2 = currentModel();
+        const isFlux2 = !!m2 && m2.id.startsWith("@cf/black-forest-labs/flux-2-");
+        if (isFlux2) {
+          const existing = state.pendingAttachments.filter((a) => a.type === "image").length;
+          if (existing >= MAX_FLUX2_REF_IMAGES) {
+            throw new Error(`FLUX.2 accepts up to ${MAX_FLUX2_REF_IMAGES} reference images; skipping the rest`);
+          }
+          if (file.size > MAX_IMAGE_BYTES) throw new Error(`Image too large (${fmtBytes(file.size)} > ${fmtBytes(MAX_IMAGE_BYTES)})`);
+          const raw = await readAsDataUrl(file);
+          const data = await downscaleImage(raw, FLUX2_REF_IMAGE_MAX_DIM);
+          state.pendingAttachments.push({ type: "image", mime: file.type, filename: file.name, data });
+        } else {
+          if (!modelSupports("vision")) throw new Error("Current model doesn't support vision");
+          if (file.size > MAX_IMAGE_BYTES) throw new Error(`Image too large (${fmtBytes(file.size)} > ${fmtBytes(MAX_IMAGE_BYTES)})`);
+          const raw = await readAsDataUrl(file);
+          const data = await downscaleImage(raw, IMAGE_MAX_DIM);
+          state.pendingAttachments.push({ type: "image", mime: file.type, filename: file.name, data });
+        }
       } else if (file.type.startsWith("audio/")) {
         if (file.size > MAX_AUDIO_BYTES) throw new Error(`Audio too large (${fmtBytes(file.size)} > ${fmtBytes(MAX_AUDIO_BYTES)})`);
         const data = await readAsDataUrl(file);

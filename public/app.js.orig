@@ -14,7 +14,136 @@
 
 const $ = (sel) => document.querySelector(sel);
 
-const modelSelect       = $("#model");
+// Collapsible model picker (v0.14.x+). Replaces the v0.1.0 flat <select>
+// with a trigger button + popover panel containing <details> accordion
+// groups per catalog `group` field. Items show the model label plus
+// capability badges (vision, streaming) where relevant.
+//
+// Built as a shim so the rest of app.js doesn't change: `.value` getter
+// and setter, plus addEventListener("change", fn), match the native
+// <select> surface. Setting .value programmatically does NOT fire
+// `change` (mirrors native behavior); user-driven clicks do.
+const modelSelect = (function buildModelPicker() {
+  const root = document.getElementById("model");
+  if (!root) throw new Error("Model picker root #model not found");
+
+  const trigger = document.createElement("button");
+  trigger.type = "button";
+  trigger.className = "model-picker-trigger";
+  trigger.setAttribute("aria-haspopup", "listbox");
+  trigger.setAttribute("aria-expanded", "false");
+  trigger.innerHTML =
+    '<span class="model-picker-label">choose a model</span>' +
+    '<span class="model-picker-chevron" aria-hidden="true">\u25BE</span>';
+
+  const panel = document.createElement("div");
+  panel.className = "model-picker-panel";
+  panel.setAttribute("role", "listbox");
+  panel.hidden = true;
+
+  root.appendChild(trigger);
+  root.appendChild(panel);
+
+  const labelEl = trigger.querySelector(".model-picker-label");
+  let currentValue = null;
+  const changeListeners = [];
+
+  function setOpen(open) {
+    panel.hidden = !open;
+    trigger.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
+  function updateTriggerLabel() {
+    const m = currentValue ? state.modelsById[currentValue] : null;
+    labelEl.textContent = m ? m.label : "choose a model";
+  }
+
+  function setValue(id, fireChange) {
+    if (currentValue === id) return;
+    currentValue = id;
+    updateTriggerLabel();
+    panel.querySelectorAll(".model-item").forEach((el) => {
+      el.classList.toggle("selected", el.dataset.modelId === id);
+    });
+    if (fireChange) {
+      const evt = { target: shim };
+      changeListeners.forEach((fn) => fn(evt));
+    }
+  }
+
+  function escAttr(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[c]));
+  }
+
+  function renderBadges(m) {
+    const badges = [];
+    if ((m.capabilities || []).includes("vision")) {
+      badges.push('<span class="model-badge badge-vision" title="accepts images">vision</span>');
+    }
+    if (m.streaming) {
+      badges.push('<span class="model-badge badge-stream" title="supports SSE streaming">stream</span>');
+    }
+    return badges.length ? '<span class="model-item-badges">' + badges.join("") + '</span>' : '';
+  }
+
+  function populate(grouped) {
+    const groupNames = Object.keys(grouped);
+    panel.innerHTML = groupNames.map((group, idx) => {
+      const items = grouped[group];
+      const openAttr = idx === 0 ? " open" : "";
+      const itemsHtml = items.map((m) =>
+        '<li><button type="button" class="model-item" role="option" data-model-id="' +
+        escAttr(m.id) + '"><span class="model-item-label">' + escAttr(m.label) +
+        '</span>' + renderBadges(m) + '</button></li>'
+      ).join("");
+      return '<details class="model-group"' + openAttr +
+        '><summary class="model-group-header">' + escAttr(group) +
+        ' <span class="model-group-count">' + items.length + '</span></summary>' +
+        '<ul class="model-group-list">' + itemsHtml + '</ul></details>';
+    }).join("");
+
+    // Re-apply highlight if currentValue is still in the catalog; otherwise
+    // pick the first model so .value is never null after populate completes.
+    if (currentValue && state.modelsById[currentValue]) {
+      const sel = panel.querySelector('.model-item[data-model-id="' + CSS.escape(currentValue) + '"]');
+      if (sel) sel.classList.add("selected");
+    } else if (groupNames.length && grouped[groupNames[0]].length) {
+      setValue(grouped[groupNames[0]][0].id, false);
+    }
+    updateTriggerLabel();
+  }
+
+  trigger.addEventListener("click", () => setOpen(panel.hidden));
+  panel.addEventListener("click", (e) => {
+    const item = e.target.closest(".model-item");
+    if (item) {
+      setValue(item.dataset.modelId, true);
+      setOpen(false);
+    }
+  });
+  document.addEventListener("click", (e) => {
+    if (!root.contains(e.target)) setOpen(false);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !panel.hidden) {
+      setOpen(false);
+      trigger.focus();
+    }
+  });
+
+  const shim = {
+    get value() { return currentValue; },
+    set value(v) { setValue(v, false); },
+    addEventListener(event, fn) {
+      if (event === "change") changeListeners.push(fn);
+    },
+    populate,
+  };
+  return shim;
+})();
+
 const systemPromptLabel = $("#system-prompt-label");
 const systemPrompt      = $("#system-prompt");
 const userInputLabel    = $("#user-input-label");
@@ -119,14 +248,7 @@ async function loadModels() {
     (grouped[g] ||= []).push(m);
   }
 
-  modelSelect.innerHTML = Object.entries(grouped)
-    .map(([group, items]) => {
-      const opts = items
-        .map((m) => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.label)}</option>`)
-        .join("");
-      return `<optgroup label="${escapeHtml(group)}">${opts}</optgroup>`;
-    })
-    .join("");
+  modelSelect.populate(grouped);
 
   updateAffordance();
 }

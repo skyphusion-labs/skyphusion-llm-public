@@ -109,10 +109,10 @@ const MODELS: ModelEntry[] = [
 
   // Amazon Bedrock Nova family (v0.11.0, BYOK via AWS SigV4, direct to bedrock-runtime)
   // All four go through Bedrock's Converse API (unified across model families).
-  { id: "bedrock/amazon.nova-2-lite-v1:0",               label: "Amazon Nova 2 Lite (Bedrock, BYOK)",         group: "Chat \u00b7 Bedrock", type: "chat", capabilities: ["vision"], provider: "bedrock", byok_alias: "amazon.nova-2-lite-v1:0" },
-  { id: "bedrock/amazon.nova-2-pro-v1:0",                label: "Amazon Nova 2 Pro (Bedrock, BYOK)",          group: "Chat \u00b7 Bedrock", type: "chat", capabilities: ["vision"], provider: "bedrock", byok_alias: "amazon.nova-2-pro-v1:0" },
-  { id: "bedrock/amazon.nova-lite-v1:0",                 label: "Amazon Nova Lite (Bedrock, BYOK)",           group: "Chat \u00b7 Bedrock", type: "chat", capabilities: ["vision"], provider: "bedrock", byok_alias: "amazon.nova-lite-v1:0" },
-  { id: "bedrock/amazon.nova-pro-v1:0",                  label: "Amazon Nova Pro (Bedrock, BYOK)",            group: "Chat \u00b7 Bedrock", type: "chat", capabilities: ["vision"], provider: "bedrock", byok_alias: "amazon.nova-pro-v1:0" },
+  { id: "bedrock/amazon.nova-2-lite-v1:0",               label: "Amazon Nova 2 Lite (Bedrock, BYOK)",         group: "Chat \u00b7 Bedrock", type: "chat", capabilities: ["vision"], provider: "bedrock", byok_alias: "amazon.nova-2-lite-v1:0", streaming: true },
+  { id: "bedrock/amazon.nova-2-pro-v1:0",                label: "Amazon Nova 2 Pro (Bedrock, BYOK)",          group: "Chat \u00b7 Bedrock", type: "chat", capabilities: ["vision"], provider: "bedrock", byok_alias: "amazon.nova-2-pro-v1:0", streaming: true },
+  { id: "bedrock/amazon.nova-lite-v1:0",                 label: "Amazon Nova Lite (Bedrock, BYOK)",           group: "Chat \u00b7 Bedrock", type: "chat", capabilities: ["vision"], provider: "bedrock", byok_alias: "amazon.nova-lite-v1:0", streaming: true },
+  { id: "bedrock/amazon.nova-pro-v1:0",                  label: "Amazon Nova Pro (Bedrock, BYOK)",            group: "Chat \u00b7 Bedrock", type: "chat", capabilities: ["vision"], provider: "bedrock", byok_alias: "amazon.nova-pro-v1:0", streaming: true },
 
   // TwelveLabs Pegasus 1.2 on Bedrock (v0.11.0, video-Q&A via InvokeModel, not Converse).
   // Requires a video attachment. Region must be us-west-2 or eu-west-1.
@@ -476,17 +476,23 @@ async function handleChatStream(request: Request, env: Env, ctx: ExecutionContex
   if (!model.streaming) {
     return json({ error: `Model ${model.id} does not support streaming. Use /api/chat (non-streaming) or pick a streaming-capable model.` }, { status: 400 });
   }
-  // Pass 3: Anthropic + Workers AI + xAI. Pass 4 will add Bedrock.
+  // Pass 4: Anthropic + Workers AI + xAI + Bedrock Nova.
   // Workers AI catalog entries omit `provider` (the type allows this and the
   // ModelEntry default per the type comment is "workers-ai"); BYOK providers
   // set it explicitly.
+  //
+  // Bedrock Pegasus is single-shot video Q&A (uses InvokeModel, not
+  // ConverseStream) and is not flagged streaming in the catalog, so it
+  // would already fail the model.streaming check above. The provider gate
+  // here permits all of bedrock; the catalog flag is the real filter.
   const isWorkersAI = !model.provider;
   if (
     model.provider !== "anthropic" &&
     model.provider !== "xai" &&
+    model.provider !== "bedrock" &&
     !isWorkersAI
   ) {
-    return json({ error: `Streaming for provider '${model.provider}' is not yet implemented (Pass 3 supports Anthropic, Workers AI, and xAI; Pass 4 will add Bedrock).` }, { status: 501 });
+    return json({ error: `Streaming for provider '${model.provider}' is not yet implemented.` }, { status: 501 });
   }
 
   return runChatStream(request, env, model, body);
@@ -1500,6 +1506,8 @@ async function runChatStream(request: Request, env: Env, model: ModelEntry, body
         streamGenerator = callAnthropicStream(env, model, effectiveSystemPrompt || undefined, messages, upstreamAbort.signal);
       } else if (model.provider === "xai") {
         streamGenerator = callXaiStream(env, model, messages, upstreamAbort.signal);
+      } else if (model.provider === "bedrock") {
+        streamGenerator = callBedrockNovaStream(env, model, effectiveSystemPrompt || undefined, messages, upstreamAbort.signal);
       } else {
         streamGenerator = callWorkersAIStream(env, model, messages, upstreamAbort.signal);
       }
@@ -2055,6 +2063,245 @@ async function callBedrockNova(
   const raw = await resp.json();
   // logId: Bedrock doesn't return a Cloudflare-style log id. Pass null.
   return { raw, logId: null };
+}
+
+// ---------- callBedrockNovaStream (v0.13.x Pass 4) ----------
+//
+// Async generator: drives a Bedrock Nova model via ConverseStream and yields
+// normalized text + usage events.
+//
+// Bedrock streams over the application/vnd.amazon.eventstream binary protocol.
+// Each frame:
+//   [4 bytes BE]  total_length          (entire frame including itself)
+//   [4 bytes BE]  headers_length        (size of headers section in bytes)
+//   [4 bytes BE]  prelude_crc           (CRC32 of first 8 bytes - we skip)
+//   [headers_length bytes]  headers     (name/type/value triplets)
+//   [payload_bytes]         payload     (JSON for the events we care about)
+//   [4 bytes BE]  message_crc           (CRC32 of everything before - we skip)
+//
+//   payload_bytes = total_length - 16 - headers_length
+//
+// Headers are name/type/value triplets:
+//   [1 byte] name_length
+//   [name_length bytes] name (UTF-8)
+//   [1 byte] value_type           (0/1 = bool; 2 = byte; 3 = i16; 4 = i32;
+//                                   5/8 = 8-byte; 6 = byte array; 7 = string;
+//                                   9 = uuid)
+//   [value]
+//
+// All headers we care about (:message-type, :event-type, :content-type) are
+// type 7 (string with 2-byte BE length prefix). Other types are parsed for
+// length and skipped defensively so an unknown header doesn't desync the
+// stream.
+//
+// Event types we react to:
+//   contentBlockDelta -> {"delta":{"text":"..."},"contentBlockIndex":N}
+//   metadata          -> {"usage":{"inputTokens":N,"outputTokens":M},...}
+//
+// Other event types (messageStart, contentBlockStart, contentBlockStop,
+// messageStop) carry no info we need for the flat envelope.
+//
+// Errors arrive as :message-type=exception with the exception name in
+// :event-type. The payload is a JSON error description.
+//
+// Abort handling: aws4fetch forwards `signal` to fetch(), so client
+// disconnect cancels the upstream request mid-stream.
+
+async function* callBedrockNovaStream(
+  env: Env,
+  model: ModelEntry,
+  systemPrompt: string | undefined,
+  messages: Array<unknown>,
+  signal: AbortSignal
+): AsyncGenerator<ProviderStreamEvent> {
+  if (!env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY) {
+    throw new Error("AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be set for Bedrock BYOK streaming.");
+  }
+  const region = env.AWS_REGION || "us-east-1";
+  const modelName = model.byok_alias ?? model.id.replace(/^bedrock\//, "");
+
+  // Same Converse message transform as callBedrockNova.
+  const bedrockMessages: Array<{ role: string; content: Array<{ text: string }> }> = [];
+  for (const msg of messages) {
+    const m = msg as { role: string; content: unknown };
+    if (m.role === "system") continue; // we use systemPrompt arg instead
+    if (typeof m.content === "string") {
+      bedrockMessages.push({ role: m.role, content: [{ text: m.content }] });
+    } else if (Array.isArray(m.content)) {
+      const textParts = (m.content as Array<{ type?: string; text?: string }>)
+        .filter((p) => p.type === "text" || typeof p.text === "string")
+        .map((p) => p.text || "")
+        .join("\n");
+      bedrockMessages.push({ role: m.role, content: [{ text: textParts || "(empty)" }] });
+    }
+  }
+
+  const body: Record<string, unknown> = {
+    messages: bedrockMessages,
+    inferenceConfig: { maxTokens: 4096 },
+  };
+  if (systemPrompt) body.system = [{ text: systemPrompt }];
+
+  const { AwsClient } = await import("aws4fetch");
+  const awsClient = new AwsClient({
+    accessKeyId: env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
+    region,
+    service: "bedrock",
+  });
+
+  // Endpoint suffix: converse-stream (not converse).
+  const url = `https://bedrock-runtime.${region}.amazonaws.com/model/${encodeURIComponent(modelName)}/converse-stream`;
+
+  const resp = await awsClient.fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+
+  if (!resp.ok) {
+    throw new Error(`Bedrock Nova streaming ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
+  }
+  if (!resp.body) {
+    throw new Error("Bedrock Nova streaming: response body missing");
+  }
+
+  const reader = resp.body.getReader();
+  let buf = new Uint8Array(0);
+
+  function append(bytes: Uint8Array) {
+    const merged = new Uint8Array(buf.length + bytes.length);
+    merged.set(buf, 0);
+    merged.set(bytes, buf.length);
+    buf = merged;
+  }
+
+  function readU32BE(at: number): number {
+    return (
+      ((buf[at] << 24) |
+        (buf[at + 1] << 16) |
+        (buf[at + 2] << 8) |
+        buf[at + 3]) >>> 0
+    );
+  }
+
+  function parseHeaders(start: number, end: number): Record<string, string> {
+    const out: Record<string, string> = {};
+    const td = new TextDecoder();
+    let p = start;
+    while (p < end) {
+      const nameLen = buf[p]; p += 1;
+      if (p + nameLen > end) break;
+      const name = td.decode(buf.subarray(p, p + nameLen)); p += nameLen;
+      if (p >= end) break;
+      const valType = buf[p]; p += 1;
+      if (valType === 7) {
+        // String: 2-byte BE length, then UTF-8 data.
+        if (p + 2 > end) break;
+        const valLen = (buf[p] << 8) | buf[p + 1]; p += 2;
+        if (p + valLen > end) break;
+        out[name] = td.decode(buf.subarray(p, p + valLen)); p += valLen;
+      } else {
+        // Skip non-string header types defensively per the AWS EventStream spec.
+        if (valType === 0 || valType === 1) {
+          // boolean, no payload bytes
+        } else if (valType === 2) {
+          p += 1;
+        } else if (valType === 3) {
+          p += 2;
+        } else if (valType === 4) {
+          p += 4;
+        } else if (valType === 5 || valType === 8) {
+          p += 8;
+        } else if (valType === 6) {
+          if (p + 2 > end) break;
+          const dlen = (buf[p] << 8) | buf[p + 1];
+          p += 2 + dlen;
+        } else if (valType === 9) {
+          p += 16;
+        } else {
+          // Unknown type, give up cleanly with what we have.
+          return out;
+        }
+      }
+    }
+    return out;
+  }
+
+  const td = new TextDecoder();
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      append(value);
+
+      // Drain as many complete frames as the buffer holds.
+      while (buf.length >= 12) {
+        const totalLen = readU32BE(0);
+        if (totalLen < 16 || totalLen > 16 * 1024 * 1024) {
+          throw new Error(`Bedrock Nova streaming: bogus frame length ${totalLen}`);
+        }
+        if (buf.length < totalLen) break; // wait for more bytes
+
+        const headersLen = readU32BE(4);
+        const headersStart = 12; // skip prelude_crc at bytes 8..11
+        const headersEnd = headersStart + headersLen;
+        const payloadStart = headersEnd;
+        const payloadEnd = totalLen - 4; // message_crc trails
+        const headers = parseHeaders(headersStart, headersEnd);
+
+        const messageType = headers[":message-type"];
+        const eventType = headers[":event-type"];
+
+        const payloadText = td.decode(buf.subarray(payloadStart, payloadEnd));
+
+        // Advance past this frame in the buffer.
+        buf = buf.slice(totalLen);
+
+        if (messageType === "exception") {
+          let msg = payloadText;
+          try {
+            const obj = JSON.parse(payloadText) as { message?: string; Message?: string };
+            msg = obj.message ?? obj.Message ?? payloadText;
+          } catch { /* keep raw */ }
+          throw new Error(`Bedrock Nova stream exception (${eventType ?? "unknown"}): ${msg.slice(0, 500)}`);
+        }
+
+        if (messageType !== "event") continue;
+
+        let data: {
+          delta?: { text?: string };
+          usage?: { inputTokens?: number; outputTokens?: number };
+        };
+        try {
+          data = JSON.parse(payloadText);
+        } catch {
+          continue;
+        }
+
+        if (eventType === "contentBlockDelta") {
+          const text = data.delta?.text;
+          if (typeof text === "string" && text.length > 0) {
+            yield { type: "text", text };
+          }
+        } else if (eventType === "metadata") {
+          if (data.usage) {
+            yield {
+              type: "usage",
+              in_: data.usage.inputTokens ?? null,
+              out_: data.usage.outputTokens ?? null,
+            };
+          }
+        }
+        // messageStart, contentBlockStart, contentBlockStop, messageStop
+        // carry no info we need for the flat envelope.
+      }
+    }
+  } finally {
+    try { reader.releaseLock(); } catch { /* fine */ }
+  }
 }
 
 // ---------- TwelveLabs Pegasus 1.2 on Bedrock (v0.11.0) ----------

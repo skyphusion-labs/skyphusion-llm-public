@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.19.1
+
+Second stage of the chat provider dispatcher split. Extracts xAI chat dispatch (`prepareXaiRequest`, `callXai`, `callXaiStream`) into `src/providers/xai.ts` following the v0.19.0 pattern set by `src/providers/anthropic.ts`. Mechanical extraction; no behavior change.
+
+xAI's API is OpenAI-compatible (same wire format as the underlying GPT spec) so no message transform is needed; the module is meaningfully simpler than the Anthropic one. Imports `Env` from `../env`, `ModelEntry` from `../models`, `ProviderStreamEvent` from `../parsers/types`, and the v0.18.1 SSE pipeline (`extractSSEDataPayloads` + `interpretXaiSSEFrame`) from `../parsers/`.
+
+### Touch points
+
+- `src/index.ts`: 3515 -> 3370 lines (-145). One import line added, full xAI section (comment header + `prepareXaiRequest` + `callXai` + `callXaiStream` plus their helpers) removed.
+- `src/providers/xai.ts`: new file, ~154 lines (functions moved verbatim modulo `export` keywords and import block).
+- `package.json`: version bump 0.19.0 -> 0.19.1 (patch bump; the scaffolding shipped in v0.19.0, this is a mechanical follow-on).
+
+No D1 migration. No R2 migration. No new dependencies. No new worker secrets. All 65 tests still pass. `npm run typecheck` still clean (zero errors). No behavior change (request building, auth header construction, fetch flow, and SSE pipeline are byte-equivalent to the v0.19.0 inline implementation).
+
+### What's next
+
+- v0.19.2: `src/providers/bedrock.ts` (Nova Converse API + Pegasus 1.2 InvokeModel, both via aws4fetch SigV4)
+- v0.19.3: `src/providers/workers-ai.ts` (env.AI.run wrapper, Llama / Qwen / DeepSeek / Mistral / etc.)
+
+Each follows the same shape: import `Env`/`ModelEntry`/`ProviderStreamEvent` + relevant parser modules, export the non-streaming and streaming callers, remove the inline implementation from `src/index.ts`.
+
 ## v0.19.0
 
 First stage of the chat provider dispatcher split. Extracts shared scaffolding (`src/env.ts`, `src/utils.ts`) and the first provider (`src/providers/anthropic.ts`) out of `src/index.ts`. v0.19.1-3 land the remaining three chat providers (xAI, Bedrock, Workers AI) following this same pattern; non-chat dispatchers (image, TTS, STT, video, music) stay in `src/index.ts` for now.

@@ -26,6 +26,9 @@ import { interpretWorkersAISSEFrame } from "./parsers/workers-ai-sse";
 import { interpretAnthropicSSEFrame } from "./parsers/anthropic-sse";
 import type { ModelType, Provider, ModelEntry } from "./models";
 import { MODELS } from "./models";
+import type { Env } from "./env";
+import { parseDataUrl, base64ToBytes, extFromMime } from "./utils";
+import { callAnthropic, callAnthropicStream } from "./providers/anthropic";
 
 //
 // Multimodal model types:
@@ -48,31 +51,6 @@ import { MODELS } from "./models";
 //   - Artifact ownership is enforced via customMetadata.user_email on the
 //     R2 object plus a check in GET /api/artifact/*.
 
-interface Env {
-  AI: Ai;
-  DB: D1Database;
-  R2: R2Bucket;
-  VEC: VectorizeIndex;
-  ASSETS: Fetcher;
-  GATEWAY_ID: string;
-  // v0.12.0: Workflow binding for Unified Billing video + music gen. The
-  // class is LongRunWorkflow, defined at the bottom of this file. Each
-  // instance invokes env.AI.run (long-running), downloads the artifact,
-  // uploads to R2, and finalizes the D1 row across retryable steps.
-  LONGRUN: Workflow;
-  ANTHROPIC_API_KEY?: string; // optional; preferred is to store in AI Gateway dashboard
-  XAI_API_KEY?: string;       // optional; preferred is to store in AI Gateway dashboard
-  // v0.11.0: AWS credentials for Bedrock BYOK. Scope IAM key to Bedrock invoke only.
-  // AWS_REGION defaults to us-east-1 for Nova; Pegasus 1.2 requires us-west-2 or eu-west-1.
-  AWS_ACCESS_KEY_ID?: string;
-  AWS_SECRET_ACCESS_KEY?: string;
-  AWS_REGION?: string;
-  AWS_REGION_PEGASUS?: string; // optional override for Pegasus calls
-  CF_AIG_TOKEN?: string;      // only needed if gateway has Authenticated Gateway enabled
-  // v0.17.0: Tavily Search API key for the optional web-search retrieval source.
-  // Optional: when unset, web search uses Wikipedia only (no key required).
-  TAVILY_API_KEY?: string;
-}
 
 const WHISPER_MODEL = "@cf/openai/whisper-large-v3-turbo";
 
@@ -199,38 +177,6 @@ function getUserEmail(request: Request): string {
   return request.headers.get("cf-access-authenticated-user-email") ?? "anonymous";
 }
 
-function parseDataUrl(dataUrl: string): { mime: string; base64: string } | null {
-  const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-  if (!match) return null;
-  return { mime: match[1], base64: match[2] };
-}
-
-function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
-  const bin = atob(b64);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
-}
-
-function extFromMime(mime: string): string {
-  const m = mime.toLowerCase();
-  if (m.includes("png"))  return "png";
-  if (m.includes("jpeg")) return "jpg";
-  if (m.includes("jpg"))  return "jpg";
-  if (m.includes("webp")) return "webp";
-  if (m.includes("gif"))  return "gif";
-  if (m.includes("mp4"))  return "mp4";
-  if (m.includes("quicktime")) return "mov";
-  if (m.includes("mov"))  return "mov";
-  if (m.includes("matroska") || m.includes("mkv")) return "mkv";
-  if (m.includes("mp3"))  return "mp3";
-  if (m.includes("mpeg")) return "mp3";
-  if (m.includes("wav"))  return "wav";
-  if (m.includes("ogg"))  return "ogg";
-  if (m.includes("webm")) return "webm";
-  if (m.includes("m4a"))  return "m4a";
-  return "bin";
-}
 
 async function r2Put(env: Env, prefix: "in" | "out", mime: string, bytes: Uint8Array, userEmail: string): Promise<string> {
   const key = `${prefix}/${crypto.randomUUID()}.${extFromMime(mime)}`;
@@ -1157,148 +1103,13 @@ async function persistChat(env: Env, a: PersistArgs): Promise<{ id: number; crea
   return { id: row.id, created_at: row.created_at, conversation_id: finalConvId };
 }
 
-// ---------- Anthropic BYOK call ----------
-//
-// Direct fetch to the Anthropic provider endpoint of AI Gateway. The gateway
-// wraps the call for observability, caching, and rate-limiting.
-//
-// Auth strategy: stored-keys-first. If env.ANTHROPIC_API_KEY is set, we send
-// it as x-api-key (inline auth, takes priority at the gateway). If it isn't,
-// we omit the header and let the gateway inject the key you've stored in
-// dashboard > AI Gateway > Provider Keys. Either path works.
-//
-// The message format coming in is OpenAI-style (role + content array with
-// text / image_url blocks). We transform to Anthropic's Messages API shape:
-// system pulled to a top-level field, image_url blocks rewritten as image
-// blocks with base64 source.
-
-// v0.18.3: shared request builder for both callAnthropic (non-streaming) and
-// callAnthropicStream (eventstream). The transform, URL, auth headers, and
-// body shape are identical between the two; only stream:true on the body
-// and accept:text/event-stream on the headers differ, conditional on
-// opts.stream. Mirrors the v0.17.2 prepareXaiRequest / prepareBedrockNovaRequest
-// pattern.
-
-async function prepareAnthropicRequest(
-  env: Env,
-  model: ModelEntry,
-  systemPrompt: string | undefined,
-  messages: Array<unknown>,
-  opts: { stream: boolean },
-): Promise<{ url: string; headers: Record<string, string>; body: string }> {
-  const { system, messages: aMessages } = transformToAnthropic(messages, systemPrompt);
-
-  const baseUrl = await (env.AI as unknown as {
-    gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
-  }).gateway(env.GATEWAY_ID).getUrl("anthropic");
-
-  // Strip the "anthropic/" prefix we use in our internal IDs; Anthropic's API
-  // expects just the model name (e.g. "claude-opus-4-6").
-  const modelName = model.id.replace(/^anthropic\//, "");
-
-  const bodyObj: Record<string, unknown> = {
-    model: modelName,
-    max_tokens: 4096,
-    messages: aMessages,
-  };
-  if (system) bodyObj.system = system;
-  if (opts.stream) bodyObj.stream = true;
-
-  const headers: Record<string, string> = {
-    "anthropic-version": "2023-06-01",
-    "content-type": "application/json",
-  };
-  if (opts.stream) headers["accept"] = "text/event-stream";
-  if (env.ANTHROPIC_API_KEY) headers["x-api-key"] = env.ANTHROPIC_API_KEY;
-  if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
-
-  return {
-    url: `${baseUrl}/v1/messages`,
-    headers,
-    body: JSON.stringify(bodyObj),
-  };
-}
-
-async function callAnthropic(
-  env: Env,
-  model: ModelEntry,
-  systemPrompt: string | undefined,
-  messages: Array<unknown>,
-): Promise<{ raw: unknown; logId: string | null }> {
-  const { url, headers, body } = await prepareAnthropicRequest(
-    env, model, systemPrompt, messages, { stream: false },
-  );
-
-  const resp = await fetch(url, { method: "POST", headers, body });
-
-  const logId = resp.headers.get("cf-aig-log-id");
-
-  if (!resp.ok) {
-    const errText = await resp.text();
-    throw new Error(`Anthropic API ${resp.status}: ${errText.slice(0, 500)}`);
-  }
-
-  const raw = await resp.json();
-  return { raw, logId };
-}
-
-interface AnthropicMessage {
-  role: "user" | "assistant";
-  content: Array<unknown>;
-}
-
-function transformToAnthropic(
-  messages: Array<unknown>,
-  systemPromptOverride: string | undefined
-): { system: string | undefined; messages: AnthropicMessage[] } {
-  let system: string | undefined = systemPromptOverride && systemPromptOverride.trim()
-    ? systemPromptOverride
-    : undefined;
-  const out: AnthropicMessage[] = [];
-
-  for (const m of messages) {
-    const msg = m as { role: string; content: unknown };
-    if (msg.role === "system") {
-      const text = typeof msg.content === "string" ? msg.content : "";
-      system = system ? `${system}\n\n${text}` : text;
-      continue;
-    }
-    if (msg.role !== "user" && msg.role !== "assistant") continue;
-
-    if (typeof msg.content === "string") {
-      out.push({ role: msg.role, content: [{ type: "text", text: msg.content }] });
-      continue;
-    }
-
-    if (!Array.isArray(msg.content)) continue;
-
-    const content: Array<unknown> = [];
-    for (const block of msg.content) {
-      const b = block as { type?: string; text?: string; image_url?: { url?: string } };
-      if (b.type === "text" && typeof b.text === "string") {
-        content.push({ type: "text", text: b.text });
-      } else if (b.type === "image_url" && b.image_url?.url) {
-        const parsed = parseDataUrl(b.image_url.url);
-        if (parsed) {
-          content.push({
-            type: "image",
-            source: { type: "base64", media_type: parsed.mime, data: parsed.base64 },
-          });
-        }
-      }
-    }
-    out.push({ role: msg.role, content });
-  }
-
-  return { system, messages: out };
-}
-
-// ---------- runChatStream + callAnthropicStream (v0.13.0) ----------
+// ---------- runChatStream (v0.13.0) ----------
 //
 // Streaming counterpart of runChat. Shares the prelude contract (parallel
 // hoisting of priorTurnsPromise + retrievePromise overlapping the attachment
 // walk; multi-turn continuation; RAG system-prompt assembly) and diverges
-// at the model call: callAnthropicStream is an async generator that yields
+// at the model call: each provider's stream adapter (callAnthropicStream
+// in src/providers/anthropic.ts, etc.) is an async generator that yields
 // normalized text deltas and usage events.
 //
 // Wire format on the response body (text/event-stream):
@@ -1579,79 +1390,6 @@ async function runChatStream(request: Request, env: Env, model: ModelEntry, body
       "x-accel-buffering": "no",
     },
   });
-}
-
-// Normalized event shape yielded by every per-provider streaming adapter
-// (callAnthropicStream today; callWorkersAIStream as of Pass 2; future xAI
-// and Bedrock adapters in Pass 3/4). runChatStream's consumer loop stays
-// generic over this type.
-// Async generator: drives Anthropic's Messages API in streaming mode and
-// yields normalized events. Strips Anthropic's verbose SSE envelope
-// (message_start, content_block_start, content_block_delta, content_block_stop,
-// message_delta, message_stop, ping) to just text + usage.
-//
-// Anthropic emits usage in two places:
-//   - message_start: { usage: { input_tokens, output_tokens } } (initial small)
-//   - message_delta: { usage: { input_tokens, output_tokens } } (cumulative)
-// We yield both; the caller keeps the latest non-null value, so the final
-// message_delta wins for output_tokens and message_start typically wins for
-// input_tokens (it's a one-shot value).
-async function* callAnthropicStream(
-  env: Env,
-  model: ModelEntry,
-  systemPrompt: string | undefined,
-  messages: Array<unknown>,
-  signal: AbortSignal
-): AsyncGenerator<ProviderStreamEvent> {
-  const { url, headers, body } = await prepareAnthropicRequest(
-    env, model, systemPrompt, messages, { stream: true },
-  );
-
-  const resp = await fetch(url, {
-    method: "POST",
-    headers,
-    body,
-    signal,
-  });
-
-  if (!resp.ok) {
-    const errText = await resp.text();
-    throw new Error(`Anthropic API ${resp.status}: ${errText.slice(0, 500)}`);
-  }
-  if (!resp.body) throw new Error("Anthropic returned no stream body");
-
-  const reader = resp.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-
-      // SSE event boundaries are \n\n. Within an event, the fields we care
-      // about are `data: <json>` lines; everything else (event: name, id:,
-      // retry:) we ignore. Anthropic uses `event:` for the type and `data:`
-      // for the payload; the payload's own `type` field also carries the
-      // event kind, so we can rely on that alone.
-      const { payloads, remainder } = extractSSEDataPayloads(buffer);
-      buffer = remainder;
-
-      for (const payload of payloads) {
-        let data: unknown;
-        try {
-          data = JSON.parse(payload);
-        } catch {
-          continue;
-        }
-        for (const event of interpretAnthropicSSEFrame(data)) yield event;
-      }
-    }
-  } finally {
-    try { reader.releaseLock(); } catch { /* fine */ }
-  }
 }
 
 // ---------- callWorkersAIStream (v0.13.0 Pass 2) ----------

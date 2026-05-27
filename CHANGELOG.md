@@ -1,5 +1,40 @@
 # Changelog
 
+## v0.19.0
+
+First stage of the chat provider dispatcher split. Extracts shared scaffolding (`src/env.ts`, `src/utils.ts`) and the first provider (`src/providers/anthropic.ts`) out of `src/index.ts`. v0.19.1-3 land the remaining three chat providers (xAI, Bedrock, Workers AI) following this same pattern; non-chat dispatchers (image, TTS, STT, video, music) stay in `src/index.ts` for now.
+
+Staged this way intentionally: chat providers have well-bounded surface area (request build + transform + fetch + parser), so they can move one at a time with a reversibility point between each release. Non-chat dispatchers entangle with Workflows, R2, and D1 job state, so they need a different approach and are deferred.
+
+### Scaffolding (one-time work, used by all v0.19.x releases)
+
+- New `src/env.ts` exports the `Env` interface. Single authoritative source for the worker's binding shape; all provider modules will import it. Optional secret fields stay optional so deployers can leave BYOK keys unset without TypeScript complaining.
+- New `src/utils.ts` exports `parseDataUrl`, `base64ToBytes`, `extFromMime`. Pure helpers with no I/O or env dependencies, callable from any module.
+- New `src/providers/` directory holds per-provider chat dispatch modules. Convention: each exports the non-streaming caller (`callX`) and streaming caller (`callXStream`); request builders, transforms, and helper interfaces stay private to the module.
+
+### Anthropic extraction (v0.19.0)
+
+- New `src/providers/anthropic.ts` (~180 lines) owns `prepareAnthropicRequest`, `transformToAnthropic`, `AnthropicMessage` interface (now module-private), `callAnthropic`, and `callAnthropicStream`. Imports `Env` from `../env`, `ModelEntry` from `../models`, `ProviderStreamEvent` from `../parsers/types`, `parseDataUrl` from `../utils`, and the SSE framer + Anthropic interpreter from `../parsers/`.
+- `src/index.ts` removes the local `Env` interface (~25 lines), three local utility functions (`parseDataUrl`, `base64ToBytes`, `extFromMime`, ~30 lines), and the entire Anthropic block (`prepareAnthropicRequest`, `callAnthropic`, `AnthropicMessage`, `transformToAnthropic`, `callAnthropicStream` plus their comment headers, ~210 lines). Adds three import statement groups at the top (~3 lines). Net diff: -262 lines.
+
+### Touch points
+
+- `src/index.ts`: 3777 -> 3515 lines (-262).
+- `src/env.ts`: new file, ~40 lines.
+- `src/utils.ts`: new file, ~60 lines.
+- `src/providers/anthropic.ts`: new file, ~180 lines.
+- `package.json`: version bump 0.18.4 -> 0.19.0 (minor bump because the new `src/providers/` directory establishes a pattern that v0.19.1-3 extend; contributors will want to know which provider lives where after the split).
+
+No D1 migration. No R2 migration. No new dependencies. No new worker secrets. All 65 tests still pass. `npm run typecheck` still clean (zero errors). No behavior change (code moved verbatim modulo formatting; the Anthropic provider module is byte-equivalent to the v0.18.4 inline implementation plus exports).
+
+### What's deferred to v0.19.1-3
+
+- v0.19.1: `src/providers/xai.ts` (extract `prepareXaiRequest`, `callXai`, `callXaiStream`)
+- v0.19.2: `src/providers/bedrock.ts` (extract `prepareBedrockNovaRequest`, `callBedrockNova`, `callBedrockNovaStream`, plus the Pegasus 1.2 video-Q&A dispatcher since it shares the same AWS SigV4 setup)
+- v0.19.3: `src/providers/workers-ai.ts` (extract `aiRun` wrapper, `callWorkersAI`, `callWorkersAIStream`)
+
+Each follow-on release is largely mechanical now that the scaffolding lives in `src/env.ts` and `src/utils.ts`; the provider files just absorb their respective code blocks and add appropriate imports.
+
 ## v0.18.4
 
 Organizational refactor: move the MODELS catalog (and the `ModelType`, `Provider`, `ModelEntry` types it depends on) from `src/index.ts` into a new `src/models.ts` module. Pure relocation, no behavior change.

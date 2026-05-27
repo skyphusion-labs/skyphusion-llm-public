@@ -1,5 +1,43 @@
 # Changelog
 
+## v0.19.4
+
+Chunking quality pass: replaces the fixed-window chunker with a recursive separator splitter (the LangChain `RecursiveCharacterTextSplitter` shape). Improves retrieval quality on prose-heavy corpora and lays the groundwork for v0.20.x project knowledge stores, where the chunker has to handle worldbuilding fiction and structured reference docs alongside legal documents.
+
+### Why this changed
+
+The previous fixed-window chunker had one design flaw: it searched for natural break points only in the last 1/3 of the 500-char window. If a paragraph break landed earlier (e.g. char 50 of a 500-char window), the chunker ignored it and dumped both paragraphs into one chunk. For inputs with many short paragraphs (Discord exports, dialog, lore notes), that produced chunks that mashed unrelated content together.
+
+The new chunker respects ALL paragraph breaks, then falls back through a separator hierarchy when needed: paragraph -> line -> sentence -> clause -> word -> hard character split. Chunks can be smaller than target when a clean boundary makes them so; the merge step greedily combines adjacent fragments back up to target size with optional tail-overlap.
+
+### Worker
+
+- New `src/chunking.ts` exports `chunkText(text)`. Module-private helpers: `recursiveCharSplit` (separator hierarchy walker) and `mergeFragments` (greedy fragment combiner with tail-overlap). Constants `CHUNK_TARGET_CHARS` (500) and `CHUNK_OVERLAP_CHARS` (50) preserved from the previous implementation; behavior at default settings is similar on well-paragraph'd input but substantially better on Discord-style short-paragraph content.
+- `src/index.ts` removes the local `chunkText` function (~30 lines) plus the two chunking constants. Adds one import line for the new module. Net diff: -32 lines.
+
+### Test infrastructure
+
+- `tests/chunking.test.ts`: 13 new tests organized into 6 describe blocks: edge cases (empty/short/exact-target), paragraph boundaries (respected ALL breaks, not just late-window), fallback separator hierarchy (line -> sentence -> word -> hard), overlap behavior, realistic content (worldbuilding paragraph + markdown), and size constraints (no chunk wildly exceeds target).
+- Total test count: 65 -> 78. Suite still completes in ~60ms.
+
+### Touch points
+
+- `src/index.ts`: 2971 -> 2939 lines (-32).
+- `src/chunking.ts`: new file, 161 lines.
+- `tests/chunking.test.ts`: new file, 217 lines.
+- `package.json`: version bump 0.19.3 -> 0.19.4.
+
+No D1 migration. No R2 migration. No new dependencies. No new worker secrets. `npm run typecheck` still clean (zero errors).
+
+### One behavior change to be aware of
+
+Existing documents in your D1/Vectorize store were chunked by the old algorithm. They keep working - retrieval against them is unchanged - but their chunk boundaries reflect the old chunker. Re-uploading a document re-chunks it with the new algorithm; the old vectors stay until you delete the old document or re-ingest. If you want consistent chunking quality across an entire corpus, plan to re-ingest important documents at some point. The two coexist fine in the meantime.
+
+### What's next
+
+- v0.19.5: drag-drop + paste attachments (frontend-only, half-day-ish job)
+- v0.20.x: projects + knowledge stores (the big feature, ~10-12 days)
+
 ## v0.19.3
 
 Final stage of the chat provider dispatcher split. Extracts Workers AI streaming chat dispatch (`callWorkersAIStream`) into `src/providers/workers-ai.ts`, and extracts the env.AI binding wrappers (`aiRun`, `aiLogId`) into `src/ai-binding.ts` since they're used by every Workers AI code path (chat, STT, image gen, TTS, embeddings, the LongRun workflow), not just the chat provider. Also cleans up four stale parser imports that accumulated in `src/index.ts` through v0.19.0-2 extractions.

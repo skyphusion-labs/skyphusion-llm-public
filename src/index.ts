@@ -24,6 +24,7 @@ import { MODELS } from "./models";
 import type { Env } from "./env";
 import { parseDataUrl, base64ToBytes, extFromMime } from "./utils";
 import { aiRun, aiLogId } from "./ai-binding";
+import { chunkText } from "./chunking";
 import { callAnthropic, callAnthropicStream } from "./providers/anthropic";
 import { callXai, callXaiStream } from "./providers/xai";
 import { callBedrockNova, callBedrockNovaStream, callBedrockPegasus } from "./providers/bedrock";
@@ -2023,8 +2024,6 @@ async function handleHistoryDelete(request: Request, env: Env, id: number): Prom
 
 const EMBED_MODEL = "@cf/baai/bge-base-en-v1.5";
 const EMBED_DIMENSIONS = 768;
-const CHUNK_TARGET_CHARS = 500;
-const CHUNK_OVERLAP_CHARS = 50;
 const EMBED_BATCH_SIZE = 16;       // BGE accepts batches; 16 keeps requests small
 const DOC_MAX_BYTES = 10 * 1024 * 1024;  // 10MB upload cap
 
@@ -2079,37 +2078,6 @@ interface ExtractedChunk {
   text: string;
   page?: number;     // PDF: 1-indexed page number
   sheet?: string;    // XLSX/XLS: source sheet name
-}
-
-function chunkText(text: string): string[] {
-  const out: string[] = [];
-  if (!text) return out;
-
-  let pos = 0;
-  while (pos < text.length) {
-    const end = Math.min(pos + CHUNK_TARGET_CHARS, text.length);
-    let cut = end;
-
-    // If we're not at EOF, try to find a natural break in the last 1/3
-    // of the chunk window. Prefer paragraph break > newline > sentence end.
-    if (end < text.length) {
-      const windowStart = pos + Math.floor(CHUNK_TARGET_CHARS * 2 / 3);
-      const window = text.slice(windowStart, end);
-      const para = window.lastIndexOf("\n\n");
-      const nl = window.lastIndexOf("\n");
-      const dot = window.lastIndexOf(". ");
-      if (para >= 0)      cut = windowStart + para + 2;
-      else if (nl >= 0)   cut = windowStart + nl + 1;
-      else if (dot >= 0)  cut = windowStart + dot + 2;
-    }
-
-    const piece = text.slice(pos, cut).trim();
-    if (piece) out.push(piece);
-
-    if (cut >= text.length) break;
-    pos = Math.max(cut - CHUNK_OVERLAP_CHARS, pos + 1);
-  }
-  return out;
 }
 
 // ---------- RAG Phase 3A: per-format text extraction ----------

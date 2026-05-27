@@ -160,6 +160,7 @@ const attachBtn         = $("#attach-btn");
 const attachHint        = $("#attach-hint");
 const attachments       = $("#attachments");
 const attachRow         = $("#attach-row");
+const inputArea         = document.querySelector(".input-area");
 const useDocsRow        = $("#use-docs-row");
 const useDocsCheckbox   = $("#use-docs");
 const useWebSearchRow      = $("#use-web-search-row");
@@ -437,7 +438,13 @@ async function extractVideoFrames(file, n, maxDim) {
 
 async function handleFiles(files) {
   const m = currentModel();
-  if (m.type !== "chat") return;
+  // The attach UI is shown for chat, STT, and FLUX-2 image gen (which accepts
+  // reference images). Other model types (TTS, video gen, music gen, non-FLUX-2
+  // image gen) hide the attach UI and don't reach this path. Prior to v0.19.5
+  // this guard was `m.type !== "chat"`, which silently dropped attachments on
+  // STT and FLUX-2 despite the affordance UI being shown.
+  const isFlux2 = m.id.startsWith("@cf/black-forest-labs/flux-2-");
+  if (m.type !== "chat" && m.type !== "stt" && !isFlux2) return;
   // Pegasus 1.2 (Bedrock) is a chat-type model but needs the FULL video file,
   // not frame extraction. The model id starts with "bedrock/twelvelabs.pegasus".
   const isPegasus = m.id.startsWith("bedrock/twelvelabs.pegasus");
@@ -787,6 +794,81 @@ attachBtn.addEventListener("click", () => fileInput.click());
 fileInput.addEventListener("change", async (e) => {
   await handleFiles(Array.from(e.target.files || []));
   fileInput.value = "";
+});
+
+// ---------- Drag-and-drop + paste (v0.19.5) ----------
+//
+// Drag files onto the input area or paste an image from the clipboard
+// (Cmd/Ctrl-V). Both paths funnel into handleFiles(), which already owns
+// validation, size limits, image downscaling, video frame extraction,
+// Pegasus full-video routing, and FLUX-2 reference image caps. So
+// drag-drop and paste inherit all those behaviors without duplicating
+// any of the logic.
+//
+// dragenter/dragleave fire for every child element under the cursor, not
+// just the outer container. We use a counter to keep the visual state
+// stable across child-element traversal (textarea, attach button, etc.).
+
+let dragCounter = 0;
+
+// The drop zone is only active when the current model supports attachments
+// (attach button is shown). This mirrors the click-to-attach affordance:
+// drop targeting for TTS / video gen / music gen would just throw a
+// silent no-op, so we don't show the affordance.
+function dropZoneActive() {
+  return attachRow.style.display !== "none";
+}
+
+inputArea.addEventListener("dragenter", (e) => {
+  if (!dropZoneActive()) return;
+  // Only handle drags that include files. dataTransfer.types includes
+  // "Files" when the dragged data is files (vs. text selection from a page).
+  if (!e.dataTransfer.types.includes("Files")) return;
+  e.preventDefault();
+  dragCounter++;
+  inputArea.classList.add("drop-active");
+});
+
+inputArea.addEventListener("dragover", (e) => {
+  if (!dropZoneActive()) return;
+  if (!e.dataTransfer.types.includes("Files")) return;
+  // preventDefault on dragover is required to tell the browser this
+  // element is a valid drop target.
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "copy";
+});
+
+inputArea.addEventListener("dragleave", () => {
+  if (!dropZoneActive()) return;
+  dragCounter = Math.max(0, dragCounter - 1);
+  if (dragCounter === 0) inputArea.classList.remove("drop-active");
+});
+
+inputArea.addEventListener("drop", async (e) => {
+  if (!dropZoneActive()) return;
+  e.preventDefault();
+  dragCounter = 0;
+  inputArea.classList.remove("drop-active");
+  const files = Array.from(e.dataTransfer.files || []);
+  if (files.length) await handleFiles(files);
+});
+
+// Paste handler on the textarea: clipboard images (most common case:
+// Cmd/Ctrl-Shift-4 screenshots, "Copy image" from a browser) become
+// attachments. Pure-text pastes pass through to the textarea normally.
+userInput.addEventListener("paste", async (e) => {
+  if (!dropZoneActive()) return;
+  const items = Array.from(e.clipboardData?.items || []);
+  const files = [];
+  for (const item of items) {
+    if (item.kind === "file") {
+      const f = item.getAsFile();
+      if (f) files.push(f);
+    }
+  }
+  if (files.length === 0) return;  // pure text paste; fall through to default behavior
+  e.preventDefault();  // suppress default paste so filename text doesn't land in the textarea
+  await handleFiles(files);
 });
 
 modelSelect.addEventListener("change", updateAffordance);

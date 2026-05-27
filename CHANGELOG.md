@@ -1,5 +1,55 @@
 # Changelog
 
+## v0.19.5
+
+Frontend-only release: adds drag-and-drop and clipboard-paste attachment paths, and fixes a latent guard in `handleFiles` that silently dropped attachments for STT and FLUX-2 image gen despite the UI showing the attach affordance.
+
+### Drag-and-drop + paste
+
+Two new ways to attach files:
+
+- **Drag-and-drop**: drag any file onto the input area. While dragging, the input area gets a blue inset border and a "drop to attach" label in the upper-right corner. Drop anywhere in the input area to attach. Works for images (downscaled to 1280px for vision, 512px for FLUX-2 references), audio (becomes auto-transcribed input or STT source), and video (frame-extracted for vision-capable chat, or full file for Pegasus).
+- **Paste**: paste images directly into the textarea (Cmd/Ctrl-V). Most common case is pasting a screenshot from Cmd/Ctrl-Shift-4 on macOS or the equivalent on Linux/Windows. Pure-text pastes pass through to the textarea normally; only paste events that contain a file are intercepted.
+
+Both paths funnel into the existing `handleFiles()` function. All validation, size limits, downscaling, frame extraction, Pegasus full-video routing, and FLUX-2 reference-image caps apply identically to drag-drop and paste as they do to the existing attach button.
+
+The drop zone is gated on `attachRow.style.display !== "none"` so models that don't accept attachments (TTS, video gen, music gen, non-FLUX-2 image gen) don't get a misleading drop-zone affordance.
+
+### Bug fix: STT and FLUX-2 attachments
+
+Discovered during the v0.19.5 work: `handleFiles()` had a top-level guard `if (m.type !== "chat") return;` that bailed out before the function reached its STT (audio attachment for transcription) and FLUX-2 (reference image for image gen) branches. The UI was showing the attach button for both model types (per `updateAffordance`), but clicking it and choosing a file resulted in a silent no-op because the click path went through `handleFiles`, which returned early.
+
+The fix extends the guard to allow chat + STT + FLUX-2:
+
+```js
+const isFlux2 = m.id.startsWith("@cf/black-forest-labs/flux-2-");
+if (m.type !== "chat" && m.type !== "stt" && !isFlux2) return;
+```
+
+This restores the behavior the UI was already advertising. The inner FLUX-2 image-handling branch (already present in the function but unreachable) now actually runs.
+
+### Touch points
+
+- `public/app.js`: 1310 -> 1391 lines (+81). One DOM reference added, one guard fixed, drag-drop block + paste handler added.
+- `public/styles.css`: 1022 -> 1046 lines (+24). `.input-area` gets `position: relative` and a transition; `.input-area.drop-active` rules added for the inset border + "drop to attach" overlay label.
+- `package.json`: version bump 0.19.4 -> 0.19.5.
+
+No worker changes. No D1 migration. No R2 migration. No new dependencies. No new worker secrets. Existing 78 tests still pass (no test coverage of frontend; manual smoke test is the verification path).
+
+### Smoke test
+
+Manual checks after deploy:
+
+1. Pick a vision-capable chat model. Drag an image from your file manager onto the input area. Verify the blue border appears during drag and the image shows in the attachment chip strip below the textarea.
+2. With the same model, take a screenshot (Cmd/Ctrl-Shift-4) and paste into the textarea. Verify the image is captured as an attachment, not pasted as a filename string.
+3. Switch to a TTS model. Try to drag a file onto the input area. Verify no blue border appears and the drop is rejected silently.
+4. Switch to FLUX-2 (image gen). Drag a reference image. Verify the attachment chip appears (this would have silently failed in v0.19.4 and earlier).
+5. Switch to an STT model. Drag an audio file. Verify the attachment chip appears (also previously silently failing).
+
+### What's next
+
+- v0.20.x: projects + knowledge stores. First v0.20.x sprint will be the schema + project CRUD UI; second sprint adds Discord JSON ingestion and per-project knowledge.
+
 ## v0.19.4
 
 Chunking quality pass: replaces the fixed-window chunker with a recursive separator splitter (the LangChain `RecursiveCharacterTextSplitter` shape). Improves retrieval quality on prose-heavy corpora and lays the groundwork for v0.20.x project knowledge stores, where the chunker has to handle worldbuilding fiction and structured reference docs alongside legal documents.

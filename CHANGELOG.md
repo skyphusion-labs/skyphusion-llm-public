@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.19.2
+
+Third stage of the chat provider dispatcher split. Extracts Bedrock chat dispatch (Nova Converse / ConverseStream + Pegasus 1.2 InvokeModel) into `src/providers/bedrock.ts`. Both API paths share AWS SigV4 credential setup, so they live in one module. Also extracts the `InputAttachment` discriminated union into a new `src/types.ts` so providers that consume attachments directly (Pegasus needs the raw video bytes) can typecheck without round-tripping through the worker entry.
+
+This is the most complex extraction of the v0.19.x series:
+- Two coexisting API paths (Converse for Nova chat, InvokeModel for Pegasus video-Q&A)
+- AWS SigV4 via the `aws4fetch` dynamic import, so the bundle isn't loaded for users who only use other providers
+- Pegasus path inspects `InputAttachment[]` directly (finds the `video_full` variant via type predicate), which is why the attachment types had to land in `src/types.ts` first
+- Nova streaming pulls from the v0.18.0 binary eventstream parser (`parseBedrockEventStreamFrames`)
+
+### Touch points
+
+- `src/index.ts`: 3370 -> 3055 lines (-315). Removes attachment type definitions (29 lines), the Bedrock Nova section (192 lines), and the Pegasus section (91 lines). Adds import block for `./types` and `./providers/bedrock` (8 lines).
+- `src/types.ts`: new file, 42 lines. Five exported types: `InputImageAttachment`, `InputAudioAttachment`, `InputVideoFramesAttachment`, `InputVideoFullAttachment`, `InputAttachment` (discriminated union). PersistedAttachment family stays in `src/index.ts` since only the persistence layer there uses it.
+- `src/providers/bedrock.ts`: new file, 259 lines. Exports `callBedrockNova`, `callBedrockNovaStream`, `callBedrockPegasus`. The shared `prepareBedrockNovaRequest` (v0.17.2 dedup) stays module-private.
+- `package.json`: version bump 0.19.1 -> 0.19.2.
+
+No D1 migration. No R2 migration. No new dependencies. No new worker secrets. All 65 tests still pass. `npm run typecheck` still clean (zero errors). No behavior change (AWS request signing, Converse API message transform, eventstream parsing, and Pegasus video size validation are byte-equivalent to the v0.19.1 inline implementation).
+
+### What's next
+
+- v0.19.3: `src/providers/workers-ai.ts` (extracts `aiRun` wrapper, `callWorkersAI`, `callWorkersAIStream`). This is the final stage of the chat provider split; after it lands, `src/index.ts` no longer holds any per-provider dispatch logic for chat models. Non-chat dispatchers (image, TTS, STT, video, music) stay in `src/index.ts` for now.
+
 ## v0.19.1
 
 Second stage of the chat provider dispatcher split. Extracts xAI chat dispatch (`prepareXaiRequest`, `callXai`, `callXaiStream`) into `src/providers/xai.ts` following the v0.19.0 pattern set by `src/providers/anthropic.ts`. Mechanical extraction; no behavior change.

@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.18.3
+
+Internal refactor: close the v0.17.2-era request-builder-dedup thread by factoring `callAnthropic` and `callAnthropicStream` to share a `prepareAnthropicRequest(env, model, systemPrompt, messages, { stream })` builder. Mirrors the existing v0.17.2 `prepareXaiRequest` and `prepareBedrockNovaRequest` pattern. No behavior change.
+
+The Anthropic transform is the most involved of the four BYOK providers (system prompt extracted to a top-level field, OpenAI-style `image_url` content blocks rewritten as Anthropic-style `image` blocks with base64 source). All of that lives in `transformToAnthropic`, called from the new builder so both callers share it. Body fields (`stream: true`) and headers (`accept: text/event-stream`) conditional on `opts.stream`. Auth headers (`x-api-key`, `cf-aig-authorization`) constructed the same way for both callers.
+
+- New `prepareAnthropicRequest(env, model, systemPrompt, messages, { stream })` returns `{ url, headers, body }`. Body is JSON-stringified; the callers just pass it to `fetch` without further processing.
+- `callAnthropic` now calls the builder with `{ stream: false }`, then runs the standard non-streaming fetch -> JSON.parse -> return `{ raw, logId }` flow.
+- `callAnthropicStream` now calls the builder with `{ stream: true }`, then runs the standard streaming fetch -> reader loop -> `extractSSEDataPayloads` -> `interpretAnthropicSSEFrame` flow (the v0.18.1 SSE pipeline).
+- `cf-aig-log-id` extraction stays in `callAnthropic`'s non-streaming caller. AI Gateway doesn't surface that header on proxied SSE responses, so `callAnthropicStream` correctly continues to not look for it (returns no logId from the streaming path; D1 stores `ai_gateway_log_id: null` on streamed turns, matching existing behavior).
+- `cf-aig-authorization` (set when `CF_AIG_TOKEN` is present) and `x-api-key` (set when `ANTHROPIC_API_KEY` is present, stored-keys-first auth) work identically across both callers via the shared builder.
+
+### Touch points
+
+- `src/index.ts`: 2 hunks (+34 / -30, net +4 lines). The builder is ~50 lines including the v0.18.3 explanatory comment; combined caller reductions outweigh it minus the comment.
+
+No D1 migration. No R2 migration. No new dependencies. No new worker secrets. All 65 tests still pass. `npm run typecheck` still clean (zero errors).
+
 ## v0.18.2
 
 Type hygiene fix: tighten `base64ToBytes` return type from `Uint8Array` (TS5.7+ default `Uint8Array<ArrayBufferLike>`) to `Uint8Array<ArrayBuffer>`. The implementation already returns an owned `ArrayBuffer` (`new Uint8Array(bin.length)` always allocates a fresh owned backing buffer), but the loose annotation erased that information at every call site. Concrete consequence: the `new Blob([base64ToBytes(...)], ...)` call in the FLUX.2 reference-image path failed strict typecheck because `Blob` constructors expect `ArrayBuffer`-backed views, not `ArrayBufferLike` (which includes `SharedArrayBuffer`).

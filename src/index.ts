@@ -1299,12 +1299,20 @@ async function persistChat(env: Env, a: PersistArgs): Promise<{ id: number; crea
 // system pulled to a top-level field, image_url blocks rewritten as image
 // blocks with base64 source.
 
-async function callAnthropic(
+// v0.18.3: shared request builder for both callAnthropic (non-streaming) and
+// callAnthropicStream (eventstream). The transform, URL, auth headers, and
+// body shape are identical between the two; only stream:true on the body
+// and accept:text/event-stream on the headers differ, conditional on
+// opts.stream. Mirrors the v0.17.2 prepareXaiRequest / prepareBedrockNovaRequest
+// pattern.
+
+async function prepareAnthropicRequest(
   env: Env,
   model: ModelEntry,
   systemPrompt: string | undefined,
-  messages: Array<unknown>
-): Promise<{ raw: unknown; logId: string | null }> {
+  messages: Array<unknown>,
+  opts: { stream: boolean },
+): Promise<{ url: string; headers: Record<string, string>; body: string }> {
   const { system, messages: aMessages } = transformToAnthropic(messages, systemPrompt);
 
   const baseUrl = await (env.AI as unknown as {
@@ -1315,25 +1323,40 @@ async function callAnthropic(
   // expects just the model name (e.g. "claude-opus-4-6").
   const modelName = model.id.replace(/^anthropic\//, "");
 
-  const body: Record<string, unknown> = {
+  const bodyObj: Record<string, unknown> = {
     model: modelName,
     max_tokens: 4096,
     messages: aMessages,
   };
-  if (system) body.system = system;
+  if (system) bodyObj.system = system;
+  if (opts.stream) bodyObj.stream = true;
 
   const headers: Record<string, string> = {
     "anthropic-version": "2023-06-01",
     "content-type": "application/json",
   };
+  if (opts.stream) headers["accept"] = "text/event-stream";
   if (env.ANTHROPIC_API_KEY) headers["x-api-key"] = env.ANTHROPIC_API_KEY;
   if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
 
-  const resp = await fetch(`${baseUrl}/v1/messages`, {
-    method: "POST",
+  return {
+    url: `${baseUrl}/v1/messages`,
     headers,
-    body: JSON.stringify(body),
-  });
+    body: JSON.stringify(bodyObj),
+  };
+}
+
+async function callAnthropic(
+  env: Env,
+  model: ModelEntry,
+  systemPrompt: string | undefined,
+  messages: Array<unknown>,
+): Promise<{ raw: unknown; logId: string | null }> {
+  const { url, headers, body } = await prepareAnthropicRequest(
+    env, model, systemPrompt, messages, { stream: false },
+  );
+
+  const resp = await fetch(url, { method: "POST", headers, body });
 
   const logId = resp.headers.get("cf-aig-log-id");
 
@@ -1707,34 +1730,14 @@ async function* callAnthropicStream(
   messages: Array<unknown>,
   signal: AbortSignal
 ): AsyncGenerator<ProviderStreamEvent> {
-  const { system, messages: aMessages } = transformToAnthropic(messages, systemPrompt);
+  const { url, headers, body } = await prepareAnthropicRequest(
+    env, model, systemPrompt, messages, { stream: true },
+  );
 
-  const baseUrl = await (env.AI as unknown as {
-    gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
-  }).gateway(env.GATEWAY_ID).getUrl("anthropic");
-
-  const modelName = model.id.replace(/^anthropic\//, "");
-
-  const body: Record<string, unknown> = {
-    model: modelName,
-    max_tokens: 4096,
-    messages: aMessages,
-    stream: true,
-  };
-  if (system) body.system = system;
-
-  const headers: Record<string, string> = {
-    "anthropic-version": "2023-06-01",
-    "content-type": "application/json",
-    "accept": "text/event-stream",
-  };
-  if (env.ANTHROPIC_API_KEY) headers["x-api-key"] = env.ANTHROPIC_API_KEY;
-  if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
-
-  const resp = await fetch(`${baseUrl}/v1/messages`, {
+  const resp = await fetch(url, {
     method: "POST",
     headers,
-    body: JSON.stringify(body),
+    body,
     signal,
   });
 

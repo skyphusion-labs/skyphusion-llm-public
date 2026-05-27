@@ -332,7 +332,7 @@ function parseDataUrl(dataUrl: string): { mime: string; base64: string } | null 
   return { mime: match[1], base64: match[2] };
 }
 
-function base64ToBytes(b64: string): Uint8Array {
+function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);

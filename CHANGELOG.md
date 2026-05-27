@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.18.2
+
+Type hygiene fix: tighten `base64ToBytes` return type from `Uint8Array` (TS5.7+ default `Uint8Array<ArrayBufferLike>`) to `Uint8Array<ArrayBuffer>`. The implementation already returns an owned `ArrayBuffer` (`new Uint8Array(bin.length)` always allocates a fresh owned backing buffer), but the loose annotation erased that information at every call site. Concrete consequence: the `new Blob([base64ToBytes(...)], ...)` call in the FLUX.2 reference-image path failed strict typecheck because `Blob` constructors expect `ArrayBuffer`-backed views, not `ArrayBufferLike` (which includes `SharedArrayBuffer`).
+
+Net effect: `npm run typecheck` is now clean (zero errors) for the first time since the TS5.7 `Uint8Array` generic change shipped. This makes typecheck a useful signal again; previously any new type error would have been masked by the persistent line-884 error in CI output.
+
+### Touch points
+
+- `src/index.ts`: 1 hunk, 1 line changed (function signature only).
+- `package.json`: version bump 0.18.1 -> 0.18.2.
+
+No behavior change. No D1 migration. No R2 migration. No new dependencies. All 65 tests still pass.
+
 ## v0.18.1
 
 Completes the parser test story started in v0.18.0. Extracts SSE parsing for xAI, Workers AI, and Anthropic streaming into pure functions, refactors the three streaming generators to delegate to them, and adds 43 tests across four new test files. All three generators now share one SSE framer; per-provider event-type semantics live in dedicated interpreters.

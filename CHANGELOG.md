@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.18.4
+
+Organizational refactor: move the MODELS catalog (and the `ModelType`, `Provider`, `ModelEntry` types it depends on) from `src/index.ts` into a new `src/models.ts` module. Pure relocation, no behavior change.
+
+The catalog was the single largest contiguous block in `src/index.ts` at ~125 lines, growing every release as new models land. Pulling it into its own file makes catalog edits a localized diff instead of a wide change against the worker entry, makes the file easy to find for contributors, and gives a natural home for catalog-related comments (conventions for adding models, BYOK vs Unified Billing tagging, etc.).
+
+- New `src/models.ts` exports `ModelType`, `Provider`, `ModelEntry`, and `MODELS`. File header documents the catalog conventions explicitly (label prefixes, BYOK markers, streaming flag, byok_alias for Bedrock chat and BYOK video).
+- `src/index.ts` imports all four from `./models` at the top of file alongside the parser imports. Net diff: 2 lines added (the two import statements), 126 lines removed (the catalog block).
+
+### Touch points
+
+- `src/index.ts`: 3904 -> 3777 lines (-127, the catalog block plus one orphaned section header).
+- `src/models.ts`: new file, 153 lines (28 lines of header documentation + 125 lines of catalog content moved verbatim from index.ts).
+- `package.json`: version bump 0.18.3 -> 0.18.4.
+
+No D1 migration. No R2 migration. No new dependencies. No new worker secrets. All 65 tests still pass. `npm run typecheck` still clean (zero errors).
+
 ## v0.18.3
 
 Internal refactor: close the v0.17.2-era request-builder-dedup thread by factoring `callAnthropic` and `callAnthropicStream` to share a `prepareAnthropicRequest(env, model, systemPrompt, messages, { stream })` builder. Mirrors the existing v0.17.2 `prepareXaiRequest` and `prepareBedrockNovaRequest` pattern. No behavior change.

@@ -1,5 +1,62 @@
 # Changelog
 
+## v0.19.3
+
+Final stage of the chat provider dispatcher split. Extracts Workers AI streaming chat dispatch (`callWorkersAIStream`) into `src/providers/workers-ai.ts`, and extracts the env.AI binding wrappers (`aiRun`, `aiLogId`) into `src/ai-binding.ts` since they're used by every Workers AI code path (chat, STT, image gen, TTS, embeddings, the LongRun workflow), not just the chat provider. Also cleans up four stale parser imports that accumulated in `src/index.ts` through v0.19.0-2 extractions.
+
+After v0.19.3, all per-provider chat dispatch logic lives in `src/providers/`, and `src/index.ts` no longer contains any provider-specific code paths for chat models. Non-chat dispatchers (image, TTS, STT, video, music) remain in `src/index.ts`; they entangle with the LongRun workflow and R2/D1 job state and are out of scope for the v0.19.x series.
+
+Note on the Workers AI asymmetry: unlike the other three providers, this module only exports the streaming caller, not a non-streaming caller. Workers AI's non-streaming chat path calls `aiRun(env, model.id, { messages })` directly inline in the dispatch flow with no surrounding helper, so there's no `callWorkersAI` function to extract. Forcing symmetry by introducing a one-line wrapper would add code without adding clarity; the asymmetry honestly reflects the difference in how Workers AI's binding works versus the BYOK providers' direct fetch flow.
+
+### Extraction summary
+
+- `src/ai-binding.ts`: new file, ~30 lines. Exports `aiRun(env, model, params, returnRaw?)` and `aiLogId(env)`. The `RunOpts` and `RunFn` type aliases stay module-private. Used from `src/index.ts` (six call sites across chat, STT, image gen, TTS, embeddings, and the LongRunWorkflow) and from `src/providers/workers-ai.ts`.
+- `src/providers/workers-ai.ts`: new file, ~83 lines. Exports `callWorkersAIStream`. Imports `aiRun` from `../ai-binding`, plus the standard parser modules.
+- Inline type for the one remaining `env.AI.run` bypass-gateway call site in the image gen path (used for stream-incompatible models that need to skip gateway routing). Three lines of inline `type BypassRunFn` declaration rather than re-exporting `RunFn` from `ai-binding.ts` for a single use.
+
+### Cleanup of stale parser imports
+
+Through v0.19.0-2, `src/index.ts` accumulated four parser-related imports (`parseBedrockEventStreamFrames`, `interpretXaiSSEFrame`, `interpretWorkersAISSEFrame`, `interpretAnthropicSSEFrame`) that became unused as each provider was extracted. They're all removed in v0.19.3. `extractSSEDataPayloads` also removed since `callWorkersAIStream` was its last consumer in the worker entry.
+
+### Touch points
+
+- `src/index.ts`: 3055 -> 2971 lines (-84). One block of 5 stale parser imports collapsed to 0; new imports added for `ai-binding` and `workers-ai`; local `aiRun`/`aiLogId`/`RunOpts`/`RunFn` removed (12 lines); `callWorkersAIStream` section removed (~70 lines); inline `BypassRunFn` type added at one call site (3 lines).
+- `src/ai-binding.ts`: new file, 30 lines.
+- `src/providers/workers-ai.ts`: new file, 83 lines.
+- `package.json`: version bump 0.19.2 -> 0.19.3.
+
+No D1 migration. No R2 migration. No new dependencies. No new worker secrets. All 65 tests still pass. `npm run typecheck` still clean (zero errors).
+
+### v0.19.x series summary
+
+The chat provider dispatcher split is complete. `src/index.ts` has shrunk from 4100 lines (v0.17.2 baseline) to 2971 lines (v0.19.3), a 27% reduction. New layout:
+
+```
+src/
+  index.ts           (worker entry, dispatch, persistence, RAG, workflow class)
+  env.ts             (Env interface)
+  types.ts           (InputAttachment family)
+  models.ts          (catalog of 59 models)
+  utils.ts           (parseDataUrl, base64ToBytes, extFromMime)
+  ai-binding.ts      (aiRun, aiLogId)
+  parsers/
+    types.ts                  (ProviderStreamEvent)
+    bedrock-eventstream.ts    (binary frame parser)
+    sse-framer.ts             (shared SSE framer)
+    xai-sse.ts                (OpenAI-compatible delta interpreter)
+    workers-ai-sse.ts         (Workers AI delta interpreter)
+    anthropic-sse.ts          (named-event interpreter)
+  providers/
+    anthropic.ts     (Claude chat: BYOK via AI Gateway)
+    xai.ts           (Grok chat: BYOK via AI Gateway)
+    bedrock.ts       (Nova chat + Pegasus video-Q&A: AWS SigV4)
+    workers-ai.ts    (Workers AI chat: env.AI.run binding)
+tests/
+  ... (65 tests covering parsers; provider modules untested by design)
+```
+
+The architecture supports adding new chat providers by dropping a new file in `src/providers/`; the only worker-entry change needed is an import line and dispatch case.
+
 ## v0.19.2
 
 Third stage of the chat provider dispatcher split. Extracts Bedrock chat dispatch (Nova Converse / ConverseStream + Pegasus 1.2 InvokeModel) into `src/providers/bedrock.ts`. Both API paths share AWS SigV4 credential setup, so they live in one module. Also extracts the `InputAttachment` discriminated union into a new `src/types.ts` so providers that consume attachments directly (Pegasus needs the raw video bytes) can typecheck without round-tripping through the worker entry.

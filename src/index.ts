@@ -19,18 +19,15 @@ import * as XLSX from "xlsx";
 import { WorkflowEntrypoint, WorkflowStep } from "cloudflare:workers";
 import type { WorkflowEvent } from "cloudflare:workers";
 import type { ProviderStreamEvent } from "./parsers/types";
-import { parseBedrockEventStreamFrames } from "./parsers/bedrock-eventstream";
-import { extractSSEDataPayloads } from "./parsers/sse-framer";
-import { interpretXaiSSEFrame } from "./parsers/xai-sse";
-import { interpretWorkersAISSEFrame } from "./parsers/workers-ai-sse";
-import { interpretAnthropicSSEFrame } from "./parsers/anthropic-sse";
 import type { ModelType, Provider, ModelEntry } from "./models";
 import { MODELS } from "./models";
 import type { Env } from "./env";
 import { parseDataUrl, base64ToBytes, extFromMime } from "./utils";
+import { aiRun, aiLogId } from "./ai-binding";
 import { callAnthropic, callAnthropicStream } from "./providers/anthropic";
 import { callXai, callXaiStream } from "./providers/xai";
 import { callBedrockNova, callBedrockNovaStream, callBedrockPegasus } from "./providers/bedrock";
+import { callWorkersAIStream } from "./providers/workers-ai";
 import type {
   InputImageAttachment,
   InputAudioAttachment,
@@ -176,18 +173,6 @@ async function r2PutStream(env: Env, prefix: "in" | "out", mime: string, stream:
 
 async function r2DeleteSafe(env: Env, key: string): Promise<void> {
   try { await env.R2.delete(key); } catch { /* ignore */ }
-}
-
-// Untyped binding wrapper.
-type RunOpts = { gateway: { id: string }; returnRawResponse?: boolean };
-type RunFn = (model: string, params: unknown, opts?: RunOpts) => Promise<unknown>;
-function aiRun(env: Env, model: string, params: unknown, returnRaw = false): Promise<unknown> {
-  const opts: RunOpts = { gateway: { id: env.GATEWAY_ID } };
-  if (returnRaw) opts.returnRawResponse = true;
-  return (env.AI as unknown as { run: RunFn }).run(model, params, opts);
-}
-function aiLogId(env: Env): string | null {
-  return (env.AI as unknown as { aiGatewayLogId?: string }).aiGatewayLogId ?? null;
 }
 
 // ---------- Router ----------
@@ -708,7 +693,8 @@ async function runImage(request: Request, env: Env, model: ModelEntry, body: Cha
       // populates ai_gateway_log_id for observability).
       let result: unknown;
       if (bypassGateway) {
-        result = await (env.AI as unknown as { run: RunFn }).run(model.id, runParams);
+        type BypassRunFn = (model: string, params: unknown) => Promise<unknown>;
+        result = await (env.AI as unknown as { run: BypassRunFn }).run(model.id, runParams);
       } else {
         result = await aiRun(env, model.id, runParams);
         logId = aiLogId(env);
@@ -1363,76 +1349,6 @@ async function runChatStream(request: Request, env: Env, model: ModelEntry, body
       "x-accel-buffering": "no",
     },
   });
-}
-
-// ---------- callWorkersAIStream (v0.13.0 Pass 2) ----------
-//
-// Async generator: drives a Workers AI chat model via env.AI.run with
-// stream:true and yields normalized text + usage events.
-//
-// Workers AI streaming returns a ReadableStream from env.AI.run, already
-// SSE-formatted. Event shape is OpenAI-compatible:
-//   data: {"response":"..."}                       // one per token chunk
-//   data: {"response":"","usage":{...}}            // optional final usage chunk
-//   data: [DONE]                                   // terminal sentinel
-//
-// Reasoning models (gpt-oss-120b, qwq-32b, deepseek-r1-distill-qwen-32b)
-// emit <think>...</think> blocks inside `response`. Pass 2 streams them
-// through as-is; future UX pass can strip or fold them into a toggle.
-//
-// Abort handling: env.AI.run doesn't accept an AbortSignal. We bridge
-// signal -> reader.cancel() so client disconnect propagates cancellation
-// up the binding pipeline and we stop being billed mid-generation.
-
-async function* callWorkersAIStream(
-  env: Env,
-  model: ModelEntry,
-  messages: Array<unknown>,
-  signal: AbortSignal
-): AsyncGenerator<ProviderStreamEvent> {
-  const result = await aiRun(env, model.id, { messages, stream: true });
-
-  if (!(result instanceof ReadableStream)) {
-    throw new Error(`Workers AI did not return a stream (got ${typeof result}). Ensure stream:true is honored by this model.`);
-  }
-
-  const reader = result.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  // Bridge AbortSignal -> reader.cancel(). If the signal is already aborted
-  // by the time we get here, cancel immediately.
-  const onAbort = () => { try { reader.cancel(); } catch { /* fine */ } };
-  if (signal.aborted) {
-    onAbort();
-  } else {
-    signal.addEventListener("abort", onAbort, { once: true });
-  }
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-
-      const { payloads, remainder } = extractSSEDataPayloads(buffer);
-      buffer = remainder;
-
-      for (const payload of payloads) {
-        let data: unknown;
-        try {
-          data = JSON.parse(payload);
-        } catch {
-          continue;
-        }
-        for (const event of interpretWorkersAISSEFrame(data)) yield event;
-      }
-    }
-  } finally {
-    signal.removeEventListener("abort", onAbort);
-    try { reader.releaseLock(); } catch { /* fine */ }
-  }
 }
 
 // ---------- Video generation (Unified Billing via env.AI.run) ----------

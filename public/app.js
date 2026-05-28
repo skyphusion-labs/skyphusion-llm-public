@@ -201,6 +201,13 @@ const state = {
   pollStartedAt: 0,
   pollElapsedTimer: null,
   documentCount: 0,
+  // v0.20.1: projects state.
+  // projects is the list as returned by GET /api/projects (each row has
+  // id, name, slug, description, system_prompt, created_at, updated_at,
+  // document_count). activeProjectId is the currently-selected project (or
+  // null), persisted across reloads in localStorage.
+  projects: [],
+  activeProjectId: null,
 };
 
 // ---------- API helpers ----------
@@ -1104,6 +1111,13 @@ async function run() {
     if (m.type === "chat" && useWebSearchCheckbox.checked) {
       requestBody.use_web_search = true;
     }
+    // v0.20.1: project scoping. Chat models only. When a project is active,
+    // include its id; the worker applies the project's system_prompt as
+    // default (overridden by a per-turn system_prompt) and scopes RAG
+    // retrieval to the project's attached documents.
+    if (m.type === "chat" && state.activeProjectId) {
+      requestBody.project_id = state.activeProjectId;
+    }
 
     const result = await api("/api/chat", {
       method: "POST",
@@ -1389,3 +1403,379 @@ documentsList.addEventListener("click", (e) => {
     }
   }
 });
+
+// ---------- Projects (v0.20.1) ----------
+//
+// Projects group documents (and conversations, in v0.20.2+) under a shared
+// system prompt and retrieval scope. Frontend state:
+//
+//   state.projects        - cached array from GET /api/projects
+//   state.activeProjectId - currently-selected project's id, or null
+//
+// Active project persists across reloads via localStorage. When active:
+//   - The project chip appears next to the model picker
+//   - Chat requests include project_id in the body (handled in run())
+//   - The project row in the sidebar is visually highlighted
+//
+// Project CRUD goes through a single shared modal (project-modal); the
+// modal's title and Delete-button visibility differentiate create vs edit.
+// Document attachment uses a separate picker modal that shows all the user's
+// docs with checkboxes for project membership.
+
+const projectsList         = $("#projects-list");
+const projNewBtn           = $("#proj-new-btn");
+const projStatus           = $("#proj-status");
+const activeProjectChip    = $("#active-project-chip");
+const activeProjectName    = $("#active-project-name");
+const activeProjectClear   = $("#active-project-clear");
+
+const projectModal         = $("#project-modal");
+const projectModalTitle    = $("#project-modal-title");
+const projectModalName     = $("#project-modal-name");
+const projectModalDesc     = $("#project-modal-desc");
+const projectModalPrompt   = $("#project-modal-prompt");
+const projectModalError    = $("#project-modal-error");
+const projectModalSave     = $("#project-modal-save");
+const projectModalCancel   = $("#project-modal-cancel");
+const projectModalDelete   = $("#project-modal-delete");
+
+const projectDocsModal     = $("#project-docs-modal");
+const projectDocsModalList = $("#project-docs-modal-list");
+const projectDocsModalEmpty= $("#project-docs-modal-empty");
+const projectDocsModalClose= $("#project-docs-modal-close");
+
+const ACTIVE_PROJECT_LS_KEY = "skyphusion.activeProjectId";
+
+// Editing state for the project modal. null = create mode; a project row =
+// edit mode (Delete button visible, fields prefilled).
+let editingProjectId = null;
+// Document picker context: which project is being managed.
+let docsPickerProjectId = null;
+
+// ---------- API helpers ----------
+
+async function fetchProjects() {
+  const { projects } = await api("/api/projects");
+  state.projects = projects || [];
+  return state.projects;
+}
+
+async function fetchProject(id) {
+  return await api(`/api/projects/${id}`);
+}
+
+async function createProject(body) {
+  return await api("/api/projects", { method: "POST", body: JSON.stringify(body) });
+}
+
+async function patchProject(id, body) {
+  return await api(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+async function deleteProjectApi(id) {
+  return await api(`/api/projects/${id}`, { method: "DELETE" });
+}
+
+async function attachDocumentToProject(projectId, docId) {
+  return await api(`/api/projects/${projectId}/documents/${docId}`, { method: "POST" });
+}
+
+async function detachDocumentFromProject(projectId, docId) {
+  return await api(`/api/projects/${projectId}/documents/${docId}`, { method: "DELETE" });
+}
+
+// ---------- Active-project persistence ----------
+
+function loadActiveProjectFromStorage() {
+  try {
+    const raw = localStorage.getItem(ACTIVE_PROJECT_LS_KEY);
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isInteger(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveActiveProjectToStorage(id) {
+  try {
+    if (id === null) localStorage.removeItem(ACTIVE_PROJECT_LS_KEY);
+    else localStorage.setItem(ACTIVE_PROJECT_LS_KEY, String(id));
+  } catch {
+    /* private mode etc; non-fatal */
+  }
+}
+
+function setActiveProject(id) {
+  // Validate: id must point to a project we know about. Stale ids (project
+  // deleted in another tab) silently clear.
+  if (id !== null && !state.projects.some((p) => p.id === id)) {
+    id = null;
+  }
+  state.activeProjectId = id;
+  saveActiveProjectToStorage(id);
+  renderActiveProjectChip();
+  renderProjectsList();
+}
+
+// ---------- Renderers ----------
+
+function renderActiveProjectChip() {
+  if (!state.activeProjectId) {
+    activeProjectChip.hidden = true;
+    return;
+  }
+  const p = state.projects.find((x) => x.id === state.activeProjectId);
+  if (!p) {
+    // Stale id; treat as inactive.
+    state.activeProjectId = null;
+    saveActiveProjectToStorage(null);
+    activeProjectChip.hidden = true;
+    return;
+  }
+  activeProjectName.textContent = p.name;
+  activeProjectChip.hidden = false;
+}
+
+function renderProjectsList() {
+  if (state.projects.length === 0) {
+    projectsList.innerHTML = `<li class="proj-empty">no projects yet. click "+ new" to create one.</li>`;
+    return;
+  }
+  projectsList.innerHTML = state.projects.map((p) => {
+    const active = p.id === state.activeProjectId ? " active" : "";
+    const docCount = p.document_count != null ? p.document_count : 0;
+    const docLabel = docCount === 1 ? "1 doc" : `${docCount} docs`;
+    return `
+      <li class="${active.trim()}" data-proj-id="${p.id}" title="${escapeHtml(p.description || p.name)}">
+        <span class="proj-name">${escapeHtml(p.name)}</span>
+        <span class="proj-meta">${docLabel}</span>
+        <span class="proj-actions">
+          <button class="proj-action" data-proj-action="docs" data-proj-id="${p.id}" type="button" title="manage documents">docs</button>
+          <button class="proj-action" data-proj-action="edit" data-proj-id="${p.id}" type="button" title="edit project">edit</button>
+        </span>
+      </li>`;
+  }).join("");
+}
+
+// ---------- Modal helpers ----------
+
+function openProjectModal(project) {
+  // project: null = create mode; a project row = edit mode.
+  editingProjectId = project ? project.id : null;
+  projectModalTitle.textContent = project ? `edit project: ${project.name}` : "new project";
+  projectModalName.value   = project ? project.name : "";
+  projectModalDesc.value   = project ? (project.description || "") : "";
+  projectModalPrompt.value = project ? (project.system_prompt || "") : "";
+  projectModalDelete.hidden = !project;
+  projectModalError.hidden = true;
+  projectModalError.textContent = "";
+  projectModal.hidden = false;
+  projectModalName.focus();
+}
+
+function closeProjectModal() {
+  projectModal.hidden = true;
+  editingProjectId = null;
+}
+
+function showProjectModalError(msg) {
+  projectModalError.textContent = msg;
+  projectModalError.hidden = false;
+}
+
+async function saveProjectModal() {
+  const name = projectModalName.value.trim();
+  if (!name) {
+    showProjectModalError("name is required");
+    return;
+  }
+  if (name.length > 200) {
+    showProjectModalError("name too long (max 200 chars)");
+    return;
+  }
+  const description = projectModalDesc.value.trim();
+  const system_prompt = projectModalPrompt.value.trim();
+
+  projectModalSave.disabled = true;
+  try {
+    if (editingProjectId) {
+      await patchProject(editingProjectId, { name, description, system_prompt });
+    } else {
+      const result = await createProject({ name, description, system_prompt });
+      // Auto-activate the newly-created project so the user sees the chip and
+      // can start using it immediately.
+      if (result.project) setActiveProject(result.project.id);
+    }
+    await fetchProjects();
+    renderProjectsList();
+    renderActiveProjectChip();
+    closeProjectModal();
+  } catch (err) {
+    showProjectModalError(err.message || "save failed");
+  } finally {
+    projectModalSave.disabled = false;
+  }
+}
+
+async function deleteProjectFromModal() {
+  if (!editingProjectId) return;
+  const p = state.projects.find((x) => x.id === editingProjectId);
+  if (!p) return;
+  if (!confirm(`Delete project "${p.name}"? Its documents will stay; only the project and its memberships are removed.`)) {
+    return;
+  }
+  projectModalDelete.disabled = true;
+  try {
+    await deleteProjectApi(editingProjectId);
+    if (state.activeProjectId === editingProjectId) {
+      setActiveProject(null);
+    }
+    await fetchProjects();
+    renderProjectsList();
+    renderActiveProjectChip();
+    closeProjectModal();
+  } catch (err) {
+    showProjectModalError(err.message || "delete failed");
+  } finally {
+    projectModalDelete.disabled = false;
+  }
+}
+
+// ---------- Document picker modal ----------
+
+async function openDocsPicker(projectId) {
+  docsPickerProjectId = projectId;
+  // Load the project's currently-attached docs alongside the full user doc list.
+  const [{ documents: allDocs }, { documents: projDocs }] = await Promise.all([
+    api("/api/documents"),
+    api(`/api/documents?project_id=${projectId}`),
+  ]);
+  const attachedIds = new Set((projDocs || []).map((d) => d.id));
+
+  if (!allDocs || allDocs.length === 0) {
+    projectDocsModalList.innerHTML = "";
+    projectDocsModalEmpty.hidden = false;
+  } else {
+    projectDocsModalEmpty.hidden = true;
+    projectDocsModalList.innerHTML = allDocs.map((d) => {
+      const checked = attachedIds.has(d.id) ? "checked" : "";
+      return `
+        <li data-doc-id="${d.id}">
+          <input type="checkbox" data-doc-toggle="${d.id}" ${checked} />
+          <span class="pd-name">${escapeHtml(d.filename)}</span>
+          <span class="pd-meta">${d.chunk_count} chunks</span>
+        </li>`;
+    }).join("");
+  }
+  projectDocsModal.hidden = false;
+}
+
+function closeDocsPicker() {
+  projectDocsModal.hidden = true;
+  docsPickerProjectId = null;
+}
+
+async function handleDocsPickerToggle(docId, checked) {
+  if (!docsPickerProjectId) return;
+  try {
+    if (checked) {
+      await attachDocumentToProject(docsPickerProjectId, docId);
+    } else {
+      await detachDocumentFromProject(docsPickerProjectId, docId);
+    }
+    // Refresh the project list so the doc count updates without closing the modal.
+    await fetchProjects();
+    renderProjectsList();
+  } catch (err) {
+    // Surface the error and revert the checkbox to its previous state.
+    alert(`Failed to ${checked ? "attach" : "detach"} document: ${err.message}`);
+    const cb = projectDocsModalList.querySelector(`[data-doc-toggle="${docId}"]`);
+    if (cb) cb.checked = !checked;
+  }
+}
+
+// ---------- Event wiring ----------
+
+projNewBtn.addEventListener("click", () => openProjectModal(null));
+
+projectsList.addEventListener("click", (e) => {
+  const actionBtn = e.target.closest("[data-proj-action]");
+  if (actionBtn) {
+    e.stopPropagation();
+    const id = Number(actionBtn.dataset.projId);
+    const action = actionBtn.dataset.projAction;
+    if (action === "edit") {
+      const p = state.projects.find((x) => x.id === id);
+      if (p) openProjectModal(p);
+    } else if (action === "docs") {
+      openDocsPicker(id);
+    }
+    return;
+  }
+  const li = e.target.closest("li[data-proj-id]");
+  if (li) {
+    const id = Number(li.dataset.projId);
+    // Toggle: clicking the active project deactivates it; otherwise activate.
+    setActiveProject(state.activeProjectId === id ? null : id);
+  }
+});
+
+activeProjectClear.addEventListener("click", () => setActiveProject(null));
+
+projectModalSave.addEventListener("click", saveProjectModal);
+projectModalCancel.addEventListener("click", closeProjectModal);
+projectModalDelete.addEventListener("click", deleteProjectFromModal);
+
+projectDocsModalClose.addEventListener("click", closeDocsPicker);
+
+projectDocsModalList.addEventListener("change", (e) => {
+  const cb = e.target.closest("[data-doc-toggle]");
+  if (cb) handleDocsPickerToggle(Number(cb.dataset.docToggle), cb.checked);
+});
+
+// Click-outside-modal close (handled via modal-backdrop element).
+document.addEventListener("click", (e) => {
+  const closer = e.target.closest("[data-modal-close]");
+  if (!closer) return;
+  const modalId = closer.dataset.modalClose;
+  if (modalId === "project-modal") closeProjectModal();
+  else if (modalId === "project-docs-modal") closeDocsPicker();
+});
+
+// Escape key closes any open modal.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (!projectModal.hidden) closeProjectModal();
+  else if (!projectDocsModal.hidden) closeDocsPicker();
+});
+
+// Submit project modal on Cmd/Ctrl+Enter inside any of its text inputs.
+[projectModalName, projectModalDesc, projectModalPrompt].forEach((el) => {
+  el.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      saveProjectModal();
+    }
+  });
+});
+
+// Initial load: fetch projects, restore active selection from localStorage.
+// Wrapped in an IIFE so it doesn't block the existing init flow if it errors.
+(async () => {
+  try {
+    await fetchProjects();
+    const savedId = loadActiveProjectFromStorage();
+    if (savedId && state.projects.some((p) => p.id === savedId)) {
+      state.activeProjectId = savedId;
+    } else if (savedId) {
+      // Saved id doesn't match any current project; clear stale storage.
+      saveActiveProjectToStorage(null);
+    }
+    renderProjectsList();
+    renderActiveProjectChip();
+  } catch (err) {
+    projStatus.textContent = `Failed to load projects: ${err.message}`;
+    projStatus.classList.add("error");
+  }
+})();

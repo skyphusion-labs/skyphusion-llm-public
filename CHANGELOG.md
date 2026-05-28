@@ -1,5 +1,88 @@
 # Changelog
 
+## v0.20.1
+
+Second half of projects + knowledge stores: frontend UI. The backend from v0.20.0 was verified end-to-end via curl before this work started (5/5 chunks correctly scoped to a single attached document on prod). v0.20.1 makes the feature usable through the browser.
+
+Also fixes one bug found during v0.20.0 testing: `handleDocumentDelete` did not cascade to `project_documents`, so deleting a document that was attached to a project would leave an orphan membership row pointing at a non-existent document.
+
+### UI surface
+
+**Sidebar projects section** (between history and documents):
+- List of all projects with name + document count.
+- Active project is visually highlighted (left-edge accent bar).
+- Hovering a row reveals `docs` and `edit` action buttons.
+- `+ new` button at the section header opens the project modal in create mode.
+- Empty state ("no projects yet...") when the user has no projects.
+
+**Active project chip** (next to the model picker in the composer):
+- Visible only when a project is active.
+- Shows `project: <name>` with an `x` to clear.
+- Chat requests automatically include `project_id` while active (chat-type models only; the field is silently dropped server-side for non-chat).
+
+**Project modal** (create + edit, single component):
+- Fields: name (required, max 200), description, system prompt.
+- Cmd/Ctrl+Enter from any field submits.
+- Edit mode adds a Delete button (deletes the project; documents stay).
+- Modal closes on Escape, backdrop click, Cancel, or successful save.
+
+**Document picker modal** (manage which docs belong to a project):
+- Opens via the `docs` action button on a project row.
+- Shows ALL the user's documents as checkboxes; ticking attaches, unticking detaches.
+- Each toggle is sent immediately (no batched save). Project doc counts in the sidebar update live as the picker is used.
+- Empty state ("no documents uploaded yet...") when the user has no documents.
+
+### Persistence
+
+The active project id is stored in `localStorage` under `skyphusion.activeProjectId`. On page load:
+- If the saved id matches an existing project, that project becomes active automatically.
+- If the saved id is stale (project deleted in another tab, etc.), the key is silently cleared.
+- If `localStorage` is unavailable (private mode, denied permissions), the feature degrades to in-memory-only without errors.
+
+### Chat integration
+
+The `run()` function in `app.js` was extended to include `project_id` in the chat request body when a project is active and the current model is `type: "chat"`. Other model types (image gen, TTS, video, music, STT) drop the field server-side regardless; the frontend doesn't need to gate on type.
+
+### Backend bug fix
+
+`handleDocumentDelete` now includes a `DELETE FROM project_documents WHERE document_id = ?` in its cascade batch. Prior to this, deleting a doc that was attached to one or more projects left orphan rows in the join table. Those rows were harmless to retrieval (the chunks JOIN to documents would drop them when the doc was gone) but cluttered the DB and could show up in raw queries. The cascade is now consistent with project deletion's handling of memberships.
+
+### Touch points
+
+- `public/app.js`: 1391 -> 1781 lines (+390). New section for projects state, API helpers, renderers, modal handlers, document picker, localStorage persistence, and event wiring. One-line addition in `run()` for project_id.
+- `public/index.html`: 81 -> 116 lines (+35). Projects section in sidebar, active-project chip in composer, two modal blocks before `</body>`.
+- `public/styles.css`: 1046 -> 1387 lines (+341). Project list styling, active-project chip, modal scaffolding, document picker.
+- `src/index.ts`: 3391 -> 3392 lines (+1 net; +3 lines for the cascade, +1 comment line, -2 lines collapsed). `handleDocumentDelete` cascade fix.
+- `package.json`: version bump 0.20.0 -> 0.20.1.
+
+No new dependencies. No new D1 migrations. No new R2 prefixes. No new secrets. Worker tests: 78/78 still pass.
+
+### Smoke test (manual, browser)
+
+After deploying v0.20.1:
+
+1. Open the app in a browser. Empty Projects section appears in the sidebar with "no projects yet..." message.
+2. Click `+ new`. Modal opens. Fill name "MUDD", system prompt "You are a creative writing collaborator. Write scenes in second person." Save.
+3. Project appears in the list, becomes active, the chip appears next to the model picker.
+4. Upload a document via the existing Documents section.
+5. Click `docs` on the MUDD project row. Picker opens. Tick the doc. Watch the doc count in the sidebar go from "0 docs" to "1 doc".
+6. Click `done` to close picker.
+7. Pick a chat model, type a prompt that matches the doc content, submit. Verify:
+   - The response reflects the project system prompt (second-person scene description).
+   - The retrieved chunks (visible in the transcript if present) come only from the attached doc.
+8. Click the `x` on the project chip to clear. Chip disappears.
+9. Click MUDD again in the sidebar to reactivate. Chip reappears.
+10. Reload the page. MUDD should still be active (localStorage worked).
+11. Click `edit` on MUDD. Rename to "MUDD: Worldbuilding". Save. Sidebar updates.
+12. Click `edit` again. Click `delete`. Confirm. Project disappears; doc stays in Documents section.
+13. (Cascade fix verification) Upload another doc. Attach to a new project. Then delete the doc. Verify the project's `docs` count drops to 0 (the orphan row would have kept it at 1 before this fix).
+
+### What's next: v0.20.2
+
+- Discord JSON ingestion (Apify shape) with conversation-aware chunking.
+- Conversation `project_id` association (chats inherit the active project when started); "move chat to project" affordance in the conversation list.
+- Save-output-to-knowledge: image gen / FLUX output can be saved into a project's doc set (metadata only for v0.20.2; thumbnail rendering deferred).
+
 ## v0.20.0
 
 First half of the projects + knowledge stores feature: schema, worker API, and RAG project-scoping. **Backend only; no UI yet.** v0.20.1 adds the frontend. v0.20.0 is testable end-to-end with curl; running the migration against a production DB is safe (additive schema only).

@@ -2782,9 +2782,12 @@ async function handleDocumentDelete(request: Request, env: Env, id: number): Pro
   }
 
   // Cascade delete in D1 (no real FK enforcement, so explicit) and R2.
+  // v0.20.1: also clean up project_documents memberships so deleting a doc
+  // that's attached to projects doesn't leave orphan membership rows.
   await env.DB.batch([
-    env.DB.prepare(`DELETE FROM chunks    WHERE document_id = ? AND user_email = ?`).bind(id, userEmail),
-    env.DB.prepare(`DELETE FROM documents WHERE id          = ? AND user_email = ?`).bind(id, userEmail),
+    env.DB.prepare(`DELETE FROM chunks            WHERE document_id = ? AND user_email = ?`).bind(id, userEmail),
+    env.DB.prepare(`DELETE FROM project_documents WHERE document_id = ?`).bind(id),
+    env.DB.prepare(`DELETE FROM documents         WHERE id          = ? AND user_email = ?`).bind(id, userEmail),
   ]);
   await r2DeleteSafe(env, doc.r2_key);
 

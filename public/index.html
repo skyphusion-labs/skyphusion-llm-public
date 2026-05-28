@@ -23,6 +23,14 @@
       </header>
       <div id="user-badge"></div>
       <ul id="history-list" class="history-list"></ul>
+      <section class="projects-section">
+        <header class="sidebar-header">
+          <h2>projects</h2>
+          <button id="proj-new-btn" type="button">+ new</button>
+        </header>
+        <ul id="projects-list" class="projects-list"></ul>
+        <div id="proj-status" class="doc-status"></div>
+      </section>
       <section class="documents-section">
         <header class="sidebar-header">
           <h2>documents</h2>
@@ -39,6 +47,11 @@
           model
           <div id="model" class="model-picker"></div>
         </label>
+        <div id="active-project-chip" class="active-project-chip" hidden>
+          <span class="apc-label">project:</span>
+          <span id="active-project-name" class="apc-name"></span>
+          <button id="active-project-clear" type="button" class="apc-clear" title="clear active project">&#x2715;</button>
+        </div>
         <label>
           <span id="system-prompt-label">system prompt</span>
           <textarea id="system-prompt" rows="3" placeholder="optional"></textarea>
@@ -76,6 +89,54 @@
       </div>
     </main>
   </div>
+  <div id="project-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-modal-close="project-modal"></div>
+    <div class="modal-panel" role="dialog" aria-labelledby="project-modal-title" aria-modal="true">
+      <header class="modal-header">
+        <h2 id="project-modal-title">new project</h2>
+        <button class="modal-close" data-modal-close="project-modal" type="button" title="close">&#x2715;</button>
+      </header>
+      <div class="modal-body">
+        <label class="modal-field">
+          <span>name</span>
+          <input id="project-modal-name" type="text" maxlength="200" placeholder="MUDD">
+        </label>
+        <label class="modal-field">
+          <span>description (optional)</span>
+          <input id="project-modal-desc" type="text" maxlength="500" placeholder="short description shown in the project list">
+        </label>
+        <label class="modal-field">
+          <span>system prompt (optional)</span>
+          <textarea id="project-modal-prompt" rows="6" placeholder="default system prompt for chats in this project. per-turn system prompts override it."></textarea>
+        </label>
+        <div id="project-modal-error" class="modal-error" hidden></div>
+      </div>
+      <footer class="modal-actions">
+        <button id="project-modal-delete" type="button" class="modal-danger" hidden>delete</button>
+        <button id="project-modal-cancel" type="button">cancel</button>
+        <button id="project-modal-save" type="button" class="modal-primary">save</button>
+      </footer>
+    </div>
+  </div>
+
+  <div id="project-docs-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-modal-close="project-docs-modal"></div>
+    <div class="modal-panel" role="dialog" aria-labelledby="project-docs-modal-title" aria-modal="true">
+      <header class="modal-header">
+        <h2 id="project-docs-modal-title">manage documents</h2>
+        <button class="modal-close" data-modal-close="project-docs-modal" type="button" title="close">&#x2715;</button>
+      </header>
+      <div class="modal-body">
+        <p class="modal-hint">check the documents you want in this project. retrieval and per-project chats will be scoped to these documents.</p>
+        <ul id="project-docs-modal-list" class="project-docs-modal-list"></ul>
+        <div id="project-docs-modal-empty" class="modal-empty" hidden>no documents uploaded yet. upload one in the documents section first.</div>
+      </div>
+      <footer class="modal-actions">
+        <button id="project-docs-modal-close" type="button">done</button>
+      </footer>
+    </div>
+  </div>
+
   <script src="/app.js"></script>
 </body>
 </html>

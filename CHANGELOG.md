@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.20.1.1
+
+Hotfix: modals were always-visible after v0.20.1 deploy, including immediately on page load with no way to dismiss them. Bug found by Conrad right after deploying v0.20.1.
+
+### The bug
+
+In v0.20.1's CSS, the `.modal { display: flex }` rule overrode the user-agent stylesheet's `[hidden] { display: none }`, which meant modals rendered always regardless of whether the JS set `el.hidden = true`. The JS hide/show logic was correct (every `openX()` and `closeX()` function set `.hidden` appropriately), but the CSS specificity made the JS state irrelevant to the rendered DOM.
+
+Same bug on `.active-project-chip` (`display: inline-flex`).
+
+### The fix
+
+Two CSS rules added, three lines total:
+
+```css
+.modal[hidden] { display: none; }
+.active-project-chip[hidden] { display: none; }
+```
+
+The `[hidden]` attribute selector beats the unqualified class selector, so the hidden contract is restored. Every existing JS call to `el.hidden = true` immediately works again.
+
+### Touch points
+
+- `public/styles.css`: 1387 -> 1398 lines (+11; two attribute-selector rules with explanatory comments).
+- `package.json`: version bump 0.20.1 -> 0.20.1.1.
+
+No JS changes, no HTML changes, no worker changes. No new tests. The fix is pure CSS.
+
+### Lesson
+
+When using the `hidden` HTML attribute as the toggle for an element, any CSS rule that sets `display: <anything other than initial/inherit>` on that element MUST be paired with `el[hidden] { display: none }`. Better default for future modals/chips: lead with the attribute-respect rule, then the layout rule, in that order.
+
 ## v0.20.1
 
 Second half of projects + knowledge stores: frontend UI. The backend from v0.20.0 was verified end-to-end via curl before this work started (5/5 chunks correctly scoped to a single attached document on prod). v0.20.1 makes the feature usable through the browser.

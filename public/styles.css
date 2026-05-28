@@ -1148,6 +1148,11 @@ textarea:focus {
 
 /* ---------- Active-project chip (v0.20.1) ---------- */
 
+/* v0.20.1.1: same `[hidden]` override fix as `.modal[hidden]` below. The
+ * `display: inline-flex` rule otherwise renders the chip always-on, ignoring
+ * the JS-driven `activeProjectChip.hidden = true` flag. */
+.active-project-chip[hidden] { display: none; }
+
 .active-project-chip {
   display: inline-flex;
   align-items: center;
@@ -1185,6 +1190,12 @@ textarea:focus {
 }
 
 /* ---------- Modal (v0.20.1) ---------- */
+
+/* v0.20.1.1: `.modal { display: flex }` below overrides the user-agent's
+ * `[hidden] { display: none }` rule, which meant modals were rendered always
+ * regardless of `el.hidden = true` in the JS. This attribute selector restores
+ * the hidden contract; same pattern repeated for `.active-project-chip`. */
+.modal[hidden] { display: none; }
 
 .modal {
   position: fixed;

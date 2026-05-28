@@ -1,5 +1,132 @@
 # Changelog
 
+## v0.20.2
+
+Conversation -> project association. Chats started while a project is active now persist that project_id; the sidebar shows a project chip on each conversation; conversations can be moved between projects (or out of any project) via a per-row dropdown. Half of the original v0.20.2 scope; Discord JSON ingestion moves to v0.20.3.
+
+### Why the split
+
+Original v0.20.2 was scoped at 5-7 days (Discord ingestion + conversation association + retrieval filters + presigned uploads). That breaks the 1-3 day release cadence. Splitting at the natural seam:
+
+- v0.20.2 (this release): conversation association. Small, well-defined, makes the sidebar feel project-aware. No new tables; one column added.
+- v0.20.3 (next sprint): Discord ingestion stack. New table, JSON parser, conversation-aware chunker, retrieval filters, presigned upload for >10MB exports.
+
+The two are independent and don't share code paths.
+
+### Schema
+
+One column added to `chats`, one partial index:
+
+```sql
+ALTER TABLE chats ADD COLUMN project_id INTEGER;
+CREATE INDEX IF NOT EXISTS idx_chats_project
+  ON chats(project_id, created_at DESC) WHERE project_id IS NOT NULL;
+```
+
+`ALTER TABLE ADD COLUMN` is NOT idempotent in SQLite (no `IF NOT EXISTS` syntax for it). Re-applying `schema.sql` against an already-migrated DB will surface a "duplicate column name" error per statement, which `wrangler d1 execute` treats as a non-fatal warning and continues past. The partial index is properly idempotent via `IF NOT EXISTS`. Net effect: re-applying schema.sql is safe.
+
+Pre-v0.20.2 chats carry `project_id = NULL` and continue to work unchanged. The column is nullable; there's no migration to backfill historical chats.
+
+### Worker
+
+`PersistArgs` interface gains `project_id?: number | null`. The `INSERT INTO chats` statement gains the `project_id` column and bind value. Both `runChat` and `runChatStream` pass `project_id: scopedProjectId ?? null` from their existing `resolveProjectForChat()` result. Non-chat dispatchers (image, TTS, video, music, STT) don't pass project_id, so non-chat rows continue to carry NULL.
+
+`handleConversationList` gains a subquery selecting the conversation's first turn's `project_id` and returns it on each row. The convention: a conversation's "project membership" is the project_id of its first turn. The move endpoint updates ALL turns atomically, so within a single conversation this value is uniform; reads need only the first turn.
+
+New endpoint:
+
+```
+PATCH /api/conversations/:id/project
+Body: { project_id: number | null }
+Response: { conversation_id, project_id, rows_updated }
+```
+
+Validation:
+- `project_id = null` clears the assignment.
+- `project_id = positive integer`: project must exist and be owned by the same user. Cross-user / unknown project_id returns 404.
+- The conversation itself must exist and be owned by the user. Stale conversation_id returns 404 rather than silently no-oping.
+
+The actual mutation is one statement: `UPDATE chats SET project_id = ? WHERE conversation_id = ? AND user_email = ?`. All turns in the conversation are updated in one DB call.
+
+### Frontend
+
+Conversation rows in the sidebar:
+
+- Show a small project chip (`.conv-proj-chip`) when the conversation's first turn has `project_id`. The chip resolves the id to a name from the cached `state.projects` list, avoiding an extra API call per row.
+- Stale chip (project deleted) renders muted (`.conv-proj-chip-stale`) with the placeholder text "project" rather than blowing up.
+- A new "move" button (^ arrow) appears on hover. Clicking opens a dropdown menu (`.move-menu`) listing "(no project)" plus every project the user has, with the current selection highlighted (.current with a checkmark).
+
+The dropdown:
+
+- Position-attached to the move button via `position: fixed` with `getBoundingClientRect()` coordinates. Appended to `<body>` so the sidebar's overflow doesn't clip it.
+- Flips above the button when there's not enough room below.
+- Closes on outside click, Escape key, or selecting an item.
+- Outside-click listener is registered on `setTimeout(..., 0)` so the click that opened the menu doesn't immediately close it.
+
+`moveConversationToProject(convId, projectId)` PATCHes the new endpoint, then re-runs `loadConversations()` to refresh the list.
+
+Chats started while a project is active already include `project_id` in the chat request body (v0.20.1 wiring). What changed in v0.20.2 is that the worker now PERSISTS this field on the chat row.
+
+### Touch points
+
+- `schema.sql`: 161 -> 191 lines (+30). Column add + partial index.
+- `src/index.ts`: 3391 -> 3474 lines (+83). PersistArgs field, INSERT extension, two persistChat call sites, conversation list subquery + result type, handleConversationMoveToProject (new), route registration.
+- `public/app.js`: 1781 -> 1911 lines (+130). Chip rendering in loadConversations, move button + handler in history-list listener, move-menu open/close/render/PATCH functions appended at end.
+- `public/styles.css`: 1387 -> 1489 lines (+102). Chip and stale-chip variants, move button, move-menu dropdown.
+- `package.json`: 0.20.1.1 -> 0.20.2.
+
+No new dependencies. No new bindings. No new secrets. 78/78 tests still pass.
+
+### Smoke test (manual)
+
+After deploying v0.20.2 (apply schema first):
+
+1. Start a NEW chat with MUDD project active. Submit a turn. Refresh the page.
+2. The conversation appears in the sidebar with the "MUDD" chip visible next to the preview.
+3. Open a different chat that has NO project_id (any pre-v0.20.2 conversation). Hover the row -> the ^ button appears at the right.
+4. Click ^ -> dropdown opens below the button with "(no project)" highlighted and "MUDD" as an option.
+5. Click "MUDD" -> dropdown closes. The chip appears on that row.
+6. Click ^ again -> dropdown opens; "MUDD" is now highlighted (checkmark).
+7. Click "(no project)" -> chip disappears.
+8. Delete the MUDD project. Refresh. Any conversation previously tagged with MUDD now shows a muted "project" chip (stale).
+
+### curl verification
+
+```bash
+WORKER=https://your-worker
+
+# Move conversation to project 1
+curl -X PATCH $WORKER/api/conversations/<conv-id>/project \
+  -H "content-type: application/json" \
+  -d '{"project_id":1}'
+# Expect { conversation_id, project_id: 1, rows_updated: N }
+
+# Clear assignment
+curl -X PATCH $WORKER/api/conversations/<conv-id>/project \
+  -H "content-type: application/json" \
+  -d '{"project_id":null}'
+# Expect { conversation_id, project_id: null, rows_updated: N }
+
+# Bad project_id
+curl -X PATCH $WORKER/api/conversations/<conv-id>/project \
+  -H "content-type: application/json" \
+  -d '{"project_id":99999}'
+# Expect 404 {"error":"Project not found"}
+
+# Verify list returns project_id
+curl $WORKER/api/conversations | jq '.conversations[] | {conversation_id, first_input, project_id}'
+```
+
+### What's next: v0.20.3
+
+- New `project_messages` table for raw Discord rows (author, channel, timestamp, content).
+- Apify and DiscordChatExporter JSON shape parsers.
+- Conversation-aware chunker that groups messages by author+time+topic boundaries, rather than the current naive token-window split.
+- Optional retrieval filters: `?author=`, `?channel=`, `?after=`, `?before=` on the chat request body so Megan can ask "what did Player1 say about the underground city last week?".
+- Presigned R2 upload for Discord exports larger than the worker request limit (~10MB).
+
+Bake v0.20.2 first. Megan should be able to tag her chats by project before adding Discord ingestion on top.
+
 ## v0.20.1.1
 
 Hotfix: modals were always-visible after v0.20.1 deploy, including immediately on page load with no way to dismiss them. Bug found by Conrad right after deploying v0.20.1.

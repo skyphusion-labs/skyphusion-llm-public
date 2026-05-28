@@ -251,6 +251,12 @@ export default {
       if (request.method === "GET")    return handleConversationGet(request, env, c[1]);
       if (request.method === "DELETE") return handleConversationDelete(request, env, c[1]);
     }
+    // v0.20.2: PATCH /api/conversations/:id/project to move a conversation
+    // to/from a project (body: {project_id: number | null}).
+    const cp = url.pathname.match(/^\/api\/conversations\/([A-Za-z0-9_:-]+)\/project$/);
+    if (cp && request.method === "PATCH") {
+      return handleConversationMoveToProject(request, env, cp[1]);
+    }
 
     const h = url.pathname.match(/^\/api\/history\/(\d+)$/);
     if (h) {
@@ -597,6 +603,7 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
     retrieved_context: allRetrieved.length ? allRetrieved : null,
     conversation_id: conversationId,
     turn_index: turnIndex,
+    project_id: scopedProjectId ?? null,
   });
 
   return json({
@@ -1039,6 +1046,7 @@ interface PersistArgs {
   retrieved_context?: RetrievedItem[] | null;
   conversation_id?: string | null;
   turn_index?: number | null;
+  project_id?: number | null;  // v0.20.2: project this chat turn was sent within
 }
 
 async function persistChat(env: Env, a: PersistArgs): Promise<{ id: number; created_at: string; conversation_id: string }> {
@@ -1054,8 +1062,8 @@ async function persistChat(env: Env, a: PersistArgs): Promise<{ id: number; crea
         output_artifact, attachments,
         tokens_in, tokens_out, latency_ms, ai_gateway_log_id,
         status, job_id, job_provider, job_error, job_started_at,
-        retrieved_context, conversation_id, turn_index)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        retrieved_context, conversation_id, turn_index, project_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      RETURNING id, created_at`
   )
     .bind(
@@ -1070,7 +1078,8 @@ async function persistChat(env: Env, a: PersistArgs): Promise<{ id: number; crea
       a.job_started_at ?? null,
       a.retrieved_context && a.retrieved_context.length ? JSON.stringify(a.retrieved_context) : null,
       convId,
-      turnIdx
+      turnIdx,
+      a.project_id ?? null
     )
     .first<{ id: number; created_at: string }>();
 
@@ -1354,6 +1363,7 @@ async function runChatStream(request: Request, env: Env, model: ModelEntry, body
         retrieved_context: allRetrieved.length ? allRetrieved : null,
         conversation_id: conversationId,
         turn_index: turnIndex,
+        project_id: scopedProjectId ?? null,
       });
 
       await emit({
@@ -1887,6 +1897,11 @@ async function handleConversationList(request: Request, env: Env): Promise<Respo
   //   - the model used in the latest turn
   //   - whether any turn has a non-null output_artifact (for the icon)
   //   - the model_type of the first turn (chat/image/tts/video/music/stt)
+  //   - v0.20.2: project_id from the conversation's first turn (the sidebar
+  //     shows a project chip when this is set). project_id is a per-row
+  //     column but conversations are expected to have a uniform value
+  //     across turns (handleConversationMoveToProject updates all turns
+  //     atomically). Subqueries match the existing pattern for first_input.
   const rows = await env.DB.prepare(
     `SELECT
         c.conversation_id,
@@ -1902,6 +1917,9 @@ async function handleConversationList(request: Request, env: Env): Promise<Respo
         (SELECT model_type FROM chats c2
           WHERE c2.conversation_id = c.conversation_id AND c2.user_email = c.user_email
           ORDER BY c2.turn_index ASC LIMIT 1) AS first_model_type,
+        (SELECT project_id FROM chats c2
+          WHERE c2.conversation_id = c.conversation_id AND c2.user_email = c.user_email
+          ORDER BY c2.turn_index ASC LIMIT 1) AS project_id,
         SUM(CASE WHEN output_artifact IS NOT NULL THEN 1 ELSE 0 END) AS artifact_count
       FROM chats c
       WHERE c.user_email = ?
@@ -1918,6 +1936,7 @@ async function handleConversationList(request: Request, env: Env): Promise<Respo
       first_input: string;
       latest_model: string;
       first_model_type: string;
+      project_id: number | null;
       artifact_count: number;
     }>();
   return json({ user: userEmail, conversations: rows.results ?? [] });
@@ -2039,6 +2058,67 @@ async function handleHistoryDelete(request: Request, env: Env, id: number): Prom
   for (const k of keysToDelete) await r2DeleteSafe(env, k);
 
   return json({ deleted: id, r2_keys_deleted: keysToDelete.length });
+}
+
+// v0.20.2: move a conversation to a project (or clear its project assignment).
+// Body: { project_id: number | null }. When project_id is a number, the
+// project must exist and belong to the same user. When null, the assignment
+// is cleared on all turns.
+//
+// All turns in the conversation are updated atomically. The conversation_id
+// is the existing key for ownership (chats.user_email + conversation_id).
+async function handleConversationMoveToProject(
+  request: Request,
+  env: Env,
+  conversationId: string,
+): Promise<Response> {
+  const userEmail = getUserEmail(request);
+
+  let body: { project_id?: number | null };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const newProjectId = body.project_id ?? null;
+  if (newProjectId !== null) {
+    if (!Number.isInteger(newProjectId) || newProjectId <= 0) {
+      return json({ error: "project_id must be a positive integer or null" }, { status: 400 });
+    }
+    // Confirm the target project exists and belongs to this user.
+    const proj = await env.DB.prepare(
+      `SELECT id FROM projects WHERE id = ? AND user_email = ?`
+    )
+      .bind(newProjectId, userEmail)
+      .first();
+    if (!proj) return json({ error: "Project not found" }, { status: 404 });
+  }
+
+  // Confirm the conversation exists and belongs to this user before
+  // updating, otherwise we silently no-op on stale ids.
+  const existing = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM chats
+      WHERE conversation_id = ? AND user_email = ?`
+  )
+    .bind(conversationId, userEmail)
+    .first<{ n: number }>();
+  if (!existing || existing.n === 0) {
+    return json({ error: "Conversation not found" }, { status: 404 });
+  }
+
+  const result = await env.DB.prepare(
+    `UPDATE chats SET project_id = ?
+      WHERE conversation_id = ? AND user_email = ?`
+  )
+    .bind(newProjectId, conversationId, userEmail)
+    .run();
+
+  return json({
+    conversation_id: conversationId,
+    project_id: newProjectId,
+    rows_updated: result.meta?.changes ?? 0,
+  });
 }
 
 // ---------- RAG: document ingestion (Pass 1) ----------

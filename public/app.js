@@ -902,11 +902,28 @@ async function loadConversations() {
       if (c.turn_count > 1) icons.push(`<span class="turn-count" title="${c.turn_count} turns">${c.turn_count}\u00b7</span>`);
       const iconBlock = icons.length ? `<span class="attach-icon">${icons.join(" ")}</span>` : `<span></span>`;
 
+      // v0.20.2: project chip on conversation rows. Shows the project name
+      // when the conversation has been assigned (or auto-tagged on creation).
+      // Resolves project_id -> name via state.projects so we don't need an
+      // extra API call per row. Stale ids (project deleted) render as a
+      // muted placeholder rather than blowing up.
+      let projChip = "";
+      if (c.project_id) {
+        const p = state.projects.find((x) => x.id === c.project_id);
+        if (p) {
+          projChip = `<span class="conv-proj-chip" title="project: ${escapeHtml(p.name)}">${escapeHtml(p.name)}</span>`;
+        } else {
+          projChip = `<span class="conv-proj-chip conv-proj-chip-stale" title="project (deleted)">project</span>`;
+        }
+      }
+
       return `
         <li data-conv-id="${escapeHtml(c.conversation_id)}">
           <span class="preview" title="${escapeHtml(c.first_input || "")}">${escapeHtml(preview)}</span>
+          ${projChip}
           ${iconBlock}
           <span class="meta">${dateStr}</span>
+          <button class="conv-move" data-conv-move="${escapeHtml(c.conversation_id)}" type="button" title="move to project">\u2197</button>
           <button class="delete" data-conv-delete="${escapeHtml(c.conversation_id)}" type="button" title="delete conversation">\u00d7</button>
         </li>`;
     })
@@ -1182,6 +1199,12 @@ historyList.addEventListener("click", (e) => {
     if (confirm("Delete this entire conversation? All turns and artifacts will be removed.")) {
       deleteConversation(del.dataset.convDelete);
     }
+    return;
+  }
+  const move = e.target.closest("[data-conv-move]");
+  if (move) {
+    e.stopPropagation();
+    openMoveToProjectMenu(move, move.dataset.convMove);
     return;
   }
   const li = e.target.closest("li[data-conv-id]");
@@ -1779,3 +1802,110 @@ document.addEventListener("keydown", (e) => {
     projStatus.classList.add("error");
   }
 })();
+
+// ---------- Move conversation to project (v0.20.2) ----------
+//
+// Per-conversation dropdown menu. Hover/click reveals the arrow button on a
+// conversation row; clicking opens a small dropdown listing all projects +
+// "(no project)" + the current project highlighted. Picking an option
+// PATCHes /api/conversations/:id/project and refreshes the conversation list.
+//
+// The dropdown is appended to <body> with absolute positioning so it isn't
+// clipped by the sidebar's overflow. Closes on outside click or Escape.
+
+let moveMenuEl = null;
+
+function closeMoveToProjectMenu() {
+  if (moveMenuEl) {
+    moveMenuEl.remove();
+    moveMenuEl = null;
+  }
+}
+
+async function moveConversationToProject(convId, projectId) {
+  try {
+    await api(`/api/conversations/${encodeURIComponent(convId)}/project`, {
+      method: "PATCH",
+      body: JSON.stringify({ project_id: projectId }),
+    });
+    await loadConversations();
+  } catch (err) {
+    alert(`Failed to move conversation: ${err.message}`);
+  }
+}
+
+function openMoveToProjectMenu(anchorEl, convId) {
+  closeMoveToProjectMenu();
+
+  // Resolve the conversation's current project id from the existing list
+  // markup so we can highlight the current selection. The cheapest read is
+  // the chip element rendered on the row; otherwise null (no current).
+  const li = anchorEl.closest("li[data-conv-id]");
+  const chip = li?.querySelector(".conv-proj-chip");
+  const currentProjectName = chip && !chip.classList.contains("conv-proj-chip-stale")
+    ? chip.textContent.trim()
+    : null;
+
+  moveMenuEl = document.createElement("div");
+  moveMenuEl.className = "move-menu";
+  moveMenuEl.setAttribute("role", "menu");
+
+  const rect = anchorEl.getBoundingClientRect();
+  // Position below the button by default; flip up if there's not enough room.
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const isFlipped = spaceBelow < 240 && rect.top > 240;
+  moveMenuEl.style.position = "fixed";
+  moveMenuEl.style.left = `${Math.min(rect.left, window.innerWidth - 220)}px`;
+  if (isFlipped) {
+    moveMenuEl.style.bottom = `${window.innerHeight - rect.top + 4}px`;
+  } else {
+    moveMenuEl.style.top = `${rect.bottom + 4}px`;
+  }
+
+  const items = [
+    { value: null, label: "(no project)", isCurrent: !currentProjectName },
+    ...state.projects.map((p) => ({
+      value: p.id,
+      label: p.name,
+      isCurrent: p.name === currentProjectName,
+    })),
+  ];
+
+  moveMenuEl.innerHTML = items.map((it) => {
+    const cls = "move-menu-item" + (it.isCurrent ? " current" : "");
+    const id = it.value === null ? "" : String(it.value);
+    return `<button type="button" class="${cls}" data-move-target="${id}">${escapeHtml(it.label)}</button>`;
+  }).join("");
+
+  moveMenuEl.addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-move-target]");
+    if (!btn) return;
+    const raw = btn.dataset.moveTarget;
+    const target = raw === "" ? null : Number(raw);
+    closeMoveToProjectMenu();
+    await moveConversationToProject(convId, target);
+  });
+
+  document.body.appendChild(moveMenuEl);
+
+  // Defer the outside-click listener registration to the next tick so the
+  // click that opened the menu doesn't immediately close it.
+  setTimeout(() => {
+    document.addEventListener("click", onMoveMenuOutsideClick, { once: true });
+    document.addEventListener("keydown", onMoveMenuKeydown, { once: true });
+  }, 0);
+}
+
+function onMoveMenuOutsideClick(e) {
+  if (moveMenuEl && !moveMenuEl.contains(e.target)) {
+    closeMoveToProjectMenu();
+  } else if (moveMenuEl) {
+    // Inside-menu click; the menu's own handler runs first and closes it,
+    // but we may also re-register the listener for nested clicks.
+    document.addEventListener("click", onMoveMenuOutsideClick, { once: true });
+  }
+}
+
+function onMoveMenuKeydown(e) {
+  if (e.key === "Escape") closeMoveToProjectMenu();
+}

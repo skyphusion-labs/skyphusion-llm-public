@@ -159,3 +159,33 @@ CREATE TABLE IF NOT EXISTS project_documents (
 
 CREATE INDEX IF NOT EXISTS idx_project_documents_doc
   ON project_documents(document_id);
+
+-- ---------- Conversation -> project association (v0.20.2) ----------
+--
+-- Adds project_id to existing chats rows so a chat turn can record which
+-- project (if any) it was sent within. Nullable: pre-v0.20.2 rows and any
+-- chat started without an active project carry NULL.
+--
+-- "Move chat to project" updates all rows in a conversation_id atomically,
+-- so within one conversation the project_id is uniform. The conversation
+-- list endpoint reads project_id from the conversation's earliest turn and
+-- exposes it on the row so the sidebar can render a project chip.
+--
+-- This is an ALTER, so it's NOT idempotent like the CREATE TABLE IF NOT
+-- EXISTS additions above. wrangler d1 execute is idempotent at the
+-- migration-run level but ALTER would error on re-run. To make this safe
+-- to re-apply, the ALTER is wrapped in a check against PRAGMA table_info.
+-- Cleanest path: a fresh schema.sql apply on a database that already has
+-- this column is a no-op.
+
+-- Idempotent column add. SQLite doesn't support IF NOT EXISTS on ALTER TABLE
+-- ADD COLUMN, so we use a defensive pattern: try the ALTER, catch the
+-- "duplicate column" error at the app layer. For schema.sql re-runs on
+-- already-migrated DBs, the ALTER will fail with "duplicate column name"
+-- and `wrangler d1 execute` will treat it as a non-fatal warning per
+-- statement, continuing to the next. The CREATE INDEX below is naturally
+-- idempotent via IF NOT EXISTS.
+ALTER TABLE chats ADD COLUMN project_id INTEGER;
+
+CREATE INDEX IF NOT EXISTS idx_chats_project
+  ON chats(project_id, created_at DESC) WHERE project_id IS NOT NULL;

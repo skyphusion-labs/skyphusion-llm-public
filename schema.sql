@@ -189,3 +189,49 @@ ALTER TABLE chats ADD COLUMN project_id INTEGER;
 
 CREATE INDEX IF NOT EXISTS idx_chats_project
   ON chats(project_id, created_at DESC) WHERE project_id IS NOT NULL;
+
+-- ---------- Discord ingestion (v0.20.3) ----------
+--
+-- project_messages stores raw Discord messages parsed from a DCE JSON export,
+-- first-class, so the corpus can be re-chunked later (e.g. with an improved
+-- chunker) without re-uploading the export. Retrieval does NOT read this
+-- table; it reads chunks. This table exists purely for re-processing and
+-- audit.
+--
+-- Tied to both the project (the import target) and the document (the uploaded
+-- export file). Both cascade on delete via application code, consistent with
+-- the rest of the schema (D1 ignores PRAGMA foreign_keys).
+
+CREATE TABLE IF NOT EXISTS project_messages (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id    INTEGER NOT NULL,
+  document_id   INTEGER NOT NULL,
+  user_email    TEXT NOT NULL,
+  message_id    TEXT NOT NULL,        -- Discord snowflake
+  channel       TEXT NOT NULL,
+  author        TEXT NOT NULL,        -- display name (nickname or name)
+  author_id     TEXT,
+  is_bot        INTEGER NOT NULL DEFAULT 0,
+  sent_at       TEXT NOT NULL,        -- ISO8601
+  content       TEXT NOT NULL,
+  FOREIGN KEY (project_id)  REFERENCES projects(id)  ON DELETE CASCADE,
+  FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_messages_proj
+  ON project_messages(project_id, sent_at);
+CREATE INDEX IF NOT EXISTS idx_project_messages_doc
+  ON project_messages(document_id);
+
+-- Chunk metadata for conversation/Discord chunks (v0.20.3). Reuses the
+-- existing chunks table, adding nullable columns analogous to page/sheet.
+-- Document chunks leave these NULL; Discord chunks populate them. v0.20.4
+-- retrieval filters (author/channel/date) will read these columns.
+--
+-- ALTER TABLE ADD COLUMN is not idempotent in SQLite; re-applying schema.sql
+-- on an already-migrated DB surfaces "duplicate column name" per statement,
+-- which wrangler d1 execute treats as a non-fatal warning and continues past.
+ALTER TABLE chunks ADD COLUMN channel       TEXT;
+ALTER TABLE chunks ADD COLUMN authors       TEXT;   -- comma-joined distinct authors
+ALTER TABLE chunks ADD COLUMN sent_at_start TEXT;   -- ISO8601 earliest message
+ALTER TABLE chunks ADD COLUMN sent_at_end   TEXT;   -- ISO8601 latest message

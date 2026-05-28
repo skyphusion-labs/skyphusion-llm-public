@@ -1,5 +1,100 @@
 # Changelog
 
+## v0.20.3
+
+Discord ingestion: import a DiscordChatExporter (DCE) JSON export into a project, parse it into messages, chunk it conversation-aware, and embed it into the project's retrieval scope. Backend only; the import is curl-driven for now, with a frontend file-picker button planned for v0.20.4 alongside the retrieval filters.
+
+This is the first half of the original v0.20.3 scope. Retrieval filters (author/channel/date) and presigned R2 upload for large exports move to v0.20.4.
+
+### What it does
+
+A DCE JSON export (one channel, exported WITHOUT `--markdown false` so mentions/emoji render readably) is uploaded to a project. The worker parses it into normalized messages, groups consecutive messages into conversation units, formats each unit as a readable transcript, embeds those, and attaches the result to the project so project-scoped chat retrieval picks it up immediately.
+
+The DCE JSON schema was verified against the JsonMessageWriter source and documented CSV column set (as of the Feb 2026 DCE index) rather than from memory, since the parser is load-bearing. The parser is defensive: it validates the top-level shape and throws a diagnostic error naming the problem instead of producing garbage chunks.
+
+### New module: src/discord.ts
+
+Standalone, fully unit-tested (17 tests). Two public functions:
+
+`parseDiscordExport(json)` -> normalized messages. Resolves channel name (category / name when both present), uses author nickname when set else name, marks bot messages, keeps Default + Reply message types, drops system notifications (joins, pins, thread-created, calls, etc.) and empty-content (attachment-only) messages. Handles migrated usernames (discriminator "0"). Throws on non-DCE input.
+
+`chunkDiscordMessages(messages, options)` -> conversation chunks. Groups consecutive same-channel messages into a unit; a gap over `gapMinutes` (default 15) or a channel change starts a new unit. Each chunk is formatted with a channel header and `Author (timestamp): content` lines. Units over `targetChars` (default 1000) split on message boundaries with the header repeated; a single oversized message is hard-split on word boundaries. Each chunk carries channel, distinct authors (first-seen order), and time range metadata. `includeBots` (default true) keeps bot messages.
+
+Defaults that are tuning knobs, not laws: 15-minute conversation gap (DCE's own HTML export groups same-author messages within 7 minutes, but this chunker groups across authors so a wider gap fits), 1000-char target (2x the 500-char document default, since conversation units benefit from more context), include bots (MUDD likely uses bots for game mechanics). All overridable per-import via the options body.
+
+### Schema
+
+`project_messages` table: raw parsed messages, first-class, so the corpus can be re-chunked later (e.g. with an improved chunker) without re-uploading. Retrieval does NOT read this table; it reads chunks. The table is purely for re-processing and audit. Tied to both project and document, cascading on delete of either.
+
+Four nullable columns added to `chunks`: `channel`, `authors`, `sent_at_start`, `sent_at_end`. Document chunks leave these NULL; Discord chunks populate them. The v0.20.4 retrieval filters read these. As with v0.20.2's `chats.project_id`, the ALTER statements aren't idempotent in SQLite; re-applying schema.sql on a migrated DB surfaces "duplicate column name" warnings that wrangler treats as non-fatal.
+
+### New endpoint
+
+```
+POST /api/projects/:id/import-discord
+Body: { filename?, data: base64, options?: { gapMinutes, includeBots } }
+Response: { document_id, project_id, guild, channel,
+            raw_message_count, imported_message_count, chunk_count }
+```
+
+Pipeline mirrors handleDocumentUpload: validate project ownership, decode + size-check, parse, chunk, store the export in R2, insert a documents row, attach it to the project, persist raw messages to project_messages, embed chunks and upsert to Vectorize, insert chunk rows with the metadata columns. Full rollback on embedding failure (vectors, project_messages, project_documents, documents row, R2 object).
+
+The chunk embed/store loop is a deliberate near-duplicate of handleDocumentUpload's rather than a shared helper: the document path is higher-traffic and has no integration tests, so refactoring it to share code risks regression disproportionate to ~30 saved lines. Consolidation is noted as a future cleanup once integration tests exist.
+
+### Cascade updates
+
+`handleDocumentDelete` now also deletes `project_messages` for the document. `handleProjectDelete` now also deletes `project_messages` for the project. Both keep behavior consistent with the existing membership cascades.
+
+### Touch points
+
+- `src/discord.ts`: new, 320 lines. Parser + chunker.
+- `tests/discord.test.ts`: new, 17 tests covering parse filtering, nickname resolution, bot marking, reply handling, malformed input, channel grouping, gap splitting, oversized-message splitting, author ordering, time ranges, includeBots.
+- `src/index.ts`: 3474 -> ~3700 lines. Import, handleDiscordImport, route registration, two cascade additions.
+- `schema.sql`: 191 -> 237 lines. project_messages table + two indexes, four chunks columns.
+- `package.json`: 0.20.2 -> 0.20.3.
+
+No new dependencies. No new bindings. Worker tests: 95/95 pass (78 prior + 17 new).
+
+### Apply order
+
+```
+patch -p1 < v0.20.3-schema.patch
+wrangler d1 execute skyphusion-llm --remote --file=schema.sql
+patch -p1 < v0.20.3-discord-ts.patch
+patch -p1 < v0.20.3-discord-test.patch
+patch -p1 < v0.20.3-worker.patch
+patch -p1 < v0.20.3-changelog.patch
+npm test && npm run typecheck
+patch -p1 < v0.20.3-package-json.patch
+```
+
+### Smoke test (curl, with a real export)
+
+```
+TOKEN=$(cloudflared access token --app=https://skyphusion.org)
+B64=$(base64 -w0 mudd-export.json)
+printf '{"filename":"mudd-export.json","data":"%s"}' "$B64" > /tmp/import-body.json
+curl -X POST https://skyphusion.org/api/projects/<PID>/import-discord \
+  -H "cf-access-token: $TOKEN" \
+  -H "content-type: application/json" \
+  --data @/tmp/import-body.json
+```
+
+Expect a summary with raw_message_count, imported_message_count, and chunk_count. Then query the project with use_docs to confirm Discord chunks are retrieved:
+
+```
+curl -X POST https://skyphusion.org/api/chat \
+  -H "cf-access-token: $TOKEN" -H "content-type: application/json" \
+  -d '{"model":"@cf/meta/llama-3.2-3b-instruct","user_input":"<question about the channel>","project_id":<PID>,"use_docs":true}' \
+  | jq '.retrieved_chunks | map({document_id, filename, chunk_index})'
+```
+
+### What's next: v0.20.4
+
+- Frontend "import Discord export" button in the project view (file picker -> base64 -> this endpoint).
+- Retrieval filters on the chat request: author / channel / date range, reading the chunk metadata columns this release added.
+- Presigned R2 upload for exports over the 10MB worker request limit.
+
 ## v0.20.2
 
 Conversation -> project association. Chats started while a project is active now persist that project_id; the sidebar shows a project chip on each conversation; conversations can be moved between projects (or out of any project) via a per-row dropdown. Half of the original v0.20.2 scope; Discord JSON ingestion moves to v0.20.3.

@@ -25,6 +25,7 @@ import type { Env } from "./env";
 import { parseDataUrl, base64ToBytes, extFromMime } from "./utils";
 import { aiRun, aiLogId } from "./ai-binding";
 import { chunkText } from "./chunking";
+import { parseDiscordExport, chunkDiscordMessages } from "./discord";
 import { callAnthropic, callAnthropicStream } from "./providers/anthropic";
 import { callXai, callXaiStream } from "./providers/xai";
 import { callBedrockNova, callBedrockNovaStream, callBedrockPegasus } from "./providers/bedrock";
@@ -241,6 +242,11 @@ export default {
       const docId = Number(pd[2]);
       if (request.method === "POST")   return handleProjectDocAdd(request, env, projectId, docId);
       if (request.method === "DELETE") return handleProjectDocRemove(request, env, projectId, docId);
+    }
+    // v0.20.3: Discord export import into a project.
+    const pi = url.pathname.match(/^\/api\/projects\/(\d+)\/import-discord$/);
+    if (pi && request.method === "POST") {
+      return handleDiscordImport(request, env, Number(pi[1]));
     }
 
     if (url.pathname === "/api/conversations" && request.method === "GET") {
@@ -2864,9 +2870,11 @@ async function handleDocumentDelete(request: Request, env: Env, id: number): Pro
   // Cascade delete in D1 (no real FK enforcement, so explicit) and R2.
   // v0.20.1: also clean up project_documents memberships so deleting a doc
   // that's attached to projects doesn't leave orphan membership rows.
+  // v0.20.3: also clean up project_messages (raw Discord rows) for the doc.
   await env.DB.batch([
     env.DB.prepare(`DELETE FROM chunks            WHERE document_id = ? AND user_email = ?`).bind(id, userEmail),
     env.DB.prepare(`DELETE FROM project_documents WHERE document_id = ?`).bind(id),
+    env.DB.prepare(`DELETE FROM project_messages  WHERE document_id = ?`).bind(id),
     env.DB.prepare(`DELETE FROM documents         WHERE id          = ? AND user_email = ?`).bind(id, userEmail),
   ]);
   await r2DeleteSafe(env, doc.r2_key);
@@ -3149,9 +3157,11 @@ async function handleProjectDelete(request: Request, env: Env, id: number): Prom
   // Cascade: delete memberships first, then the project itself. Documents
   // belonging to the project STAY (they may be in other projects, and even
   // if not, the user uploaded them and may want to keep them outside
-  // project organization).
+  // project organization). v0.20.3: also clear project_messages scoped to
+  // this project (raw Discord rows; the documents and their chunks stay).
   await env.DB.batch([
     env.DB.prepare(`DELETE FROM project_documents WHERE project_id = ?`).bind(id),
+    env.DB.prepare(`DELETE FROM project_messages  WHERE project_id = ?`).bind(id),
     env.DB.prepare(`DELETE FROM projects          WHERE id = ? AND user_email = ?`).bind(id, userEmail),
   ]);
   return json({ deleted: id });
@@ -3201,6 +3211,224 @@ async function handleProjectDocRemove(request: Request, env: Env, projectId: num
     .bind(projectId, docId)
     .run();
   return json({ project_id: projectId, document_id: docId, removed: true });
+}
+
+// v0.20.3: import a DiscordChatExporter JSON export into a project.
+//
+// POST /api/projects/:id/import-discord
+// Body: { filename?: string, data: base64, options?: { gapMinutes, includeBots } }
+//
+// Pipeline (mirrors handleDocumentUpload, but for Discord exports):
+//   1. validate project ownership
+//   2. decode + size-check the export bytes
+//   3. parse DCE JSON -> normalized messages (parseDiscordExport)
+//   4. conversation-aware chunk (chunkDiscordMessages)
+//   5. store export bytes in R2
+//   6. insert a documents row for the export file
+//   7. attach the document to the project (project_documents)
+//   8. persist raw messages to project_messages (for future re-chunking)
+//   9. embed chunks, upsert to Vectorize, insert chunk rows with the
+//      channel/authors/time metadata columns
+//
+// The chunk embed/store loop is intentionally a near-duplicate of the one in
+// handleDocumentUpload rather than a shared helper: the document path is the
+// higher-traffic code and has no integration tests, so refactoring it to
+// share code carries regression risk disproportionate to ~30 saved lines.
+// Consolidation is a candidate for a later cleanup release once integration
+// tests exist.
+async function handleDiscordImport(request: Request, env: Env, projectId: number): Promise<Response> {
+  const userEmail = getUserEmail(request);
+
+  const proj = await env.DB.prepare(
+    `SELECT id FROM projects WHERE id = ? AND user_email = ?`
+  )
+    .bind(projectId, userEmail)
+    .first();
+  if (!proj) return json({ error: "Project not found" }, { status: 404 });
+
+  let body: { filename?: string; data?: string; options?: { gapMinutes?: number; includeBots?: boolean } };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+  if (!body.data) {
+    return json({ error: "Missing export data" }, { status: 400 });
+  }
+
+  const filename = body.filename || "discord-export.json";
+
+  // Decode base64 (data URL or raw).
+  let bytes: Uint8Array;
+  try {
+    const parsed = body.data.startsWith("data:") ? parseDataUrl(body.data) : null;
+    bytes = parsed ? base64ToBytes(parsed.base64) : base64ToBytes(body.data);
+  } catch (err) {
+    return json({ error: `Bad export data: ${err instanceof Error ? err.message : err}` }, { status: 400 });
+  }
+  if (bytes.length > DOC_MAX_BYTES) {
+    return json({
+      error: `Export too large (${bytes.length} bytes, max ${DOC_MAX_BYTES}). Split the export by date range or channel, or wait for presigned upload (v0.20.4).`,
+    }, { status: 413 });
+  }
+
+  // Parse the JSON export.
+  let exportJson: unknown;
+  try {
+    exportJson = JSON.parse(new TextDecoder().decode(bytes));
+  } catch (err) {
+    return json({ error: `Export is not valid JSON: ${err instanceof Error ? err.message : err}` }, { status: 400 });
+  }
+
+  let parsed;
+  try {
+    parsed = parseDiscordExport(exportJson);
+  } catch (err) {
+    return json({ error: `Not a recognized DiscordChatExporter export: ${err instanceof Error ? err.message : err}` }, { status: 400 });
+  }
+  if (parsed.messages.length === 0) {
+    return json({
+      error: "No usable messages in the export (all were system notifications or empty). Nothing to import.",
+    }, { status: 400 });
+  }
+
+  const chunks = chunkDiscordMessages(parsed.messages, {
+    gapMinutes: body.options?.gapMinutes,
+    includeBots: body.options?.includeBots,
+  });
+  if (chunks.length === 0) {
+    return json({ error: "Parsing produced messages but chunking produced none (check includeBots option)." }, { status: 400 });
+  }
+
+  const totalChars = chunks.reduce((sum, c) => sum + c.text.length, 0);
+  const mime = "application/json";
+  const r2Key = await r2Put(env, "in", mime, bytes, userEmail);
+
+  // Insert the documents row for the export file.
+  const docInsert = await env.DB.prepare(
+    `INSERT INTO documents
+       (user_email, filename, mime, r2_key, size_bytes, total_chars, chunk_count)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     RETURNING id, created_at`
+  )
+    .bind(userEmail, filename, mime, r2Key, bytes.length, totalChars, chunks.length)
+    .first<{ id: number; created_at: string }>();
+  if (!docInsert) {
+    await r2DeleteSafe(env, r2Key);
+    return json({ error: "Failed to insert document row" }, { status: 500 });
+  }
+  const docId = docInsert.id;
+
+  // Attach the export document to the project so project-scoped retrieval
+  // includes it immediately.
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO project_documents (project_id, document_id) VALUES (?, ?)`
+  )
+    .bind(projectId, docId)
+    .run();
+
+  // Persist raw messages for future re-chunking. Batched in groups to stay
+  // within D1 statement limits.
+  const PM_BATCH = 50;
+  for (let i = 0; i < parsed.messages.length; i += PM_BATCH) {
+    const slice = parsed.messages.slice(i, i + PM_BATCH);
+    const stmts = slice.map((m) =>
+      env.DB.prepare(
+        `INSERT INTO project_messages
+           (project_id, document_id, user_email, message_id, channel, author, author_id, is_bot, sent_at, content)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(projectId, docId, userEmail, m.messageId, m.channel, m.author, m.authorId, m.isBot ? 1 : 0, m.sentAt, m.content)
+    );
+    await env.DB.batch(stmts);
+  }
+
+  // Embed chunks and upsert to Vectorize. vector_id scheme matches documents:
+  // `${userEmail}:${docId}:${chunkIndex}`.
+  const vectorIdsWritten: string[] = [];
+  const chunkRowsToInsert: {
+    chunk_index: number;
+    text: string;
+    vector_id: string;
+    channel: string;
+    authors: string;
+    sent_at_start: string;
+    sent_at_end: string;
+  }[] = [];
+
+  try {
+    for (let b = 0; b < chunks.length; b += EMBED_BATCH_SIZE) {
+      const batch = chunks.slice(b, b + EMBED_BATCH_SIZE);
+      const vectors = await embedBatch(env, batch.map((c) => c.text));
+      if (vectors.length !== batch.length) {
+        throw new Error(`Embedding batch returned ${vectors.length} vectors for ${batch.length} texts`);
+      }
+      const payload = batch.map((c, i) => {
+        const idx = b + i;
+        const vid = `${userEmail}:${docId}:${idx}`;
+        chunkRowsToInsert.push({
+          chunk_index: idx,
+          text: c.text,
+          vector_id: vid,
+          channel: c.channel,
+          authors: c.authors.join(", "),
+          sent_at_start: c.sentAtStart,
+          sent_at_end: c.sentAtEnd,
+        });
+        vectorIdsWritten.push(vid);
+        return {
+          id: vid,
+          values: vectors[i],
+          metadata: {
+            user_email: userEmail,
+            document_id: docId,
+            chunk_index: idx,
+            channel: c.channel,
+          },
+        };
+      });
+      await env.VEC.upsert(payload);
+    }
+  } catch (err) {
+    // Rollback partial state.
+    if (vectorIdsWritten.length) {
+      try { await env.VEC.deleteByIds(vectorIdsWritten); } catch { /* swallow */ }
+    }
+    await env.DB.batch([
+      env.DB.prepare(`DELETE FROM project_messages  WHERE document_id = ?`).bind(docId),
+      env.DB.prepare(`DELETE FROM project_documents WHERE document_id = ?`).bind(docId),
+      env.DB.prepare(`DELETE FROM documents         WHERE id = ?`).bind(docId),
+    ]);
+    await r2DeleteSafe(env, r2Key);
+    const m = err instanceof Error ? err.message : String(err);
+    return json({ error: `Embedding failed: ${m}` }, { status: 502 });
+  }
+
+  // Insert chunk rows with the Discord metadata columns. page/sheet stay NULL.
+  if (chunkRowsToInsert.length) {
+    for (let i = 0; i < chunkRowsToInsert.length; i += PM_BATCH) {
+      const slice = chunkRowsToInsert.slice(i, i + PM_BATCH);
+      const stmts = slice.map((c) =>
+        env.DB.prepare(
+          `INSERT INTO chunks
+             (document_id, user_email, chunk_index, text, vector_id, channel, authors, sent_at_start, sent_at_end)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(docId, userEmail, c.chunk_index, c.text, c.vector_id, c.channel, c.authors, c.sent_at_start, c.sent_at_end)
+      );
+      await env.DB.batch(stmts);
+    }
+  }
+
+  return json({
+    document_id: docId,
+    created_at: docInsert.created_at,
+    project_id: projectId,
+    filename,
+    guild: parsed.guild,
+    channel: parsed.channel,
+    raw_message_count: parsed.rawCount,
+    imported_message_count: parsed.parsedCount,
+    chunk_count: chunks.length,
+  });
 }
 
 // ---------- Artifact serving ----------

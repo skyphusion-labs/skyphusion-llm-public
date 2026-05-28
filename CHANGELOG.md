@@ -72,7 +72,7 @@ Defaults that are tuning knobs, not laws: 15-minute conversation gap (DCE's own 
 
 `project_messages` table: raw parsed messages, first-class, so the corpus can be re-chunked later (e.g. with an improved chunker) without re-uploading. Retrieval does NOT read this table; it reads chunks. The table is purely for re-processing and audit. Tied to both project and document, cascading on delete of either.
 
-Four nullable columns added to `chunks`: `channel`, `authors`, `sent_at_start`, `sent_at_end`. Document chunks leave these NULL; Discord chunks populate them. The v0.20.4 retrieval filters read these. As with v0.20.2's `chats.project_id`, the ALTER statements aren't idempotent in SQLite; re-applying schema.sql on a migrated DB surfaces "duplicate column name" warnings that wrangler treats as non-fatal.
+Four nullable columns added to `chunks`: `channel`, `authors`, `sent_at_start`, `sent_at_end`. Document chunks leave these NULL; Discord chunks populate them. The v0.20.4 retrieval filters read these. As with v0.20.2's `chats.project_id`, the ALTER statements aren't idempotent in SQLite. **[Corrected in v0.20.4]** This entry originally said re-applying schema.sql surfaces warnings wrangler treats as non-fatal; that is wrong (a duplicate-column ALTER aborts the whole transaction). Apply schema changes via the per-release delta file `migrate-v0.20.3.sql`, never by re-running `schema.sql` against an existing database.
 
 ### New endpoint
 
@@ -164,7 +164,7 @@ CREATE INDEX IF NOT EXISTS idx_chats_project
   ON chats(project_id, created_at DESC) WHERE project_id IS NOT NULL;
 ```
 
-`ALTER TABLE ADD COLUMN` is NOT idempotent in SQLite (no `IF NOT EXISTS` syntax for it). Re-applying `schema.sql` against an already-migrated DB will surface a "duplicate column name" error per statement, which `wrangler d1 execute` treats as a non-fatal warning and continues past. The partial index is properly idempotent via `IF NOT EXISTS`. Net effect: re-applying schema.sql is safe.
+`ALTER TABLE ADD COLUMN` is NOT idempotent in SQLite (no `IF NOT EXISTS` syntax for it). **[Corrected in v0.20.4]** This entry originally claimed re-applying `schema.sql` against an already-migrated DB produces a non-fatal warning that wrangler continues past. That is wrong: `wrangler d1 execute --file` runs the whole file as one transaction, so a duplicate-column `ALTER` raises `SQLITE_ERROR` and aborts the entire transaction, rolling back every statement. Do not re-run `schema.sql` against an existing database. The correct path is a per-release delta file containing only the new statements; see the v0.20.4 entry and the "Migrating an existing deployment" section of the README.
 
 Pre-v0.20.2 chats carry `project_id = NULL` and continue to work unchanged. The column is nullable; there's no migration to backfill historical chats.
 

@@ -3,7 +3,7 @@
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Typecheck](https://github.com/SkyPhusion/skyphusion-llm-public/actions/workflows/typecheck.yml/badge.svg)](https://github.com/SkyPhusion/skyphusion-llm-public/actions/workflows/typecheck.yml)
 
-A multimodal AI playground deployed as a single Cloudflare Worker. 28 chat models across 4 providers, image / TTS / STT / video / music generation, RAG over PDF and XLSX, opt-in web search via Tavily and Wikipedia, SSE streaming on supported chat models, and multi-turn conversations. One web UI behind Cloudflare Access, per-user history, R2 for all binary artifacts.
+A multimodal AI playground deployed as a single Cloudflare Worker. 28 chat models across 4 providers, image / TTS / STT / video / music generation, RAG over PDF and XLSX, projects that scope a knowledge base and system prompt, Discord chat-log ingestion, opt-in web search via Tavily and Wikipedia, SSE streaming on supported chat models, and multi-turn conversations. One web UI behind Cloudflare Access, per-user history, R2 for all binary artifacts.
 
 <p align="center">
   <img src="docs/screenshot-desktop.jpg" alt="Desktop UI: image generation with FLUX-1 schnell" width="800"><br><br>
@@ -44,6 +44,10 @@ A working template for the Cloudflare AI stack. One Worker, no framework, no bui
 
 **RAG (Vectorize):** upload `.txt`, `.md`, `.pdf`, or `.xlsx`/`.xls` files via the sidebar. The worker chunks, embeds via BGE-base, and stores vectors in Vectorize plus text in D1. Per-page metadata for PDFs, per-sheet for XLSX. Toggle "use my docs" per turn to fold the top-5 nearest chunks into the system prompt before the LLM call.
 
+**Projects and knowledge stores (v0.20.0+):** group documents and conversations under a named project with its own default system prompt and retrieval scope. A document can belong to multiple projects; selecting a project scopes "use my docs" retrieval to just that project's documents and applies the project's system prompt as the default for new chats. Conversations started while a project is active are tagged with it, and any conversation can be moved between projects from the sidebar. See [Projects and knowledge stores](#projects-and-knowledge-stores) below.
+
+**Discord ingestion (v0.20.3+):** import a [DiscordChatExporter](https://github.com/Tyrrrz/DiscordChatExporter) JSON export into a project. The worker parses the export, groups messages into conversation-aware chunks (by author, time gap, and channel), and embeds them into the project's retrieval scope, so you can ask questions across an archived Discord channel's history. Import is a file picker in the project's "manage documents" modal.
+
 **Web search (v0.17.0):** opt-in retrieval source that queries Tavily (general web) and Wikipedia (reference and lore) in parallel. Snippets folded into the system prompt the same way RAG chunks are. Per-turn toggle. Tavily requires `TAVILY_API_KEY`; Wikipedia needs no setup. See [Web search](#web-search) below.
 
 **Streaming (v0.13.0+):** `POST /api/chat/stream` returns SSE for any chat model flagged `streaming: true` in the catalog. Token deltas surface as `{ type: "delta", text: "..." }` events, terminal completion as `{ type: "done", ... }` with token counts and conversation IDs. Client disconnect aborts the upstream model call immediately.
@@ -65,7 +69,7 @@ A working template for the Cloudflare AI stack. One Worker, no framework, no bui
 - Static frontend served via Workers Assets
 - Cloudflare Access in front for auth
 
-Roughly 4100 LOC TypeScript in `src/index.ts`, plus ~2200 LOC vanilla JS / CSS / HTML in `public/`, plus schema.sql.
+Roughly 3700 LOC TypeScript in `src/index.ts` plus ~1900 LOC across the extracted modules (`src/providers/`, `src/parsers/`, `src/discord.ts`, `chunking.ts`, and friends), plus ~3900 LOC vanilla JS / CSS / HTML in `public/`, plus schema.sql.
 
 ## Quickstart
 
@@ -175,6 +179,8 @@ diff wrangler.toml wrangler.example.toml
 
 Each version that touches `wrangler.example.toml` documents the exact TOML blocks to paste in the corresponding [CHANGELOG.md](CHANGELOG.md) entry under a "wrangler.toml migration" heading. Apply those blocks to your local `wrangler.toml` and redeploy.
 
+For D1 **schema** changes, see [Migrating an existing deployment](#migrating-an-existing-deployment). The short version: `schema.sql` is for fresh databases only; upgrade an existing database with the per-version deltas, never by re-running `schema.sql`.
+
 ## Architecture
 
 ```
@@ -200,16 +206,25 @@ The worker is the only public surface. R2 is private; the worker streams objects
 | GET    | `/api/models`             | List available models with capability flags (`streaming`, `vision`, `group`) |
 | POST   | `/api/chat`               | Run a model. Dispatches by model type. |
 | POST   | `/api/chat/stream`        | SSE streaming variant for chat models flagged `streaming: true` |
-| GET    | `/api/conversations`      | List the caller's conversations (grouped by `conversation_id`) |
+| GET    | `/api/conversations`      | List the caller's conversations (grouped by `conversation_id`, includes each conversation's `project_id`) |
 | GET    | `/api/conversations/:id`  | Full transcript for a conversation |
 | DELETE | `/api/conversations/:id`  | Cascade delete of all turns plus R2 artifacts |
+| PATCH  | `/api/conversations/:id/project` | Move a conversation to a project, or clear it (`{project_id: number \| null}`) |
 | GET    | `/api/history/:id`        | One chat row with full attachment + output references |
 | DELETE | `/api/history/:id`        | Delete a single chat row and clean up its R2 objects |
 | GET    | `/api/job/:id`            | Poll an async video / music generation job's status |
-| GET    | `/api/documents`          | List uploaded RAG documents |
+| GET    | `/api/documents`          | List uploaded RAG documents (optional `?project_id=N` filter) |
 | POST   | `/api/documents`          | Upload, chunk, embed, and store a doc |
 | GET    | `/api/documents/:id`      | Document metadata plus first chunks preview |
-| DELETE | `/api/documents/:id`      | Cascade delete of doc, chunks, vectors, and original R2 file |
+| DELETE | `/api/documents/:id`      | Cascade delete of doc, chunks, vectors, memberships, and original R2 file |
+| GET    | `/api/projects`           | List the caller's projects with document counts |
+| POST   | `/api/projects`           | Create a project (`{name, description?, system_prompt?}`) |
+| GET    | `/api/projects/:id`       | Project metadata plus its attached documents |
+| PATCH  | `/api/projects/:id`       | Update name / description / system prompt |
+| DELETE | `/api/projects/:id`       | Delete a project; its documents are kept |
+| POST   | `/api/projects/:pid/documents/:did` | Attach a document to a project |
+| DELETE | `/api/projects/:pid/documents/:did` | Detach a document from a project |
+| POST   | `/api/projects/:id/import-discord` | Import a DiscordChatExporter JSON export into a project |
 | GET    | `/api/artifact/*`         | Stream an R2 object, gated by ownership |
 
 ### Model types
@@ -491,8 +506,11 @@ The retrieved chunks appear above the model's response with filename, chunk inde
 # Create the Vectorize index (768 dimensions for BGE-base, cosine similarity)
 npx wrangler vectorize create skyphusion-llm-vec --dimensions=768 --metric=cosine
 
-# Apply the full schema (idempotent; creates documents + chunks tables and the
-# retrieved_context column on chats if missing)
+# Apply the full schema to a FRESH database. schema.sql is the canonical
+# full schema for new deployments. Do NOT re-run it against a database that
+# already has tables: it contains non-idempotent ALTER statements that abort
+# the whole transaction on re-run. For an existing deployment, use the
+# per-release delta files instead (see "Migrating an existing deployment").
 npx wrangler d1 execute skyphusion-llm-public --remote --file=schema.sql
 ```
 
@@ -500,7 +518,7 @@ npx wrangler d1 execute skyphusion-llm-public --remote --file=schema.sql
 
 - **File types**: `.txt`, `.md`, `.markdown`, `.pdf`, `.xlsx`, `.xls`. Scanned/image-only PDFs are not supported (they need OCR, deferred). Modern PDFs created from Word/Pages/LaTeX/Google Docs export work fine.
 - **Max file size**: 10MB per upload.
-- **Knowledge base**: per-user (scoped by `Cf-Access-Authenticated-User-Email`). All your uploaded docs are one corpus.
+- **Knowledge base**: per-user (scoped by `Cf-Access-Authenticated-User-Email`). By default all your uploaded docs are one corpus; selecting a project narrows retrieval to that project's documents (see [Projects and knowledge stores](#projects-and-knowledge-stores)).
 - **Retrieval default**: top-K = 5 chunks. Change `RETRIEVE_TOP_K` in the worker if you want more or fewer.
 - **Chunks store the raw text in D1**. R2 keeps the original file too for audit and potential re-processing on a future model swap.
 - **Chunking boundaries**: For PDFs, chunks never cross page boundaries (so the "page X" metadata stays meaningful). For XLSX/XLS, chunks never cross sheet boundaries. For TXT/MD, no such boundary; chunks flow freely.
@@ -509,6 +527,41 @@ npx wrangler d1 execute skyphusion-llm-public --remote --file=schema.sql
 - **Worker bundle size**: with `unpdf` (~500KB) and `xlsx` (~500KB) bundled, the compressed worker exceeds the free-tier 1MB limit. **Workers Paid plan ($5/month) is required as of v0.11.0.**
 
 **Note on the xlsx dependency:** SheetJS stopped publishing to the npm registry several years ago; the `xlsx` name on npm is permanently stuck at 0.18.5. We install directly from SheetJS's CDN tarball URL (`https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz`), which gives us the current maintained version. The package still imports as `xlsx` so the code is unchanged. To upgrade, change the URL in `package.json` to point at the new version's tarball.
+
+## Projects and knowledge stores
+
+Projects (v0.20.0+) group documents and conversations under a named context with its own default system prompt and retrieval scope. The intended use is to separate organizational contexts: a legal-research project bundles case PDFs with a paralegal system prompt; a worldbuilding project bundles fiction notes and an in-character collaborator prompt. The same document can live in multiple projects.
+
+**Creating and using a project.** The sidebar has a Projects section above Documents. Create a project (name, optional description, optional system prompt); it becomes active and shows as a chip next to the model picker. While a project is active:
+
+- "use my docs" retrieval is scoped to just that project's attached documents, instead of your whole corpus.
+- The project's system prompt becomes the default for new chats. A per-turn system prompt still overrides it; an empty per-turn prompt falls back to the project's.
+- New conversations are tagged with the project. The sidebar shows a project chip on each tagged conversation, and any conversation can be moved between projects (or out of any project) via the move control on its row.
+
+Click the active project's chip `x`, or click the active project again in the sidebar, to deactivate (back to full-corpus retrieval and no default prompt).
+
+**Attaching documents.** The "docs" action on a project row opens a modal with a checkbox per uploaded document; checking attaches, unchecking detaches. Changes apply immediately. Deleting a project keeps its documents (they may belong to other projects); deleting a document removes it from every project.
+
+**Scoping internals.** Retrieval with a project active over-fetches from Vectorize (3x top-K), then filters to the project's documents in D1 and caps at top-K, so a project with few matching documents still returns relevant chunks. All project data is per-user; cross-user reads return 404, cross-user writes are rejected.
+
+### Discord ingestion (v0.20.3+)
+
+Import an archived Discord channel into a project from a [DiscordChatExporter](https://github.com/Tyrrrz/DiscordChatExporter) (DCE) JSON export.
+
+**Exporting from Discord.** Use DCE's JSON format, and do **not** disable markdown processing (export *without* `--markdown false`). Markdown processing is what unwraps mentions to readable `@username` and custom emoji to `:name:`; leaving the raw `<@1234>` tokens in makes the text worse for retrieval. A single low-traffic channel or a date-bounded export keeps the file under the 10MB upload cap. CLI example:
+
+```
+DiscordChatExporter.Cli export -t <TOKEN> -c <CHANNEL_ID> -f Json \
+  --after 2024-01-01 --before 2024-02-01 -o export.json
+```
+
+**Importing.** Open a project's "docs" modal; the "import a Discord export" section has a file picker and an "include bot messages" toggle (on by default; turn off if a dicebot or similar floods the channel). The export is parsed, chunked, embedded, and attached to the project as a document.
+
+**How it's chunked.** Instead of the fixed-window splitter used for documents, Discord messages are grouped into conversation units: consecutive messages in the same channel within a time gap (default 15 minutes) form one unit, formatted as a readable transcript with a channel header and `Author (timestamp): text` lines. Units larger than the target size split on message boundaries with the header repeated. Each chunk records its channel, author set, and time range (the `channel`, `authors`, `sent_at_start`, `sent_at_end` columns on `chunks`), which v0.20.5 retrieval filters will use.
+
+**What's kept and dropped.** Default and reply messages with text content are kept. System notifications (joins, pins, thread-created, calls) and empty-content messages (attachment-only) are dropped. Raw parsed messages are also stored in the `project_messages` table so the corpus can be re-chunked later (e.g. with an improved chunker) without re-uploading the export.
+
+**Limits.** Exports over the 10MB worker request limit are not yet supported; split by date range or channel for now (presigned upload for large exports is planned for v0.20.6). The parser validates the export shape and rejects non-DCE JSON with a diagnostic error rather than producing garbage.
 
 ## Web search
 
@@ -603,7 +656,9 @@ Full Workers AI catalog: https://developers.cloudflare.com/workers-ai/models/. S
 
 ## Migrating an existing deployment
 
-Schema deltas have been cumulative; if you deployed an earlier version, apply each migration in order before redeploying. v0.13.0 onward have NOT touched the D1 schema; only v0.7.0 through v0.10.0 require migrations.
+**Migration philosophy (read this first).** `schema.sql` is the canonical full schema for standing up a *fresh* database. It contains non-idempotent `ALTER TABLE` statements, so re-running it against a database that already has tables will raise `SQLITE_ERROR: duplicate column name` and, because `wrangler d1 execute --file` runs the whole file as one transaction, abort and roll back the entire run. **Never re-run `schema.sql` against an existing database.** To upgrade an existing deployment, apply only the delta for each version you're crossing, using the explicit commands below (or, for releases that ship one, the per-release `migrate-vX.Y.Z.sql` delta file). Apply each version's delta in order, then redeploy.
+
+v0.13.0 onward touched the D1 schema only at v0.20.0, v0.20.2, and v0.20.3; everything else in the v0.13–v0.20 range is code-only. The pre-v0.13.0 migrations (v0.7.0–v0.10.0) are below for anyone upgrading from very old deployments.
 
 For v0.7.0 (video generation):
 
@@ -619,7 +674,11 @@ For v0.8.0 (RAG Pass 1):
 
 ```
 npx wrangler vectorize create skyphusion-llm-vec --dimensions=768 --metric=cosine
-npx wrangler d1 execute skyphusion-llm-public --remote --file=schema.sql
+# Create the documents and chunks tables explicitly. (Historically this step
+# was "--file=schema.sql"; that is no longer safe because today's schema.sql
+# also carries later non-idempotent ALTERs. Use the explicit DDL below.)
+npx wrangler d1 execute skyphusion-llm-public --remote --command "CREATE TABLE IF NOT EXISTS documents (id INTEGER PRIMARY KEY AUTOINCREMENT, user_email TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), filename TEXT NOT NULL, mime TEXT NOT NULL, r2_key TEXT NOT NULL, size_bytes INTEGER NOT NULL, total_chars INTEGER NOT NULL DEFAULT 0, chunk_count INTEGER NOT NULL DEFAULT 0)"
+npx wrangler d1 execute skyphusion-llm-public --remote --command "CREATE TABLE IF NOT EXISTS chunks (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id INTEGER NOT NULL, user_email TEXT NOT NULL, chunk_index INTEGER NOT NULL, text TEXT NOT NULL, vector_id TEXT NOT NULL, FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE)"
 ```
 
 For v0.8.1 (RAG Pass 2):
@@ -657,6 +716,32 @@ npx wrangler secret delete GOOGLE_API_KEY
 Neither is fatal if left in place; they're just inert.
 
 v0.13.0, v0.15.0, v0.16.0, v0.17.0: no D1 migrations. v0.17.0 adds an optional `TAVILY_API_KEY` secret for the web-search feature; skip it and the feature falls back to Wikipedia only.
+
+v0.18.x, v0.19.x: code-only (provider extractions, SSE refactors, chunker rewrite). No D1 migrations.
+
+For v0.20.0 (projects and knowledge stores): ships the delta file `migrate-v0.20.0.sql`, which adds the `projects` and `project_documents` tables and their indexes. Every statement is `CREATE ... IF NOT EXISTS`, so this one is safely re-runnable, but apply it once:
+
+```
+npx wrangler d1 execute skyphusion-llm-public --remote --file=migrate-v0.20.0.sql
+```
+
+v0.20.1, v0.20.1.1: frontend-only (projects UI, modal hotfix). No D1 migrations.
+
+For v0.20.2 (conversation to project association): ships the delta file `migrate-v0.20.2.sql`, which adds `chats.project_id` and a partial index. The `ALTER` is non-idempotent; run the file exactly once. If you have already added this column, skip it (re-running raises "duplicate column name" and rolls back the run).
+
+```
+npx wrangler d1 execute skyphusion-llm-public --remote --file=migrate-v0.20.2.sql
+```
+
+For v0.20.3 (Discord ingestion): this release ships a delta file, `migrate-v0.20.3.sql`, containing the `project_messages` table and the four new `chunks` columns. Apply it once:
+
+```
+npx wrangler d1 execute skyphusion-llm-public --remote --file=migrate-v0.20.3.sql
+```
+
+The `ALTER TABLE chunks ADD COLUMN` statements in it are non-idempotent; run the file exactly once. If you need to verify what applied, `PRAGMA table_info(chunks)` should list `channel`, `authors`, `sent_at_start`, `sent_at_end`.
+
+v0.20.4: frontend-only (Discord import button). No D1 migration.
 
 ## Local type check
 

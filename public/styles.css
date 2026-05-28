@@ -1487,3 +1487,76 @@ textarea:focus {
   content: " \2713";
   color: var(--accent);
 }
+
+/* ---------- Discord import (v0.20.4) ---------- */
+
+.discord-import {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--bg-elev2);
+}
+
+.discord-import-title {
+  margin: 0 0 0.3rem 0;
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+.discord-import-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+  flex-wrap: wrap;
+}
+
+#discord-import-btn {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  padding: 0.4rem 0.8rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-family: inherit;
+}
+
+#discord-import-btn:hover {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+#discord-import-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.discord-import-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: #aaa;
+  cursor: pointer;
+}
+
+.discord-import-status {
+  margin-top: 0.6rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: 4px;
+  font-size: 0.82rem;
+  background: var(--bg-elev2);
+  color: #ccc;
+}
+
+.discord-import-status.ok {
+  background: rgba(122, 200, 122, 0.12);
+  border: 1px solid rgba(122, 200, 122, 0.35);
+  color: #9bd89b;
+}
+
+.discord-import-status.error {
+  background: rgba(255, 100, 100, 0.1);
+  border: 1px solid rgba(255, 100, 100, 0.3);
+  color: #ff8080;
+}

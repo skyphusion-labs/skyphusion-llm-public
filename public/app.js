@@ -1466,6 +1466,10 @@ const projectDocsModal     = $("#project-docs-modal");
 const projectDocsModalList = $("#project-docs-modal-list");
 const projectDocsModalEmpty= $("#project-docs-modal-empty");
 const projectDocsModalClose= $("#project-docs-modal-close");
+const discordImportBtn     = $("#discord-import-btn");
+const discordImportFile    = $("#discord-import-file");
+const discordImportBots    = $("#discord-import-bots");
+const discordImportStatus  = $("#discord-import-status");
 
 const ACTIVE_PROJECT_LS_KEY = "skyphusion.activeProjectId";
 
@@ -1669,7 +1673,16 @@ async function deleteProjectFromModal() {
 
 async function openDocsPicker(projectId) {
   docsPickerProjectId = projectId;
-  // Load the project's currently-attached docs alongside the full user doc list.
+  discordImportStatus.hidden = true;
+  discordImportStatus.textContent = "";
+  await renderDocsPickerList(projectId);
+  projectDocsModal.hidden = false;
+}
+
+// Fetch the full doc list + the project's attached set and render the
+// checkbox list. Extracted so it can be re-run after a Discord import
+// without closing/reopening the modal.
+async function renderDocsPickerList(projectId) {
   const [{ documents: allDocs }, { documents: projDocs }] = await Promise.all([
     api("/api/documents"),
     api(`/api/documents?project_id=${projectId}`),
@@ -1691,7 +1704,6 @@ async function openDocsPicker(projectId) {
         </li>`;
     }).join("");
   }
-  projectDocsModal.hidden = false;
 }
 
 function closeDocsPicker() {
@@ -1715,6 +1727,68 @@ async function handleDocsPickerToggle(docId, checked) {
     alert(`Failed to ${checked ? "attach" : "detach"} document: ${err.message}`);
     const cb = projectDocsModalList.querySelector(`[data-doc-toggle="${docId}"]`);
     if (cb) cb.checked = !checked;
+  }
+}
+
+// v0.20.4: Discord export import from the docs picker modal. Reads the
+// selected .json file as base64 and POSTs to the import-discord endpoint,
+// then refreshes the doc list + project counts in place.
+function setImportStatus(msg, kind) {
+  discordImportStatus.hidden = false;
+  discordImportStatus.textContent = msg;
+  discordImportStatus.className = "discord-import-status" + (kind ? ` ${kind}` : "");
+}
+
+async function handleDiscordImportFile(file) {
+  if (!file || !docsPickerProjectId) return;
+  const projectId = docsPickerProjectId;
+
+  // Read the file as base64 (strip the data: prefix the FileReader adds).
+  setImportStatus(`reading ${file.name}...`, "");
+  let base64;
+  try {
+    base64 = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => {
+        const result = String(r.result);
+        const comma = result.indexOf(",");
+        resolve(comma >= 0 ? result.slice(comma + 1) : result);
+      };
+      r.onerror = () => reject(new Error("file read failed"));
+      r.readAsDataURL(file);
+    });
+  } catch (err) {
+    setImportStatus(`Could not read file: ${err.message}`, "error");
+    return;
+  }
+
+  setImportStatus(`importing ${file.name} (parsing, chunking, embedding)...`, "");
+  discordImportBtn.disabled = true;
+  try {
+    const result = await api(`/api/projects/${projectId}/import-discord`, {
+      method: "POST",
+      body: JSON.stringify({
+        filename: file.name,
+        data: base64,
+        options: { includeBots: discordImportBots.checked },
+      }),
+    });
+    const skipped = (result.raw_message_count ?? 0) - (result.imported_message_count ?? 0);
+    const skipNote = skipped > 0 ? ` (${skipped} system/empty messages skipped)` : "";
+    setImportStatus(
+      `imported #${result.channel}: ${result.imported_message_count} messages -> ${result.chunk_count} chunks${skipNote}`,
+      "ok",
+    );
+    // Refresh the doc list (the export shows as a new attached doc) and the
+    // sidebar project counts.
+    await renderDocsPickerList(projectId);
+    await fetchProjects();
+    renderProjectsList();
+  } catch (err) {
+    setImportStatus(`Import failed: ${err.message}`, "error");
+  } finally {
+    discordImportBtn.disabled = false;
+    discordImportFile.value = ""; // reset so re-selecting the same file fires change
   }
 }
 
@@ -1751,6 +1825,12 @@ projectModalCancel.addEventListener("click", closeProjectModal);
 projectModalDelete.addEventListener("click", deleteProjectFromModal);
 
 projectDocsModalClose.addEventListener("click", closeDocsPicker);
+
+discordImportBtn.addEventListener("click", () => discordImportFile.click());
+discordImportFile.addEventListener("change", (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (file) handleDiscordImportFile(file);
+});
 
 projectDocsModalList.addEventListener("change", (e) => {
   const cb = e.target.closest("[data-doc-toggle]");

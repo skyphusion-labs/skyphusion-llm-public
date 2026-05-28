@@ -1,5 +1,51 @@
 # Changelog
 
+## v0.20.4
+
+Frontend Discord import button, plus a correction to the migration guidance in the v0.20.2 and v0.20.3 notes below. The DCE import shipped in v0.20.3 as a curl-only endpoint; this release adds a file picker so importing an export is a click, which is what makes validating the parser against a real export practical.
+
+### Correction to v0.20.2 / v0.20.3 migration notes
+
+Those entries claimed re-running the full `schema.sql` against an existing database produces a "non-fatal warning that wrangler continues past." That is wrong. `wrangler d1 execute --file` runs the whole file as a single transaction; a non-idempotent statement (e.g. `ALTER TABLE chats ADD COLUMN project_id` when the column already exists) raises `SQLITE_ERROR: duplicate column name` and aborts the entire transaction, rolling back every statement in the file including the ones you actually needed.
+
+The correct pattern, used from v0.20.3's migration onward: ship a per-release delta file (`migrate-vX.Y.Z.sql`) containing only that release's new statements, and run that. `schema.sql` remains the canonical full schema for standing up a fresh database, but is never re-run against an existing one. v0.20.3's `migrate-v0.20.3.sql` (project_messages + the four chunks columns, no chats.project_id) is the reference example.
+
+v0.20.4 itself adds no schema, so it ships no migration file.
+
+### Import button
+
+Added to the project documents modal (the "docs" action on a project row), below the document checkbox list:
+
+- "choose JSON export" button opens a file picker scoped to .json.
+- An "include bot messages" checkbox (default on) maps to the import's includeBots option.
+- On selection, the file is read as base64 in-browser and POSTed to the v0.20.3 endpoint `POST /api/projects/:id/import-discord`.
+- A status line reports progress (reading / importing) and the result: channel, imported message count, chunk count, and how many system/empty messages were skipped. Errors (bad file, parse failure, embedding failure) surface inline in red rather than as an alert.
+- On success the doc list and sidebar project counts refresh in place; the imported export appears as a new attached document.
+
+No worker changes; the endpoint already existed. The button is a client of it.
+
+### Touch points
+
+- `public/index.html`: import section markup in the docs modal (button, bots checkbox, hidden file input, status div).
+- `public/app.js`: element refs, `renderDocsPickerList` extracted from `openDocsPicker` for in-place refresh, `handleDiscordImportFile` (FileReader -> base64 -> POST -> refresh), button/file listeners.
+- `public/styles.css`: import section, button, status (ok/error variants).
+- `package.json`: 0.20.3 -> 0.20.4.
+
+No new dependencies, no schema, no worker change, no migration. Worker tests: 95/95 unchanged.
+
+### Smoke test (browser)
+
+1. Open a project's "docs" modal. The "import a Discord export" section appears below the document list.
+2. Click "choose JSON export", pick a DCE export. Status shows "reading...", then "importing...", then a green summary line.
+3. The export appears as a checked document in the list above; the sidebar project doc count increments.
+4. Start a chat with that project active and use_docs on; ask about the channel's content. Retrieved chunks should include the imported conversation.
+5. Error path: pick a non-DCE JSON (or any .json that isn't an export). Status shows a red parse error; nothing is added.
+
+### What's next
+
+- v0.20.5: retrieval filters (author / channel / date), reading the chunk metadata columns v0.20.3 added. Deferred deliberately so the filter UI is designed against the shape of real imported data.
+- v0.20.6: presigned R2 upload for exports over the 10MB worker request limit.
+
 ## v0.20.3
 
 Discord ingestion: import a DiscordChatExporter (DCE) JSON export into a project, parse it into messages, chunk it conversation-aware, and embed it into the project's retrieval scope. Backend only; the import is curl-driven for now, with a frontend file-picker button planned for v0.20.4 alongside the retrieval filters.

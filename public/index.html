@@ -130,6 +130,16 @@
         <p class="modal-hint">check the documents you want in this project. retrieval and per-project chats will be scoped to these documents.</p>
         <ul id="project-docs-modal-list" class="project-docs-modal-list"></ul>
         <div id="project-docs-modal-empty" class="modal-empty" hidden>no documents uploaded yet. upload one in the documents section first.</div>
+        <div class="discord-import">
+          <h3 class="discord-import-title">import a Discord export</h3>
+          <p class="modal-hint">upload a DiscordChatExporter JSON export (exported without "format markdown"). it's parsed into conversation chunks and added to this project.</p>
+          <div class="discord-import-row">
+            <button id="discord-import-btn" type="button">choose JSON export</button>
+            <label class="discord-import-opt"><input id="discord-import-bots" type="checkbox" checked> include bot messages</label>
+          </div>
+          <input id="discord-import-file" type="file" accept="application/json,.json" hidden>
+          <div id="discord-import-status" class="discord-import-status" hidden></div>
+        </div>
       </div>
       <footer class="modal-actions">
         <button id="project-docs-modal-close" type="button">done</button>

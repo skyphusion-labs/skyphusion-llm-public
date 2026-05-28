@@ -71,6 +71,8 @@ interface ChatRequest {
   use_docs?: boolean;   // Pass 2: when true, retrieve top-K chunks from Vectorize and inject as context
   use_web_search?: boolean;  // v0.17.0: when true, query Tavily + Wikipedia and inject snippets as context
   conversation_id?: string;  // Multi-turn: when present, continue an existing conversation
+  project_id?: number;  // v0.20.0: when present, scope RAG retrieval to the project's docs
+                        // and apply the project's system_prompt as default if system_prompt is empty
 }
 
 interface RetrievedChunk {
@@ -221,6 +223,26 @@ export default {
       if (request.method === "DELETE") return handleDocumentDelete(request, env, id);
     }
 
+    // v0.20.0: project endpoints. See handleProjectList for endpoint docs.
+    if (url.pathname === "/api/projects") {
+      if (request.method === "GET")  return handleProjectList(request, env);
+      if (request.method === "POST") return handleProjectCreate(request, env);
+    }
+    const p = url.pathname.match(/^\/api\/projects\/(\d+)$/);
+    if (p) {
+      const id = Number(p[1]);
+      if (request.method === "GET")    return handleProjectGet(request, env, id);
+      if (request.method === "PATCH")  return handleProjectUpdate(request, env, id);
+      if (request.method === "DELETE") return handleProjectDelete(request, env, id);
+    }
+    const pd = url.pathname.match(/^\/api\/projects\/(\d+)\/documents\/(\d+)$/);
+    if (pd) {
+      const projectId = Number(pd[1]);
+      const docId = Number(pd[2]);
+      if (request.method === "POST")   return handleProjectDocAdd(request, env, projectId, docId);
+      if (request.method === "DELETE") return handleProjectDocRemove(request, env, projectId, docId);
+    }
+
     if (url.pathname === "/api/conversations" && request.method === "GET") {
       return handleConversationList(request, env);
     }
@@ -335,6 +357,14 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
   const userEmail = getUserEmail(request);
   const inputs: InputAttachment[] = body.attachments ?? [];
 
+  // v0.20.0: resolve project_id to row, apply per-project system_prompt
+  // fallback when the per-turn prompt is empty/undefined. The effective
+  // prompt is mutated back onto `body` so downstream provider calls and
+  // persistence see exactly what was used. scopedProjectId is passed to
+  // retrieveContext so RAG retrieval is filtered to that project's docs.
+  const { resolvedSystemPrompt, scopedProjectId } = await resolveProjectForChat(env, userEmail, body);
+  body.system_prompt = resolvedSystemPrompt;
+
   // Hot-path parallelization (v0.12.1): kick off the prior-turns SELECT and
   // the RAG retrieve in the background while the attachment walk runs. None
   // of the three depend on each other (the SELECT only needs the inbound
@@ -362,7 +392,7 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
 
   const retrievePromise: Promise<{ chunks: RetrievedChunk[]; error: string | null }> =
     body.use_docs
-      ? retrieveContext(env, userEmail, body.user_input)
+      ? retrieveContext(env, userEmail, body.user_input, RETRIEVE_TOP_K, scopedProjectId)
       : Promise.resolve({ chunks: [], error: null });
 
   // v0.17.0: web search runs in parallel with RAG retrieval and the
@@ -1095,6 +1125,13 @@ async function runChatStream(request: Request, env: Env, model: ModelEntry, body
   const userEmail = getUserEmail(request);
   const inputs: InputAttachment[] = body.attachments ?? [];
 
+  // v0.20.0: same project resolution as runChat. See resolveProjectForChat
+  // for semantics. Mutating body.system_prompt here means downstream code
+  // (provider call, persistence) sees the effective prompt with no further
+  // awareness of projects.
+  const { resolvedSystemPrompt, scopedProjectId } = await resolveProjectForChat(env, userEmail, body);
+  body.system_prompt = resolvedSystemPrompt;
+
   // Hot-path parallelization (mirrors runChat v0.12.1). Kick off SELECT +
   // RAG retrieve before the attachment walk; await at the existing use sites.
   const conversationIdIn = body.conversation_id?.trim() || "";
@@ -1117,7 +1154,7 @@ async function runChatStream(request: Request, env: Env, model: ModelEntry, body
 
   const retrievePromise: Promise<{ chunks: RetrievedChunk[]; error: string | null }> =
     body.use_docs
-      ? retrieveContext(env, userEmail, body.user_input)
+      ? retrieveContext(env, userEmail, body.user_input, RETRIEVE_TOP_K, scopedProjectId)
       : Promise.resolve({ chunks: [], error: null });
 
   // v0.17.0: web search runs in parallel with RAG retrieval, same as runChat.
@@ -2072,6 +2109,20 @@ interface ChunkRow {
   sheet: string | null;
 }
 
+// v0.20.0: project + project_documents join. A project groups documents
+// (and in v0.20.1, conversations) under a shared system_prompt and
+// retrieval scope. Many-to-many membership via project_documents.
+interface ProjectRow {
+  id: number;
+  user_email: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  system_prompt: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // Output of the per-format extractors. Each ExtractedChunk has text plus
 // optional source-location metadata that gets persisted on the chunk row.
 interface ExtractedChunk {
@@ -2188,7 +2239,8 @@ async function retrieveContext(
   env: Env,
   userEmail: string,
   queryText: string,
-  topK: number = RETRIEVE_TOP_K
+  topK: number = RETRIEVE_TOP_K,
+  projectId?: number,
 ): Promise<{ chunks: RetrievedChunk[]; error: string | null }> {
   if (!queryText || !queryText.trim()) {
     return { chunks: [], error: "Empty query text" };
@@ -2211,9 +2263,15 @@ async function retrieveContext(
   }
 
   // 2) Query Vectorize. No metadata filter - we scope by user in D1 below.
+  // When projectId is set, we overfetch (3x topK) at the Vectorize stage
+  // and filter by project membership in D1, since Vectorize doesn't know
+  // about project membership. Without overfetch, a small topK that all
+  // misses the project would return zero results even when the project
+  // has relevant chunks.
+  const vectorizeTopK = projectId !== undefined ? topK * 3 : topK;
   let matches: { id: string; score: number }[];
   try {
-    const q = await env.VEC.query(queryVec, { topK });
+    const q = await env.VEC.query(queryVec, { topK: vectorizeTopK });
     matches = (q?.matches ?? []).map((m) => ({ id: m.id, score: m.score }));
   } catch (err) {
     const m = err instanceof Error ? err.message : String(err);
@@ -2227,20 +2285,38 @@ async function retrieveContext(
 
   // 3) D1 lookup: join chunks to documents, scope by user_email so we
   // never return another user's chunk even if their vector IDs would
-  // somehow collide.
+  // somehow collide. When projectId is set, additionally INNER JOIN
+  // project_documents so only chunks whose document is in that project's
+  // membership set come through.
   const ids = matches.map((m) => m.id);
   const placeholders = ids.map(() => "?").join(",");
   let rows;
   try {
-    rows = await env.DB.prepare(
-      `SELECT c.document_id, c.chunk_index, c.text, c.vector_id, c.page, c.sheet, d.filename
-         FROM chunks c
-         JOIN documents d ON c.document_id = d.id
-        WHERE c.user_email = ?
-          AND c.vector_id IN (${placeholders})`
-    )
-      .bind(userEmail, ...ids)
-      .all<{ document_id: number; chunk_index: number; text: string; vector_id: string; filename: string; page: number | null; sheet: string | null }>();
+    if (projectId !== undefined) {
+      rows = await env.DB.prepare(
+        `SELECT c.document_id, c.chunk_index, c.text, c.vector_id, c.page, c.sheet, d.filename
+           FROM chunks c
+           JOIN documents d           ON c.document_id = d.id
+           JOIN project_documents pd  ON pd.document_id = d.id
+           JOIN projects p            ON p.id = pd.project_id
+          WHERE c.user_email = ?
+            AND p.user_email = ?
+            AND pd.project_id = ?
+            AND c.vector_id IN (${placeholders})`
+      )
+        .bind(userEmail, userEmail, projectId, ...ids)
+        .all<{ document_id: number; chunk_index: number; text: string; vector_id: string; filename: string; page: number | null; sheet: string | null }>();
+    } else {
+      rows = await env.DB.prepare(
+        `SELECT c.document_id, c.chunk_index, c.text, c.vector_id, c.page, c.sheet, d.filename
+           FROM chunks c
+           JOIN documents d ON c.document_id = d.id
+          WHERE c.user_email = ?
+            AND c.vector_id IN (${placeholders})`
+      )
+        .bind(userEmail, ...ids)
+        .all<{ document_id: number; chunk_index: number; text: string; vector_id: string; filename: string; page: number | null; sheet: string | null }>();
+    }
   } catch (err) {
     const m = err instanceof Error ? err.message : String(err);
     console.error("retrieveContext: D1 lookup failed:", m);
@@ -2249,19 +2325,25 @@ async function retrieveContext(
 
   const results = rows.results ?? [];
   if (results.length === 0) {
-    // Vectorize had matches but D1 join returned nothing - likely a user_email
-    // mismatch (vectors written under one identity, query under another).
+    // Vectorize had matches but D1 join returned nothing. Two causes:
+    //   1. user_email mismatch (vectors written under a different identity).
+    //   2. With projectId set: matches were real but none of the matched
+    //      documents are members of the requested project.
     const idSample = ids.slice(0, 3).join(", ");
-    const msg = `Vectorize returned ${matches.length} matches but D1 join returned 0. user_email='${userEmail}', sample vector_ids=[${idSample}]. Check whether vectors were upserted under a different user identity.`;
+    const scope = projectId !== undefined ? ` project_id=${projectId},` : "";
+    const msg = `Vectorize returned ${matches.length} matches but D1 join returned 0. user_email='${userEmail}',${scope} sample vector_ids=[${idSample}]. Check whether vectors were upserted under a different user identity, or whether the project has any document members.`;
     console.warn("retrieveContext:", msg);
     return { chunks: [], error: msg };
   }
 
-  // 4) Merge scores back in, preserve Vectorize ordering.
+  // 4) Merge scores back in, preserve Vectorize ordering. When projectId
+  // is set we overfetched from Vectorize (3x topK), so cap output here to
+  // hold the chat prompt size to the caller's intended top-K.
   const byId = new Map(results.map((r) => [r.vector_id, r]));
   const scoreById = new Map(matches.map((m) => [m.id, m.score]));
   const out: RetrievedChunk[] = [];
   for (const id of ids) {
+    if (out.length >= topK) break;
     const r = byId.get(id);
     if (!r) continue;
     out.push({
@@ -2447,6 +2529,47 @@ function formatWebForSystemPrompt(results: RetrievedWebResult[]): string {
 
 async function handleDocumentList(request: Request, env: Env): Promise<Response> {
   const userEmail = getUserEmail(request);
+  const url = new URL(request.url);
+  const projectIdParam = url.searchParams.get("project_id");
+
+  // v0.20.0: optional ?project_id=N filter. When set, return only documents
+  // attached to that project via project_documents. The project ownership
+  // check is done by joining on projects.user_email implicitly via WHERE
+  // p.user_email = ?, so attempting to filter by another user's project
+  // returns an empty list rather than leaking that the project exists.
+  if (projectIdParam !== null) {
+    const projectId = Number(projectIdParam);
+    if (!Number.isInteger(projectId) || projectId <= 0) {
+      return json({ error: "project_id must be a positive integer" }, { status: 400 });
+    }
+    const rows = await env.DB.prepare(
+      `SELECT d.id, d.created_at, d.filename, d.mime, d.size_bytes,
+              d.total_chars, d.chunk_count
+         FROM documents d
+         JOIN project_documents pd ON pd.document_id = d.id
+         JOIN projects p           ON p.id = pd.project_id
+        WHERE d.user_email = ?
+          AND p.user_email = ?
+          AND pd.project_id = ?
+        ORDER BY pd.added_at DESC`
+    )
+      .bind(userEmail, userEmail, projectId)
+      .all<{
+        id: number;
+        created_at: string;
+        filename: string;
+        mime: string;
+        size_bytes: number;
+        total_chars: number;
+        chunk_count: number;
+      }>();
+    return json({
+      user: userEmail,
+      project_id: projectId,
+      documents: rows.results ?? [],
+    });
+  }
+
   const rows = await env.DB.prepare(
     `SELECT id, created_at, filename, mime, size_bytes, total_chars, chunk_count
        FROM documents
@@ -2666,6 +2789,335 @@ async function handleDocumentDelete(request: Request, env: Env, id: number): Pro
   await r2DeleteSafe(env, doc.r2_key);
 
   return json({ deleted: id, vectors_removed: vectorIds.length });
+}
+
+// ---------- Projects (v0.20.0) ----------
+//
+// Projects group documents (and in v0.20.1 onward, conversations) under a
+// shared system_prompt and retrieval scope. v0.20.0 endpoints:
+//
+//   GET    /api/projects                              list user's projects
+//   POST   /api/projects                              create project
+//   GET    /api/projects/:id                          get project + members
+//   PATCH  /api/projects/:id                          rename / update prompt / desc
+//   DELETE /api/projects/:id                          delete (cascades to memberships)
+//   POST   /api/projects/:pid/documents/:did          add document to project
+//   DELETE /api/projects/:pid/documents/:did          remove document from project
+//   GET    /api/documents?project_id=N                list docs in project
+//
+// All endpoints scope by user_email; cross-user reads return 404,
+// cross-user writes (e.g. adding another user's doc to your project) are
+// rejected with 400 before touching the DB.
+//
+// Per-project system prompt fallback (handleChat / handleChatStream):
+// when a chat request includes project_id but no per-turn system_prompt,
+// the project's system_prompt is used as default. A per-turn system_prompt
+// always overrides; empty-string system_prompt counts as "set to empty"
+// and disables the fallback (intentional - lets users explicitly clear).
+//
+// Per-project RAG scoping (retrieveContext): when a chat request includes
+// project_id, retrieval joins project_documents and excludes chunks from
+// documents not in that project's membership set. No project_id means
+// "all user's docs" (backward compat).
+
+// Generate a URL-safe slug from a display name. Strips non-alphanumeric
+// characters, collapses runs of whitespace and dashes, lowercases, trims.
+// Empty input or all-punctuation input falls back to "project".
+function slugify(name: string): string {
+  const s = name
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[^a-z0-9\s-]+/g, "")  // drop punctuation/diacritics
+    .trim()
+    .replace(/[\s-]+/g, "-")          // collapse whitespace runs to single dash
+    .replace(/^-+|-+$/g, "");         // trim leading/trailing dashes
+  return s || "project";
+}
+
+// Find an unused slug for the user. If `base` is unused, returns base.
+// Otherwise appends -2, -3, ... until free. Bounded at 200 attempts;
+// beyond that we throw, which would indicate a degenerate slug or a
+// pathological state.
+async function findFreeSlug(env: Env, userEmail: string, base: string): Promise<string> {
+  let candidate = base;
+  let suffix = 2;
+  while (suffix < 200) {
+    const existing = await env.DB.prepare(
+      `SELECT id FROM projects WHERE user_email = ? AND slug = ? LIMIT 1`
+    )
+      .bind(userEmail, candidate)
+      .first();
+    if (!existing) return candidate;
+    candidate = `${base}-${suffix}`;
+    suffix++;
+  }
+  throw new Error(`Could not allocate slug after 200 attempts (base='${base}')`);
+}
+
+// Shared helper used by runChat + runChatStream. Resolves the chat's
+// project_id (if any), looks up the project row scoped to the user, and
+// computes the effective system prompt with project-fallback semantics.
+//
+// Semantics:
+//   - body.project_id is undefined or not a positive integer: no project.
+//   - body.project_id points to a project not owned by this user: treated
+//     same as missing (returns project=null, no fallback). Logged.
+//   - body.project_id points to a deleted/unknown project: same as above.
+//
+//   - Per-turn body.system_prompt non-empty (after trim) wins outright;
+//     the project's system_prompt is ignored.
+//   - Per-turn body.system_prompt is undefined or empty/whitespace AND a
+//     project is resolved AND that project has a non-null system_prompt:
+//     use the project's prompt.
+//   - Otherwise: no effective prompt (undefined).
+//
+// The resolved project_id is also returned for retrieveContext scoping.
+async function resolveProjectForChat(
+  env: Env,
+  userEmail: string,
+  body: ChatRequest,
+): Promise<{ project: ProjectRow | null; resolvedSystemPrompt: string | undefined; scopedProjectId: number | undefined }> {
+  let project: ProjectRow | null = null;
+  let scopedProjectId: number | undefined;
+
+  if (body.project_id !== undefined && Number.isInteger(body.project_id) && body.project_id > 0) {
+    project = await env.DB.prepare(
+      `SELECT id, user_email, name, slug, description, system_prompt, created_at, updated_at
+         FROM projects WHERE id = ? AND user_email = ?`
+    )
+      .bind(body.project_id, userEmail)
+      .first<ProjectRow>();
+    if (!project) {
+      console.warn(
+        `Chat referenced unknown project_id=${body.project_id} for user_email='${userEmail}'; ` +
+        `falling back to no-project semantics (no system prompt fallback, no retrieval scoping).`
+      );
+    } else {
+      scopedProjectId = project.id;
+    }
+  }
+
+  const reqPrompt = body.system_prompt;
+  const hasReqPrompt = reqPrompt !== undefined && reqPrompt.trim() !== "";
+  const resolvedSystemPrompt = hasReqPrompt
+    ? reqPrompt
+    : (project?.system_prompt ?? undefined);
+
+  return { project, resolvedSystemPrompt, scopedProjectId };
+}
+
+async function handleProjectList(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  // LEFT JOIN to count document memberships per project. COUNT(pd.document_id)
+  // returns 0 for projects with no members (because of LEFT JOIN), rather
+  // than 1 which COUNT(*) would return.
+  const rows = await env.DB.prepare(
+    `SELECT p.id, p.name, p.slug, p.description, p.system_prompt,
+            p.created_at, p.updated_at,
+            COUNT(pd.document_id) AS document_count
+       FROM projects p
+       LEFT JOIN project_documents pd ON pd.project_id = p.id
+      WHERE p.user_email = ?
+      GROUP BY p.id
+      ORDER BY p.created_at DESC`
+  )
+    .bind(userEmail)
+    .all<{
+      id: number; name: string; slug: string; description: string | null;
+      system_prompt: string | null; created_at: string; updated_at: string;
+      document_count: number;
+    }>();
+  return json({ user: userEmail, projects: rows.results ?? [] });
+}
+
+async function handleProjectGet(request: Request, env: Env, id: number): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const proj = await env.DB.prepare(
+    `SELECT id, name, slug, description, system_prompt, created_at, updated_at
+       FROM projects WHERE id = ? AND user_email = ?`
+  )
+    .bind(id, userEmail)
+    .first<ProjectRow>();
+  if (!proj) return json({ error: "Not found" }, { status: 404 });
+
+  // Include the project's documents (id, filename, chunk_count) so the
+  // detail view can render them without a second fetch.
+  const docs = await env.DB.prepare(
+    `SELECT d.id, d.filename, d.mime, d.size_bytes, d.chunk_count, d.created_at,
+            pd.added_at
+       FROM project_documents pd
+       JOIN documents d ON d.id = pd.document_id
+      WHERE pd.project_id = ? AND d.user_email = ?
+      ORDER BY pd.added_at DESC`
+  )
+    .bind(id, userEmail)
+    .all<{
+      id: number; filename: string; mime: string; size_bytes: number;
+      chunk_count: number; created_at: string; added_at: string;
+    }>();
+
+  return json({ project: proj, documents: docs.results ?? [] });
+}
+
+async function handleProjectCreate(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  let body: { name?: string; description?: string; system_prompt?: string };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+  const name = (body.name ?? "").trim();
+  if (!name) return json({ error: "name is required" }, { status: 400 });
+  if (name.length > 200) return json({ error: "name too long (max 200 chars)" }, { status: 400 });
+
+  const baseSlug = slugify(name);
+  const slug = await findFreeSlug(env, userEmail, baseSlug);
+
+  const description = (body.description ?? "").trim() || null;
+  const systemPrompt = (body.system_prompt ?? "").trim() || null;
+
+  const result = await env.DB.prepare(
+    `INSERT INTO projects (user_email, name, slug, description, system_prompt)
+     VALUES (?, ?, ?, ?, ?)
+     RETURNING id, name, slug, description, system_prompt, created_at, updated_at`
+  )
+    .bind(userEmail, name, slug, description, systemPrompt)
+    .first<ProjectRow>();
+
+  if (!result) return json({ error: "Insert failed" }, { status: 500 });
+  return json({ project: result }, { status: 201 });
+}
+
+async function handleProjectUpdate(request: Request, env: Env, id: number): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  // Confirm ownership before any write.
+  const existing = await env.DB.prepare(
+    `SELECT id FROM projects WHERE id = ? AND user_email = ?`
+  )
+    .bind(id, userEmail)
+    .first();
+  if (!existing) return json({ error: "Not found" }, { status: 404 });
+
+  let body: { name?: string; description?: string | null; system_prompt?: string | null };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  // Build dynamic UPDATE based on which fields the caller sent. Undefined =
+  // "don't touch"; null or empty string = "clear to empty/null". Name has
+  // to be a non-empty string if provided.
+  const sets: string[] = [];
+  const params: Array<string | number | null> = [];
+
+  if (body.name !== undefined) {
+    const n = body.name.trim();
+    if (!n) return json({ error: "name cannot be empty" }, { status: 400 });
+    if (n.length > 200) return json({ error: "name too long (max 200 chars)" }, { status: 400 });
+    sets.push("name = ?");
+    params.push(n);
+  }
+  if (body.description !== undefined) {
+    const d = (body.description ?? "").toString().trim() || null;
+    sets.push("description = ?");
+    params.push(d);
+  }
+  if (body.system_prompt !== undefined) {
+    const sp = (body.system_prompt ?? "").toString().trim() || null;
+    sets.push("system_prompt = ?");
+    params.push(sp);
+  }
+
+  if (sets.length === 0) {
+    return json({ error: "No updatable fields in body" }, { status: 400 });
+  }
+
+  // Slug is intentionally NOT updated on rename. Keeps URLs/storage keys
+  // stable. If renames need new slugs, that's a separate explicit op.
+  sets.push("updated_at = datetime('now')");
+  params.push(id, userEmail);
+
+  await env.DB.prepare(
+    `UPDATE projects SET ${sets.join(", ")} WHERE id = ? AND user_email = ?`
+  )
+    .bind(...params)
+    .run();
+
+  const updated = await env.DB.prepare(
+    `SELECT id, name, slug, description, system_prompt, created_at, updated_at
+       FROM projects WHERE id = ? AND user_email = ?`
+  )
+    .bind(id, userEmail)
+    .first<ProjectRow>();
+  return json({ project: updated });
+}
+
+async function handleProjectDelete(request: Request, env: Env, id: number): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const existing = await env.DB.prepare(
+    `SELECT id FROM projects WHERE id = ? AND user_email = ?`
+  )
+    .bind(id, userEmail)
+    .first();
+  if (!existing) return json({ error: "Not found" }, { status: 404 });
+
+  // Cascade: delete memberships first, then the project itself. Documents
+  // belonging to the project STAY (they may be in other projects, and even
+  // if not, the user uploaded them and may want to keep them outside
+  // project organization).
+  await env.DB.batch([
+    env.DB.prepare(`DELETE FROM project_documents WHERE project_id = ?`).bind(id),
+    env.DB.prepare(`DELETE FROM projects          WHERE id = ? AND user_email = ?`).bind(id, userEmail),
+  ]);
+  return json({ deleted: id });
+}
+
+async function handleProjectDocAdd(request: Request, env: Env, projectId: number, docId: number): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  // Confirm both project and document belong to the user. Cross-user
+  // attachment is rejected here.
+  const proj = await env.DB.prepare(
+    `SELECT id FROM projects WHERE id = ? AND user_email = ?`
+  )
+    .bind(projectId, userEmail)
+    .first();
+  if (!proj) return json({ error: "Project not found" }, { status: 404 });
+
+  const doc = await env.DB.prepare(
+    `SELECT id FROM documents WHERE id = ? AND user_email = ?`
+  )
+    .bind(docId, userEmail)
+    .first();
+  if (!doc) return json({ error: "Document not found" }, { status: 404 });
+
+  // INSERT OR IGNORE: idempotent membership. Reattaching a doc that's
+  // already a member returns 200 without an error (added_at stays at the
+  // original value).
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO project_documents (project_id, document_id) VALUES (?, ?)`
+  )
+    .bind(projectId, docId)
+    .run();
+  return json({ project_id: projectId, document_id: docId, added: true });
+}
+
+async function handleProjectDocRemove(request: Request, env: Env, projectId: number, docId: number): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const proj = await env.DB.prepare(
+    `SELECT id FROM projects WHERE id = ? AND user_email = ?`
+  )
+    .bind(projectId, userEmail)
+    .first();
+  if (!proj) return json({ error: "Project not found" }, { status: 404 });
+
+  await env.DB.prepare(
+    `DELETE FROM project_documents WHERE project_id = ? AND document_id = ?`
+  )
+    .bind(projectId, docId)
+    .run();
+  return json({ project_id: projectId, document_id: docId, removed: true });
 }
 
 // ---------- Artifact serving ----------

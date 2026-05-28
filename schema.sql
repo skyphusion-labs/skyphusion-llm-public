@@ -97,3 +97,65 @@ CREATE TABLE IF NOT EXISTS chunks (
 CREATE INDEX IF NOT EXISTS idx_chunks_doc    ON chunks(document_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_vector ON chunks(vector_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_user   ON chunks(user_email);
+
+-- ---------- Projects (v0.20.0) ----------
+--
+-- A project groups documents (and eventually conversations, in v0.20.1)
+-- under a shared system prompt and retrieval scope. Documents can belong
+-- to multiple projects via the project_documents join table.
+--
+-- system_prompt: when set, becomes the default system prompt for chats
+-- created within this project. A per-turn system_prompt on the chat
+-- request overrides this entirely (no append). Empty string and NULL
+-- are equivalent semantically.
+--
+-- slug: derived from name at create time, used as a stable identifier
+-- in URLs/storage. Auto-suffixed on collision per user_email
+-- (mudd, mudd-2, mudd-3, ...). Renaming the project does not change the
+-- slug, so frontends can safely use slug as a URL fragment.
+--
+-- Per-user scoping: all projects rows have a user_email; cross-user
+-- access is enforced in application code (D1 doesn't honor FKs).
+
+CREATE TABLE IF NOT EXISTS projects (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_email      TEXT NOT NULL,
+  name            TEXT NOT NULL,
+  slug            TEXT NOT NULL,
+  description     TEXT,
+  system_prompt   TEXT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_projects_user
+  ON projects(user_email, created_at DESC);
+
+-- Slug uniqueness is per-user, not global. Two different users can both
+-- have a project slugged 'mudd'.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_slug_user
+  ON projects(user_email, slug);
+
+-- ---------- Project membership (v0.20.0) ----------
+--
+-- Many-to-many: a document can live in multiple projects, a project
+-- contains multiple documents. (project_id, document_id) is the natural
+-- primary key. Both FK relationships cascade on delete via application
+-- code (D1 ignores PRAGMA foreign_keys); deleting a project or document
+-- cleans up its membership rows.
+--
+-- user_email lives on the projects and documents rows; this table doesn't
+-- duplicate it. Cross-user membership is rejected by the route handlers
+-- before insert.
+
+CREATE TABLE IF NOT EXISTS project_documents (
+  project_id      INTEGER NOT NULL,
+  document_id     INTEGER NOT NULL,
+  added_at        TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (project_id, document_id),
+  FOREIGN KEY (project_id)  REFERENCES projects(id)  ON DELETE CASCADE,
+  FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_documents_doc
+  ON project_documents(document_id);

@@ -1,5 +1,127 @@
 # Changelog
 
+## v0.20.0
+
+First half of the projects + knowledge stores feature: schema, worker API, and RAG project-scoping. **Backend only; no UI yet.** v0.20.1 adds the frontend. v0.20.0 is testable end-to-end with curl; running the migration against a production DB is safe (additive schema only).
+
+This release was scoped as "stage 1 of v0.20.0" rather than the full feature because shipping the backend alone bakes independently. A schema or scoping bug caught at this stage doesn't cascade into UI work that depended on it.
+
+### What a project is
+
+A project groups documents (and in v0.20.1+, conversations) under a shared system prompt and retrieval scope. Documents can belong to multiple projects (many-to-many via `project_documents`). Each user has private projects scoped by `user_email`; cross-user access is rejected at the route layer.
+
+The intended use case: split organizational contexts. A legal-research project bundles case PDFs and a system prompt that frames the assistant as a paralegal; a worldbuilding project bundles fiction notes and frames it as a creative collaborator. The same documents can live in both projects if you want them to.
+
+### Schema (`schema.sql`)
+
+Two new tables appended. The file is still a single `schema.sql` (no migration sequence), applied via `wrangler d1 execute --file=schema.sql`. New tables use `CREATE TABLE IF NOT EXISTS` so applying against an existing database is idempotent.
+
+```sql
+CREATE TABLE projects (
+  id, user_email, name, slug, description, system_prompt,
+  created_at, updated_at
+);
+CREATE UNIQUE INDEX idx_projects_slug_user ON projects(user_email, slug);
+
+CREATE TABLE project_documents (
+  project_id, document_id, added_at,
+  PRIMARY KEY (project_id, document_id)
+);
+```
+
+Slug is per-user-unique (two different users can both have `mudd`). Slug is derived from name at create time and stable across renames so URLs/storage keys don't shift if the user later renames "MUDD" to "MUDD: Worldbuilding".
+
+### Worker API
+
+Eight new endpoints, two modified endpoints. All scope by `user_email`; cross-user reads return 404, cross-user writes 400. Project handlers live next to the document handlers in `src/index.ts`.
+
+```
+GET    /api/projects                          list projects + document counts
+POST   /api/projects                          create (body: {name, description?, system_prompt?})
+GET    /api/projects/:id                      get project + its documents
+PATCH  /api/projects/:id                      update name/description/system_prompt
+DELETE /api/projects/:id                      cascade-delete memberships, keep documents
+POST   /api/projects/:pid/documents/:did      attach document to project
+DELETE /api/projects/:pid/documents/:did      detach document from project
+GET    /api/documents?project_id=N            scope document list to project
+POST   /api/chat        (accepts project_id)  project-aware chat (see below)
+POST   /api/chat/stream (accepts project_id)  same, streaming
+```
+
+### Chat dispatch changes
+
+`ChatRequest` gains an optional `project_id: number` field. Both `runChat` and `runChatStream` now call `resolveProjectForChat()` near the top of the function, which:
+
+1. Looks up the project row (scoped to `user_email`). Unknown / cross-user `project_id` is logged and treated as no-project; the chat completes normally instead of erroring.
+2. Computes the effective system prompt:
+   - Per-turn `system_prompt` (after trim, non-empty): wins outright.
+   - Otherwise, if a project resolved and its `system_prompt` is non-null: use that.
+   - Otherwise: undefined (no system prompt).
+3. Returns `scopedProjectId` for `retrieveContext`.
+
+The effective prompt is mutated back onto `body.system_prompt` so all downstream code (provider call, persistence, conversation history) sees the same string. Project prompt changes do not retroactively edit older turns: each chat row persists what was actually sent.
+
+### Retrieval scoping (`retrieveContext`)
+
+When `projectId` is set:
+- Vectorize is queried with `topK * 3` (overfetch) since project filtering happens in D1 after.
+- The D1 join adds `JOIN project_documents pd ON pd.document_id = d.id` and filters by `pd.project_id = ?`.
+- The output is then capped back to the caller's `topK` so chat-prompt size doesn't grow.
+
+Without `projectId`, behavior is unchanged from v0.19.5: full-corpus retrieval scoped only by `user_email`. Existing chat requests that don't send `project_id` keep working identically.
+
+The error-path message now distinguishes the two reasons for a Vectorize-matches-but-D1-empty result: (a) `user_email` mismatch, (b) project has no matching member documents. Both surface in `console.warn`.
+
+### Slug allocation
+
+`slugify("MUDD: Worldbuilding")` returns `"mudd-worldbuilding"`. Collision handling: if the slug is already taken for this user, suffix with `-2`, `-3`, etc. Bounded at 200 attempts; beyond that, the create handler throws (would indicate a degenerate input or pathological state).
+
+### Touch points
+
+- `schema.sql`: 99 -> 161 lines (+62). `projects` + `project_documents` tables and three indexes appended.
+- `src/index.ts`: 2939 -> 3391 lines (+452). Project handlers, `resolveProjectForChat` helper, slugify + findFreeSlug helpers, retrieveContext scoping, project_id in chat dispatch, route registration, ProjectRow type.
+- `package.json`: version bump 0.19.5 -> 0.20.0.
+
+No new dependencies. No new secrets. No new bindings. Existing 78 tests still pass; the new code paths are exercised via the curl smoke test below since route handler tests aren't part of the suite.
+
+### Smoke test (apply order matters)
+
+1. Apply schema first: `wrangler d1 execute YOUR_DB --remote --file=schema.sql` (or `--local` for wrangler dev).
+2. Deploy the worker.
+3. Create a project:
+   ```bash
+   curl -X POST https://your-worker/api/projects \
+     -H "content-type: application/json" \
+     -d '{"name":"MUDD","description":"MUDD worldbuilding","system_prompt":"You are a creative writing collaborator helping flesh out a Discord-based interactive fiction world. Write in second person when describing scenes."}'
+   ```
+   Expect 201 with the project object including `id`, `slug` ("mudd"), and timestamps.
+
+4. List projects: `curl https://your-worker/api/projects` - should show the new project with `document_count: 0`.
+
+5. Pick an existing document id, attach it: `curl -X POST https://your-worker/api/projects/1/documents/5` (project id 1, doc id 5). Confirm via GET.
+
+6. Send a chat with `project_id`:
+   ```bash
+   curl -X POST https://your-worker/api/chat \
+     -H "content-type: application/json" \
+     -d '{"model":"@cf/meta/llama-3.2-3b-instruct","user_input":"Describe the entrance to the underground city.","project_id":1,"use_docs":true}'
+   ```
+   The assistant response should reflect the project's system prompt (second-person scene description). Retrieved context (if any) should come only from the attached doc, not all your other docs.
+
+7. Try a cross-user attack: create a project as user A, then with user B's auth, GET `/api/projects/<A's id>`. Should return 404.
+
+8. Delete the project: `curl -X DELETE https://your-worker/api/projects/1`. Confirm the document still exists in `/api/documents`.
+
+### What's next: v0.20.1 (frontend)
+
+- Sidebar `Projects` section above `Documents`, listing existing projects.
+- "+ new project" button -> modal with name/description/system_prompt.
+- Click a project to expand: shows its docs, the system prompt (editable inline), and a "+ attach doc" picker.
+- Composer shows a subtle indicator when a project is active ("project: MUDD"); send button includes `project_id` in the chat request.
+- "New chat in this project" button in the project view; new conversations started while a project is selected auto-include the project_id.
+
+After v0.20.1, v0.20.2 takes on Discord JSON ingestion + conversation-aware chunking.
+
 ## v0.19.5
 
 Frontend-only release: adds drag-and-drop and clipboard-paste attachment paths, and fixes a latent guard in `handleFiles` that silently dropped attachments for STT and FLUX-2 image gen despite the UI showing the attach affordance.

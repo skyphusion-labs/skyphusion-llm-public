@@ -1,5 +1,53 @@
 # Changelog
 
+## v0.21.0
+
+Catalog additions plus a testability extraction. Adds Claude Opus 4.8, Google Veo 3.1 / 3.1 Fast, and a first pass at OpenAI proxied chat (non-streaming). No schema, no migration, no new dependencies, no new worker secrets.
+
+### Claude Opus 4.8
+
+Added `anthropic/claude-opus-4-8` as the flagship Anthropic chat entry, above Opus 4.7. The API model id was verified as `claude-opus-4-8` against the Anthropic skills repo, the AWS Bedrock model card, and the Claude Code docs rather than from memory (released 2026-05-28; 1M context, 128K max output, adaptive thinking). It routes through the existing `anthropic/` prefix strip in `src/providers/anthropic.ts`, so no dispatch change was needed; it streams like the other Claude entries.
+
+### Veo 3.1 / 3.1 Fast
+
+Added `google/veo-3.1` and `google/veo-3.1-fast` to Video Gen. These are zero-code drop-ins: `runVideo` hands `model.id` straight to the `LongRunWorkflow`, which calls `aiRun()` with no per-provider allowlist, and `google` was already in the `Provider` union. They use the same Unified Billing route and the same text-to-video param baseline (8s / 16:9 / 720p / audio) as the preserved `veo-3` / `veo-3-fast` entries.
+
+Note on history: Veo 3.1 previously shipped as a BYOK path and was removed in v0.14.0. This re-add is on the Unified Billing side (no `byok_alias`, keyless `provider: "google"`), the same shape v0.14.0 explicitly preserved for `veo-3`, so it is consistent with that consolidation rather than a reversal of it.
+
+### OpenAI proxied chat (non-streaming)
+
+Added `openai/gpt-5.5`, `openai/gpt-5.4`, `openai/gpt-5.4-mini`, and `openai/o4-mini`, all `provider: "openai"`, via Cloudflare Unified Billing. They route through the generic `else` branch in `runChat` (`aiRun(env, model.id, { messages })`), the same call surface as the Workers AI hosted chat models, with no OpenAI dispatch helper and no `OPENAI_API_KEY` secret.
+
+This is a deliberate re-introduction. OpenAI chat shipped as BYOK in v0.11.0 (GPT-5.5 / 5.4 / 5.4 mini / 4.1) and was removed in v0.14.0, which dropped all non-Anthropic/xAI/Bedrock BYOK paths to consolidate around "Anthropic + xAI + Bedrock BYOK and Unified Billing for everything else." These entries come back on the Unified Billing side of that decision; the BYOK path stays gone. Future readers seeing `openai/gpt-5.5` return three releases after a breaking removal: this is why.
+
+Two deliberate constraints:
+
+- **Non-streaming.** The streaming gate (`handleChatStream`) returns `501` for provider `openai` because there is no OpenAI SSE parser yet, so a stream request can't slip through to a parser that doesn't exist. `streaming` is left off the entries; the picker routes them to `POST /api/chat`.
+- **`capabilities: []` (no vision).** Multimodal input through the proxied binding is unverified, so the attach affordance stays off rather than offering something that might 502 on an image.
+
+### Refactor: `extractOutput` / `extractUsage` -> `src/output-extract.ts`
+
+Pulled both pure functions out of `src/index.ts` into a new `src/output-extract.ts`, imported back in. The motivation is testability: `src/index.ts` imports `cloudflare:workers`, which can't load under the plain-Node vitest pool, so the functions couldn't be unit-tested in place (the same reason parsers, chunking, and ai-binding were extracted earlier). Behavior is unchanged; the only edit to the logic was a clarifying comment on the OpenAI Responses-API branch. The whole OpenAI re-introduction rests on these two functions parsing the OpenAI shapes correctly, so locking them with tests was the point.
+
+New `tests/output-extract.test.ts` (17 tests). Load-bearing cases are the two OpenAI shapes (chat-completions `{choices[0].message.content}` and Responses API `{output[].content[]}`). The rest is regression coverage that the extraction didn't alter the Anthropic / Bedrock / Workers AI shapes, plus a guard that the array-shaped Responses `output` and the object-shaped Bedrock `output` don't cross-fire.
+
+### Touch points
+
+- `src/models.ts`: `"openai"` added to the `Provider` union; seven new entries (Opus 4.8, Veo 3.1, Veo 3.1 Fast, and the four OpenAI chat models).
+- `src/output-extract.ts`: new. `extractOutput` + `extractUsage`, moved verbatim modulo `export` and the one comment.
+- `src/index.ts`: import added; the two inline function definitions removed (replaced with a pointer comment).
+- `tests/output-extract.test.ts`: new, 17 tests.
+- `README.md`: chat catalog now 37 models / 5 providers / 32 stream-capable; Opus 4.8 and the OpenAI line added; new "OpenAI models (Unified Billing)" section; Veo 3.1 in the video summary and the availability matrix.
+- `package.json`: 0.20.4 -> 0.21.0.
+
+Worker typecheck clean. Worker tests: 112/112 (95 prior + 17 new).
+
+### Outstanding (carried in the v0.21.0 session notes)
+
+1. **Live-verify the OpenAI response shape before trusting OpenAI chat in prod.** The tests prove that *if* `env.AI.run("openai/gpt-5.5", { messages })` returns the `{choices}` shape, it parses; they can't prove the shape. One live call against the deployed worker settles it: `curl -sS https://<host>/api/chat -H 'content-type: application/json' -d '{"model":"openai/gpt-5.5","user_input":"reply with the single word: pong"}'`. If `output` comes back as a JSON blob, the proxied shape differs; capture it and add a branch plus a test. (v0.11.0 ran OpenAI through the gateway's OpenAI proxy and the `{choices}` branch handled it then, so confidence is reasonable, but that path was BYOK-proxy and this one is Unified Billing `env.AI.run`.)
+2. **Gemini deferred.** Its native shape (`candidates[].content.parts[].text`, `usageMetadata.*`) isn't handled by `extractOutput`/`extractUsage`. Whether the binding normalizes it to OpenAI shape is an open question; resolve that (CF AI-binding docs or one live call) and add the branches with tests before adding any `google/gemini-*` entries. `google` is already in the union, so those are catalog-only once parsing is confirmed.
+3. **OpenAI streaming** (optional, larger): an OpenAI SSE parser under `src/parsers/`, wired into `runChatStream`, then open the gate for provider `openai` and flip `streaming: true`.
+
 ## v0.20.4
 
 Frontend Discord import button, plus a correction to the migration guidance in the v0.20.2 and v0.20.3 notes below. The DCE import shipped in v0.20.3 as a curl-only endpoint; this release adds a file picker so importing an export is a click, which is what makes validating the parser against a real export practical.

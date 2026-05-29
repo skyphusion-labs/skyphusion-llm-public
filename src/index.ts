@@ -32,6 +32,7 @@ import { callXai, callXaiStream } from "./providers/xai";
 import { callBedrockNova, callBedrockNovaStream, callBedrockPegasus } from "./providers/bedrock";
 import { callWorkersAIStream } from "./providers/workers-ai";
 import { callOpenAIStream } from "./providers/openai";
+import { callGemini } from "./providers/google";
 import type {
   InputImageAttachment,
   InputAudioAttachment,
@@ -550,7 +551,7 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
   // text messages. Multimodal content (images) from prior turns is NOT
   // re-included; if the user wants to reference earlier images they can
   // re-attach. Current turn's attachments are still threaded into userContent.
-  const wantsSystemInMessages = model.provider !== "anthropic";
+  const wantsSystemInMessages = model.provider !== "anthropic" && model.provider !== "google";
   const messages: Array<unknown> = [];
   if (effectiveSystemPrompt && wantsSystemInMessages) {
     messages.push({ role: "system", content: effectiveSystemPrompt });
@@ -583,6 +584,10 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
         const r = await callBedrockNova(env, model, effectiveSystemPrompt || undefined, messages);
         result = r.raw;
       }
+    } else if (model.provider === "google") {
+      const r = await callGemini(env, model, effectiveSystemPrompt || undefined, messages);
+      result = r.raw;
+      logId = r.logId;
     } else {
       result = await aiRun(env, model.id, { messages });
       logId = aiLogId(env);

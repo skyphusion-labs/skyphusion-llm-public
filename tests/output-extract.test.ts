@@ -81,6 +81,11 @@ describe("extractOutput", () => {
     expect(extractOutput({ generations: [{ text: "gen text" }] })).toBe("gen text");
   });
 
+  it("reads Gemini candidates content parts", () => {
+    const r = { candidates: [{ content: { parts: [{ text: "gemini " }, { text: "answer" }] } }], modelVersion: "gemini-3.1-pro-preview" };
+    expect(extractOutput(r)).toBe("gemini answer");
+  });
+
   it("falls back to JSON.stringify on an unrecognized shape", () => {
     const weird = { nope: true };
     expect(extractOutput(weird)).toBe(JSON.stringify(weird));
@@ -106,6 +111,11 @@ describe("extractUsage", () => {
   it("reads Bedrock camelCase inputTokens / outputTokens", () => {
     expect(extractUsage({ usage: { inputTokens: 3, outputTokens: 9 } }))
       .toEqual({ in_: 3, out_: 9 });
+  });
+
+  it("reads Gemini usageMetadata promptTokenCount / candidatesTokenCount", () => {
+    expect(extractUsage({ usageMetadata: { promptTokenCount: 8, candidatesTokenCount: 589, thoughtsTokenCount: 363 } }))
+      .toEqual({ in_: 8, out_: 589 });
   });
 
   it("returns nulls when there is no usage object", () => {

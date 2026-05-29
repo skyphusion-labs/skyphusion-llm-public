@@ -120,6 +120,11 @@ export const MODELS: ModelEntry[] = [
   { id: "@cf/mistralai/mistral-small-3.1-24b-instruct", label: "Mistral Small 3.1 (vision)",   group: "Chat \u00b7 Other",    type: "chat", capabilities: ["vision"], streaming: true },
   { id: "@cf/zai-org/glm-4.7-flash",                    label: "GLM-4.7 Flash (Z.AI, 100+ lang)", group: "Chat \u00b7 Other", type: "chat", capabilities: [], streaming: true },
   { id: "@cf/nvidia/nemotron-3-120b-a12b",              label: "Nemotron 3 120B (NVIDIA, agentic)", group: "Chat \u00b7 Other", type: "chat", capabilities: [], streaming: true },
+  // Gemini proxied via Unified Billing (v0.21.3). NOT OpenAI-shaped: native
+  // contents/candidates format, transformed by src/providers/google.ts.
+  // Non-streaming (no SSE parser yet -> 501 on the stream gate). Text-only
+  // first pass (capabilities empty), though the model is multimodal.
+  { id: "google/gemini-3.1-pro",                        label: "Gemini 3.1 Pro (Google, needs CF credits)", group: "Chat \u00b7 Google",   type: "chat", capabilities: [], provider: "google" },
   { id: "@cf/google/gemma-3-12b-it",                    label: "Gemma 3 12B (vision, 128K)",   group: "Chat \u00b7 Google",   type: "chat", capabilities: ["vision"], streaming: true },
   { id: "@cf/ibm-granite/granite-4.0-h-micro",          label: "Granite 4.0 Micro (IBM)",      group: "Chat \u00b7 Other",    type: "chat", capabilities: [], streaming: true },
   { id: "@hf/nousresearch/hermes-2-pro-mistral-7b",     label: "Hermes 2 Pro (function calling)", group: "Chat \u00b7 Other", type: "chat", capabilities: [], streaming: true },

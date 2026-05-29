@@ -67,6 +67,16 @@ export function extractOutput(result: unknown): string {
     if (text) return text;
   }
 
+  // Gemini-native (google/gemini-* via the binding, v0.21.3):
+  // { candidates: [{ content: { parts: [{ text }] } }] }
+  const candidates = r?.candidates as Array<{ content?: { parts?: Array<{ text?: string }> } }> | undefined;
+  if (Array.isArray(candidates)) {
+    const text = (candidates[0]?.content?.parts ?? [])
+      .map((p) => p.text ?? "")
+      .join("");
+    if (text) return text;
+  }
+
   return JSON.stringify(result);
 }
 
@@ -80,6 +90,15 @@ export function extractUsage(result: unknown): { in_: number | null; out_: numbe
     return {
       in_:  u.prompt_tokens ?? u.input_tokens ?? u.inputTokens ?? null,
       out_: u.completion_tokens ?? u.output_tokens ?? u.outputTokens ?? null,
+    };
+  }
+  // Gemini-native usage (v0.21.3): usageMetadata.promptTokenCount /
+  // candidatesTokenCount (thoughtsTokenCount is reasoning, not counted as out).
+  const um = r?.usageMetadata as Record<string, number> | undefined;
+  if (um) {
+    return {
+      in_:  um.promptTokenCount ?? null,
+      out_: um.candidatesTokenCount ?? null,
     };
   }
   return { in_: null, out_: null };

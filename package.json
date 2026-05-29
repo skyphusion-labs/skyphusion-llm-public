@@ -1,7 +1,7 @@
 {
   "name": "skyphusion-llm-public",
-  "version": "0.21.2",
-  "description": "Multimodal AI on Cloudflare Workers: chat (37 models across 5 providers), image / TTS / STT / video / music generation, RAG over PDF and XLSX, multi-turn conversations, behind Cloudflare Access.",
+  "version": "0.21.3",
+  "description": "Multimodal AI on Cloudflare Workers: chat (38 models across 6 providers), image / TTS / STT / video / music generation, RAG over PDF and XLSX, multi-turn conversations, behind Cloudflare Access.",
   "license": "AGPL-3.0-only",
   "author": "Conrad Rockenhaus",
   "homepage": "https://github.com/SkyPhusion/skyphusion-llm-public",

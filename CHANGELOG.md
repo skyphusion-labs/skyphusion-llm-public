@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.21.3
+
+Google Gemini chat via Unified Billing: Gemini 3.1 Pro. Confirmed live. No schema, no migration, no new dependencies, no new worker secrets.
+
+### Why this needed a provider module, not a catalog line
+
+The plan from v0.21.0 assumed Gemini might be "near-free" if the binding normalized it to the OpenAI `{choices}` shape the OpenAI proxied models use. Checking the CF model page first (rather than assuming) showed it does not: through `env.AI.run`, Gemini is native in both directions.
+
+- **Request:** `{ contents: [{ role, parts: [{ text }] }], systemInstruction?, generationConfig? }`, not `{ messages }`. Roles are `user`/`model` (no `assistant`), and the system prompt lives in `systemInstruction`, not a turn.
+- **Response:** `{ candidates: [{ content: { parts: [{ text }] } }], usageMetadata: { promptTokenCount, candidatesTokenCount, thoughtsTokenCount } }`.
+
+So Gemini needs a transform layer like Anthropic and Bedrock, not the generic proxied path. `src/providers/google.ts` provides it: `prepareGeminiRequest` maps the internal OpenAI-style message array to Gemini `contents` (`assistant -> model`, system hoisted to `systemInstruction`, defensive text coercion), and `callGemini` invokes the binding. `extractOutput`/`extractUsage` gained `candidates[].content.parts[].text` and `usageMetadata` branches.
+
+### Dispatch note
+
+`provider: "google"` is now used by three model types: Veo (video), Nano Banana (image), and Gemini (chat). This is unambiguous because handlers dispatch on model type first, so a `type: "chat"` Google model only reaches `runChat`, where the new `provider === "google"` branch calls `callGemini`. `runChat` also now keeps the system prompt out of `messages` for Google (as it already did for Anthropic), since it's hoisted to `systemInstruction`.
+
+### Touch points
+
+- `src/providers/google.ts`: new. `geminiContentsFromMessages` (exported, pure), `prepareGeminiRequest`, `callGemini`.
+- `src/output-extract.ts`: Gemini branches in `extractOutput` and `extractUsage`.
+- `src/index.ts`: import; `google` excluded from system-in-messages; `provider === "google"` dispatch branch in `runChat`.
+- `src/models.ts`: `google/gemini-3.1-pro` in the Chat · Google group.
+- `tests/google-gemini.test.ts`: new, 7 tests (role mapping, system drop, array coercion, unknown-role fallback, systemInstruction presence/absence).
+- `tests/output-extract.test.ts`: 2 tests (Gemini output + usage).
+- `README.md`: chat catalog now 38 models / 6 providers; new Gemini section.
+- `package.json`: 0.21.2 -> 0.21.3; description to 38 / 6.
+
+Non-streaming this pass (stream gate returns 501 for `google`). Text-only (`capabilities: []`); the model is multimodal but vision input is deferred. Worker typecheck clean. Worker tests: 141/141 (132 prior + 9 new).
+
+### Notes / next
+
+- `ai_gateway_log_id` is null on these rows, same proxied-billing behavior as nano-banana-pro (routing info is in `gatewayMetadata`, not the field `aiLogId()` reads). Cosmetic.
+- The rest of the Gemini family (`gemini-3-flash`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-3.1-flash-lite`, `gemini-2.5-flash-lite`) share this request/response shape, so they are catalog-only additions on `src/providers/google.ts`, each still worth one live spot-check.
+- Gemini streaming and vision input both deferred.
+
 ## v0.21.2
 
 First proxied (Unified Billing) image model: Google Nano Banana Pro. Confirmed live (~21s, PNG stored to R2). No schema, no migration, no new dependencies, no new worker secrets.

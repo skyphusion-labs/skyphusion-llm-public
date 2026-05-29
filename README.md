@@ -3,7 +3,7 @@
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Typecheck](https://github.com/SkyPhusion/skyphusion-llm-public/actions/workflows/typecheck.yml/badge.svg)](https://github.com/SkyPhusion/skyphusion-llm-public/actions/workflows/typecheck.yml)
 
-A multimodal AI playground deployed as a single Cloudflare Worker. 37 chat models across 5 providers, image / TTS / STT / video / music generation, RAG over PDF and XLSX, projects that scope a knowledge base and system prompt, Discord chat-log ingestion, opt-in web search via Tavily and Wikipedia, SSE streaming on supported chat models, and multi-turn conversations. One web UI behind Cloudflare Access, per-user history, R2 for all binary artifacts.
+A multimodal AI playground deployed as a single Cloudflare Worker. 38 chat models across 6 providers, image / TTS / STT / video / music generation, RAG over PDF and XLSX, projects that scope a knowledge base and system prompt, Discord chat-log ingestion, opt-in web search via Tavily and Wikipedia, SSE streaming on supported chat models, and multi-turn conversations. One web UI behind Cloudflare Access, per-user history, R2 for all binary artifacts.
 
 <p align="center">
   <img src="docs/screenshot-desktop.jpg" alt="Desktop UI: image generation with FLUX-1 schnell" width="800"><br><br>
@@ -26,12 +26,13 @@ A working template for the Cloudflare AI stack. One Worker, no framework, no bui
 
 ## Features
 
-**Chat (37 models across 5 providers; 36 stream-capable):**
+**Chat (38 models across 6 providers; 36 stream-capable):**
 - Workers AI: Llama 4 Scout, Llama 3.x family, Qwen3 30B / QwQ 32B / Qwen2.5 Coder 32B, DeepSeek R1, Mistral Small 3.1, Gemma 4 26B / Gemma 3 12B, Granite 4 Micro, Nemotron 3 120B, GLM-4.7 Flash, Hermes 2 Pro, GPT-OSS 120B / 20B, Kimi K2.6
 - Anthropic BYOK: Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 4.6, Haiku 4.5 (all streaming)
 - xAI BYOK: Grok 4.3, Grok 4.20 (Multi-Agent and Reasoning), Grok Build 0.1 (all streaming as of v0.16.0)
 - Bedrock BYOK: Nova 2 Lite/Pro, Nova Lite/Pro (all streaming as of v0.16.0), TwelveLabs Pegasus 1.2 (single-shot video Q&A)
 - OpenAI (Unified Billing): GPT-5.5, GPT-5.4, GPT-5.4 mini, o4-mini (streaming as of v0.21.1; needs CF credits)
+- Google Gemini (Unified Billing): Gemini 3.1 Pro (non-streaming; needs CF credits)
 
 **Image generation:** Google Nano Banana Pro (Unified Billing), FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM. FLUX.2 models accept up to 4 reference images (v0.16.0) for image-to-image generation, downscaled client-side to 512px.
 
@@ -400,6 +401,17 @@ Two current limitations:
 - **Text in / text out.** `capabilities` is empty, so the attach affordance stays off. Multimodal input through the proxied binding is unverified.
 
 Like all Unified Billing models, these appear in the menu but will fail until you enable Unified Billing in the AI Gateway dashboard and fund it with credits. Output and token-usage parsing is handled by `extractOutput`/`extractUsage` in `src/output-extract.ts`, which cover both the OpenAI chat-completions (`{choices[]}`) and Responses API (`{output[]}`) shapes.
+
+## Google Gemini models (Unified Billing)
+
+Gemini 3.1 Pro (`google/gemini-3.1-pro`) is proxied through Unified Billing. Unlike the OpenAI proxied models, Gemini is **not** OpenAI-shaped through the binding, so it has its own provider module (`src/providers/google.ts`) with a transform in both directions, the same pattern as Anthropic and Bedrock:
+
+- **Request:** the worker's internal OpenAI-style message array is transformed to Gemini's native `{ contents: [{ role, parts: [{ text }] }] }`. Roles map `assistant -> model` (Gemini has no "assistant"), and the system prompt is hoisted out of the turns into `systemInstruction` rather than sent as a `system` turn.
+- **Response:** Gemini returns `{ candidates: [{ content: { parts: [{ text }] } }], usageMetadata: { promptTokenCount, candidatesTokenCount } }`. `extractOutput`/`extractUsage` have branches for both.
+
+Dispatch is unambiguous despite `provider: "google"` also being used for Veo (video) and Nano Banana (image): handlers dispatch on model type first, so a `type: "chat"` Google model only ever reaches `runChat`. Non-streaming this pass (the stream gate returns 501 for `google`); text-only (the model is multimodal, but vision input is deferred). Confirmed live against gemini-3.1-pro.
+
+The rest of the Gemini family (`gemini-3-flash`, `gemini-2.5-pro/flash`, the flash-lites) share this exact request/response shape, so they are catalog-only additions on this module once each is spot-checked.
 
 ## Video generation (dual-route: Unified Billing + BYOK)
 

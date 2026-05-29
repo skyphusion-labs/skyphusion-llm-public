@@ -126,6 +126,9 @@ export const MODELS: ModelEntry[] = [
   { id: "@cf/meta/llama-3.2-1b-instruct",               label: "Llama 3.2 1B (tiny, cheap)",   group: "Chat \u00b7 Meta",     type: "chat", capabilities: [], streaming: true },
 
   // ---- Image generation ----
+  // Google proxied (Unified Billing): URL-returning, different schema from the
+  // @cf models; handled by the provider:"google" branch in runImage (v0.21.2).
+  { id: "google/nano-banana-pro",                       label: "Nano Banana Pro (Google, needs CF credits)",   group: "Image Gen",            type: "image", capabilities: [], provider: "google" },
   { id: "@cf/black-forest-labs/flux-2-klein-9b",        label: "FLUX 2 Klein 9B (frontier)",   group: "Image Gen",            type: "image", capabilities: [] },
   { id: "@cf/black-forest-labs/flux-2-klein-4b",        label: "FLUX 2 Klein 4B (faster)",     group: "Image Gen",            type: "image", capabilities: [] },
   { id: "@cf/black-forest-labs/flux-2-dev",             label: "FLUX 2 Dev (multi-reference)", group: "Image Gen",            type: "image", capabilities: [] },

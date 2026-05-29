@@ -33,7 +33,7 @@ A working template for the Cloudflare AI stack. One Worker, no framework, no bui
 - Bedrock BYOK: Nova 2 Lite/Pro, Nova Lite/Pro (all streaming as of v0.16.0), TwelveLabs Pegasus 1.2 (single-shot video Q&A)
 - OpenAI (Unified Billing): GPT-5.5, GPT-5.4, GPT-5.4 mini, o4-mini (streaming as of v0.21.1; needs CF credits)
 
-**Image generation:** FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM. FLUX.2 models accept up to 4 reference images (v0.16.0) for image-to-image generation, downscaled client-side to 512px.
+**Image generation:** Google Nano Banana Pro (Unified Billing), FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM. FLUX.2 models accept up to 4 reference images (v0.16.0) for image-to-image generation, downscaled client-side to 512px.
 
 **Video generation:** Google Veo 3.1 / 3.1 Fast / 3 / 3 Fast (Unified Billing), ByteDance Seedance 2.0 / 2.0 Fast, MiniMax Hailuo 2.3 / 2.3 Fast, RunwayML Gen-4.5, Alibaba HappyHorse 1.0, PixVerse v6 / v5.6, Vidu Q3 Pro / Q3 Turbo, xAI Grok Imagine Video. BYOK for xAI, Unified Billing for the rest (durable via Cloudflare Workflows).
 
@@ -487,7 +487,16 @@ This is a Cloudflare-proxied (third-party) model, so it requires Unified Billing
 
 ## Image generation
 
-Seven models in the catalog: FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM. All run through Workers AI; no BYOK or Unified Billing required.
+Eight models in the catalog: Google Nano Banana Pro, plus FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM. The seven FLUX/Leonardo/Lykon models run through Workers AI (no BYOK or Unified Billing required); Nano Banana Pro is a proxied partner model on Unified Billing (needs CF credits).
+
+### Google Nano Banana Pro (Unified Billing, v0.21.2)
+
+`google/nano-banana-pro` is Google's higher-quality image model, proxied through Unified Billing rather than hosted on Workers AI. Its schema differs from the `@cf` models, so `runImage` has a dedicated `provider: "google"` branch (verified against the CF model page):
+
+- **Input** is `{ prompt, output_format }` with `additionalProperties: false`. The `@cf` shape (`width`/`height`/`steps`/`negative_prompt`) is rejected, so `system_prompt` (which maps to `negative_prompt` for `@cf` models) is unused here.
+- **Output** is a URL, not base64, in the same `{ state, result }` envelope as video/music: `{ state: "Completed", result: { image: "<url>" } }`. The worker fetches the URL and stores the bytes in R2.
+- First pass is **text-to-image only**. The schema's `image_input[]` (up to 3 reference images for editing) is a later add, mirroring the FLUX.2 reference-image work.
+- Generation is synchronous and observed around 20s. If a busier moment or a higher resolution pushes it past the worker's wall-clock budget, the fallback is to route it through `LongRunWorkflow` like video gen. `ai_gateway_log_id` stays null on the persisted row (the proxied response carries routing info in `gatewayMetadata` instead).
 
 ### FLUX.2 reference images (v0.16.0)
 

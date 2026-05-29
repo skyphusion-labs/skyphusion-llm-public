@@ -7,7 +7,7 @@
 // the rest are regression coverage for the shapes that already shipped.
 
 import { describe, it, expect } from "vitest";
-import { extractOutput, extractUsage, detectProviderFailure } from "../src/output-extract";
+import { extractOutput, extractUsage, detectProviderFailure, extractProxiedImageUrl } from "../src/output-extract";
 
 describe("extractOutput", () => {
   it("returns a bare string unchanged", () => {
@@ -146,5 +146,32 @@ describe("detectProviderFailure", () => {
     expect(detectProviderFailure(null)).toBeNull();
     expect(detectProviderFailure(undefined)).toBeNull();
     expect(detectProviderFailure("plain string")).toBeNull();
+  });
+});
+
+describe("extractProxiedImageUrl", () => {
+  it("reads the wrapped { state, result: { image } } envelope", () => {
+    const r = { state: "Completed", result: { image: "https://r2.dev/cat/img.png" }, gatewayMetadata: { keySource: "Unified" } };
+    expect(extractProxiedImageUrl(r)).toBe("https://r2.dev/cat/img.png");
+  });
+
+  it("reads the bare { image } shape (no binding wrapper)", () => {
+    expect(extractProxiedImageUrl({ image: "https://r2.dev/x.jpg" })).toBe("https://r2.dev/x.jpg");
+  });
+
+  it("prefers the wrapped result.image over a top-level image", () => {
+    const r = { result: { image: "https://r2.dev/wrapped.png" }, image: "https://r2.dev/bare.png" };
+    expect(extractProxiedImageUrl(r)).toBe("https://r2.dev/wrapped.png");
+  });
+
+  it("returns null when no image url is present", () => {
+    expect(extractProxiedImageUrl({ state: "Completed", result: {} })).toBeNull();
+    expect(extractProxiedImageUrl({ choices: [] })).toBeNull();
+  });
+
+  it("does not throw on null / undefined / string", () => {
+    expect(extractProxiedImageUrl(null)).toBeNull();
+    expect(extractProxiedImageUrl(undefined)).toBeNull();
+    expect(extractProxiedImageUrl("nope")).toBeNull();
   });
 });

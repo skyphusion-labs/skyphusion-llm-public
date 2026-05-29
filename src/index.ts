@@ -24,7 +24,7 @@ import { MODELS } from "./models";
 import type { Env } from "./env";
 import { parseDataUrl, base64ToBytes, extFromMime } from "./utils";
 import { aiRun, aiLogId } from "./ai-binding";
-import { extractOutput, extractUsage, detectProviderFailure } from "./output-extract";
+import { extractOutput, extractUsage, detectProviderFailure, extractProxiedImageUrl } from "./output-extract";
 import { chunkText } from "./chunking";
 import { parseDiscordExport, chunkDiscordMessages } from "./discord";
 import { callAnthropic, callAnthropicStream } from "./providers/anthropic";
@@ -665,6 +665,39 @@ async function runImage(request: Request, env: Env, model: ModelEntry, body: Cha
 
   const start = Date.now();
   try {
+    if (model.provider === "google") {
+      // Google proxied image (nano-banana family): Unified Billing via the
+      // gateway. Schema differs from the @cf models in two ways verified
+      // against the CF model page:
+      //   - Input is { prompt, output_format } and additionalProperties:false,
+      //     so the @cf { width, height, steps, negative_prompt } shape is
+      //     rejected. system_prompt has no negative_prompt slot here; ignored.
+      //   - Output is a URL, not base64, in the { state, result } envelope:
+      //     { state: "Completed", result: { image: "<url>" } }.
+      // So we fetch the URL and store the bytes, like the video path does.
+      // (First pass is text-to-image only; the schema's image_input[] for
+      // reference/editing is a later add, mirroring the FLUX.2 ref-image work.)
+      const result = await aiRun(env, model.id, {
+        prompt: body.user_input,
+        output_format: "png",
+      });
+      logId = aiLogId(env);
+
+      const failure = detectProviderFailure(result);
+      if (failure) {
+        return json({ error: `Image generation failed: ${failure}` }, { status: 502 });
+      }
+      const imageUrl = extractProxiedImageUrl(result);
+      if (!imageUrl) {
+        return json({ error: "Image generation returned no image URL", raw: result }, { status: 502 });
+      }
+      const aresp = await fetch(imageUrl);
+      if (!aresp.ok) {
+        return json({ error: `Failed to fetch generated image: ${aresp.status}` }, { status: 502 });
+      }
+      bytes = new Uint8Array(await aresp.arrayBuffer());
+      mime = aresp.headers.get("content-type") || "image/png";
+    } else {
     // Two Cloudflare-side complications for Workers AI image gen as of
     // 2026-Q1, both manifesting as either:
       //   - AiError 5006 "required properties at '/' are 'multipart'", or
@@ -790,6 +823,7 @@ async function runImage(request: Request, env: Env, model: ModelEntry, body: Cha
         // FLUX.2 outputs PNG; the older JSON path returned JPEG historically.
         mime = isFlux2 ? "image/png" : "image/jpeg";
       }
+    }
   } catch (err) {
     const m = err instanceof Error ? err.message : String(err);
     return json({ error: `Image generation failed: ${m}` }, { status: 502 });

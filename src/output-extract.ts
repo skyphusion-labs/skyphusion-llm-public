@@ -107,3 +107,18 @@ export function detectProviderFailure(result: unknown): string | null {
   }
   return null;
 }
+
+// Pull the generated-image URL out of a proxied image-gen response. Proxied
+// image models (the Google nano-banana family, added v0.21.2) return a URL,
+// not base64, wrapped in the same { state, result } envelope as video/music:
+//   { state: "Completed", result: { image: "<url>" } }
+// The bare { image: "<url>" } form (the documented Output schema, without the
+// binding wrapper) is accepted too. Returns the URL string or null.
+export function extractProxiedImageUrl(result: unknown): string | null {
+  if (!result || typeof result !== "object") return null;
+  const r = result as { result?: { image?: unknown }; image?: unknown };
+  const wrapped = r.result?.image;
+  if (typeof wrapped === "string" && wrapped.length > 0) return wrapped;
+  if (typeof r.image === "string" && r.image.length > 0) return r.image;
+  return null;
+}

@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.21.2
+
+First proxied (Unified Billing) image model: Google Nano Banana Pro. Confirmed live (~21s, PNG stored to R2). No schema, no migration, no new dependencies, no new worker secrets.
+
+### Google Nano Banana Pro
+
+`google/nano-banana-pro` added to the Image Gen catalog. It's a proxied partner model, not Workers AI hosted, and its schema differs enough from the `@cf` image models that `runImage` needed a dedicated branch rather than a catalog line. The schema was verified against the CF model page before writing the branch:
+
+- **Input:** `{ prompt, output_format }`, `additionalProperties: false`. The `@cf` param shape (`width`/`height`/`steps`/`negative_prompt`) would be rejected, so the branch sends only the supported fields. `system_prompt` has no `negative_prompt` slot here and is ignored.
+- **Output:** a URL, not base64, in the `{ state, result }` envelope shared with video/music: `{ state: "Completed", result: { image: "<url>" } }`. The branch fetches the URL and stores the bytes in R2, the way the video path does.
+- **Failure handling:** reuses `detectProviderFailure` (v0.21.1) for the `{ state: "Failed" }` case, surfacing a 502 instead of persisting a broken row.
+
+The branch dispatches on `model.provider === "google"` inside `runImage` (only image-type models reach `runImage`, and Google video goes through `runVideo`, so the check is unambiguous). The existing `@cf` path is unchanged, wrapped in the `else`.
+
+First pass is text-to-image only; the schema's `image_input[]` (up to 3 reference images for editing) is deferred, mirroring how the FLUX.2 reference-image support was staged. `capabilities` is empty so the picker offers no attach affordance for it yet.
+
+### Touch points
+
+- `src/output-extract.ts`: new `extractProxiedImageUrl` (reads `result.result.image` or bare `result.image`).
+- `src/index.ts`: import; `provider === "google"` branch in `runImage`.
+- `src/models.ts`: `google/nano-banana-pro` at the top of Image Gen.
+- `tests/output-extract.test.ts`: 5 tests for the URL extractor.
+- `README.md`: image catalog now eight models; new Nano Banana Pro subsection; catalog summary line.
+- `package.json`: 0.21.1 -> 0.21.2.
+
+Worker typecheck clean. Worker tests: 132/132 (127 prior + 5 new).
+
+### Notes / known gaps
+
+- **Latency.** Observed ~21s for a 1024-ish gen. Synchronous (`runImage` holds the request open), same as the `@cf` image path. If a higher resolution or busier moment pushes past the worker wall-clock budget, route Google image through `LongRunWorkflow` like video. Not needed at current latencies.
+- **`ai_gateway_log_id` is null** on these rows. The proxied response carries routing info in `gatewayMetadata` rather than the field `aiLogId()` reads. Cosmetic observability gap, not a functional issue.
+
+### Next image models (same branch, near-free)
+
+`google/nano-banana` and `google/nano-banana-2` are the same family: same `{ state, result: { image } }` output and `{ prompt, output_format }` input, so they work through this branch as catalog-only additions (each still worth one live check). `google/imagen-4` is a different Google image schema (aspect-ratio / count params) and would need its own verification. Non-Google proxied image families (OpenAI gpt-image, BFL FLUX.2 pro/max/flex, Recraft, ByteDance Seedream) each need their own branch + schema check; Recraft's vector models additionally return SVG, which needs separate mime/R2 handling.
+
 ## v0.21.1
 
 OpenAI proxied chat streaming. The OpenAI models added in v0.21.0 shipped non-streaming because the stream path had no OpenAI parser; this release adds one and turns streaming on for all four. Confirmed live against `gpt-5.5`. No schema, no migration, no new dependencies, no new worker secrets.

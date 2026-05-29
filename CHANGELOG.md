@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.21.1
+
+OpenAI proxied chat streaming. The OpenAI models added in v0.21.0 shipped non-streaming because the stream path had no OpenAI parser; this release adds one and turns streaming on for all four. Confirmed live against `gpt-5.5`. No schema, no migration, no new dependencies, no new worker secrets.
+
+### What changed
+
+The streaming path for OpenAI is the `env.AI.run` binding path (same as Workers AI), not a direct provider-endpoint fetch (the way Anthropic and xAI stream), because OpenAI here is Unified Billing, not BYOK. New `src/providers/openai.ts` (`callOpenAIStream`) is structurally identical to `callWorkersAIStream`; only the frame interpreter differs.
+
+The interpreter, `interpretOpenAISSEFrame` in `src/parsers/openai-sse.ts`, handles **both** frame shapes the binding may emit for a streamed proxied model, rather than guessing:
+
+- OpenAI-native delta: `{ "choices": [{ "delta": { "content": "..." } }], "usage"?: {...} }`
+- CF-normalized flat: `{ "response": "...", "usage"?: {...} }`
+
+The two don't share keys (a native frame has no `response`, a flat frame has no `choices`), so checking each independently is unambiguous. This made the release shape-agnostic: it would have worked whichever shape the proxy turned out to use. Live verification against `gpt-5.5` returned incremental deltas plus a final frame carrying token usage (`tokens_in`/`tokens_out` both populated), confirming both the text and usage branches fire end to end.
+
+`streaming: true` is now set on `openai/gpt-5.5`, `openai/gpt-5.4`, `openai/gpt-5.4-mini`, and `openai/o4-mini`. The streaming gate in `handleChatStream` was opened for provider `openai` (previously it returned `501`). `POST /api/chat` (non-streaming) remains as a fallback.
+
+### Touch points
+
+- `src/parsers/openai-sse.ts`: new. Dual-shape interpreter, null-guarded.
+- `src/providers/openai.ts`: new. `callOpenAIStream`, mirrors `callWorkersAIStream`.
+- `src/index.ts`: import; `provider === "openai"` branch in the stream dispatch; gate opened (Pass 5).
+- `src/models.ts`: `streaming: true` on the four OpenAI entries; provisional comment replaced with the confirmed-live note.
+- `tests/openai-sse.test.ts`: new, 9 tests (both shapes, usage naming variants, empty-delta drops, null/string safety).
+- `README.md`: SSE feature bullet now lists five providers; chat catalog 36 stream-capable; OpenAI section streaming note; `/api/chat/stream` count updated.
+- `package.json`: 0.21.0 -> 0.21.1; description corrected to 37 chat models / 5 providers.
+
+Worker typecheck clean. Worker tests: 127/127 (118 prior + 9 new).
+
+### Note on the dual-shape parser
+
+It's deliberate, not speculative generality. The shape was genuinely unknown at write time (the AI binding doesn't contractually document which it returns for proxied streaming), and the two candidates are the only shapes `env.AI.run` is known to emit. Handling both cost ~6 lines and removed a deploy-then-discover round trip. If a third shape ever appears, add a branch with a fixture test.
+
 ## v0.21.0
 
 Catalog additions plus a testability extraction. Adds Claude Opus 4.8, Google Veo 3.1 / 3.1 Fast, and a first pass at OpenAI proxied chat (non-streaming). No schema, no migration, no new dependencies, no new worker secrets.
@@ -44,9 +77,9 @@ Worker typecheck clean. Worker tests: 112/112 (95 prior + 17 new).
 
 ### Outstanding (carried in the v0.21.0 session notes)
 
-1. **Live-verify the OpenAI response shape before trusting OpenAI chat in prod.** The tests prove that *if* `env.AI.run("openai/gpt-5.5", { messages })` returns the `{choices}` shape, it parses; they can't prove the shape. One live call against the deployed worker settles it: `curl -sS https://<host>/api/chat -H 'content-type: application/json' -d '{"model":"openai/gpt-5.5","user_input":"reply with the single word: pong"}'`. If `output` comes back as a JSON blob, the proxied shape differs; capture it and add a branch plus a test. (v0.11.0 ran OpenAI through the gateway's OpenAI proxy and the `{choices}` branch handled it then, so confidence is reasonable, but that path was BYOK-proxy and this one is Unified Billing `env.AI.run`.)
+1. **Live-verify the OpenAI response shape before trusting OpenAI chat in prod.** **[Resolved in v0.21.1]** Confirmed live: non-streaming returns the `{choices}` shape and streaming returns parseable frames with usage. The tests prove that *if* `env.AI.run("openai/gpt-5.5", { messages })` returns the `{choices}` shape, it parses; they can't prove the shape. One live call against the deployed worker settles it: `curl -sS https://<host>/api/chat -H 'content-type: application/json' -d '{"model":"openai/gpt-5.5","user_input":"reply with the single word: pong"}'`. If `output` comes back as a JSON blob, the proxied shape differs; capture it and add a branch plus a test. (v0.11.0 ran OpenAI through the gateway's OpenAI proxy and the `{choices}` branch handled it then, so confidence is reasonable, but that path was BYOK-proxy and this one is Unified Billing `env.AI.run`.)
 2. **Gemini deferred.** Its native shape (`candidates[].content.parts[].text`, `usageMetadata.*`) isn't handled by `extractOutput`/`extractUsage`. Whether the binding normalizes it to OpenAI shape is an open question; resolve that (CF AI-binding docs or one live call) and add the branches with tests before adding any `google/gemini-*` entries. `google` is already in the union, so those are catalog-only once parsing is confirmed.
-3. **OpenAI streaming** (optional, larger): an OpenAI SSE parser under `src/parsers/`, wired into `runChatStream`, then open the gate for provider `openai` and flip `streaming: true`.
+3. **OpenAI streaming** (optional, larger): an OpenAI SSE parser under `src/parsers/`, wired into `runChatStream`, then open the gate for provider `openai` and flip `streaming: true`. **[Done in v0.21.1.]**
 
 ## v0.20.4
 

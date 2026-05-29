@@ -16,7 +16,7 @@ A working template for the Cloudflare AI stack. One Worker, no framework, no bui
 
 - **Unified `env.AI.run()` binding** drives every modality through one call surface: chat, vision input, image gen, TTS, STT, video gen (Unified Billing), and music gen.
 - **BYOK paths** for Anthropic Claude, xAI Grok, and Amazon Bedrock (Nova family plus TwelveLabs Pegasus 1.2). Each provider has its own dispatch helper that transforms our internal `messages` shape into the provider's format.
-- **SSE streaming** (v0.13.0+) for chat models on all four providers: Anthropic native SSE, Workers AI OpenAI-compatible SSE, xAI OpenAI-compatible SSE, and Bedrock Nova `vnd.amazon.eventstream` binary frames. Pegasus stays single-shot.
+- **SSE streaming** (v0.13.0+) for chat models on all five providers: Anthropic native SSE, Workers AI OpenAI-compatible SSE, xAI OpenAI-compatible SSE, Bedrock Nova `vnd.amazon.eventstream` binary frames, and OpenAI proxied (binding-based, v0.21.1). Pegasus stays single-shot.
 - **AI Gateway** wraps every call for observability, caching, and rate-limiting.
 - **D1** holds chat metadata, multi-turn conversation history, and RAG chunk text. **R2** holds all binary artifacts. **Vectorize** holds RAG embeddings (768-dim BGE-base). The chat row references R2 keys; nothing binary touches D1.
 - **Cloudflare Workflows** owns long-running Unified Billing video and music generation (30s to 3min jobs). The `LongRunWorkflow` class holds the blocking `env.AI.run` call alive across step boundaries that `ctx.waitUntil` cannot.
@@ -26,12 +26,12 @@ A working template for the Cloudflare AI stack. One Worker, no framework, no bui
 
 ## Features
 
-**Chat (37 models across 5 providers; 32 stream-capable):**
+**Chat (37 models across 5 providers; 36 stream-capable):**
 - Workers AI: Llama 4 Scout, Llama 3.x family, Qwen3 30B / QwQ 32B / Qwen2.5 Coder 32B, DeepSeek R1, Mistral Small 3.1, Gemma 4 26B / Gemma 3 12B, Granite 4 Micro, Nemotron 3 120B, GLM-4.7 Flash, Hermes 2 Pro, GPT-OSS 120B / 20B, Kimi K2.6
 - Anthropic BYOK: Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 4.6, Haiku 4.5 (all streaming)
 - xAI BYOK: Grok 4.3, Grok 4.20 (Multi-Agent and Reasoning), Grok Build 0.1 (all streaming as of v0.16.0)
 - Bedrock BYOK: Nova 2 Lite/Pro, Nova Lite/Pro (all streaming as of v0.16.0), TwelveLabs Pegasus 1.2 (single-shot video Q&A)
-- OpenAI (Unified Billing): GPT-5.5, GPT-5.4, GPT-5.4 mini, o4-mini (non-streaming; needs CF credits)
+- OpenAI (Unified Billing): GPT-5.5, GPT-5.4, GPT-5.4 mini, o4-mini (streaming as of v0.21.1; needs CF credits)
 
 **Image generation:** FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM. FLUX.2 models accept up to 4 reference images (v0.16.0) for image-to-image generation, downscaled client-side to 512px.
 
@@ -396,7 +396,7 @@ This is a deliberate re-introduction. OpenAI chat shipped as BYOK in v0.11.0 and
 
 Two current limitations:
 
-- **Non-streaming.** The entries are not stream-capable. The streaming gate returns `501` for provider `openai` because there is no OpenAI SSE parser yet; use `POST /api/chat` (non-streaming), which is what the model picker selects for them automatically.
+- **Streaming (v0.21.1).** SSE works via `callOpenAIStream` (`src/providers/openai.ts`) + `interpretOpenAISSEFrame` (`src/parsers/openai-sse.ts`), the binding-based path shared with Workers AI rather than a direct provider endpoint. The interpreter tolerates both frame shapes the proxy may emit (OpenAI-native `{choices[].delta}` and CF-normalized `{response}`), so it is shape-agnostic. Confirmed live against gpt-5.5, including token-usage on the final frame. `POST /api/chat` (non-streaming) remains available as a fallback.
 - **Text in / text out.** `capabilities` is empty, so the attach affordance stays off. Multimodal input through the proxied binding is unverified.
 
 Like all Unified Billing models, these appear in the menu but will fail until you enable Unified Billing in the AI Gateway dashboard and fund it with credits. Output and token-usage parsing is handled by `extractOutput`/`extractUsage` in `src/output-extract.ts`, which cover both the OpenAI chat-completions (`{choices[]}`) and Responses API (`{output[]}`) shapes.
@@ -629,7 +629,7 @@ If your use case is the legal-research pattern (citation accuracy matters, sourc
 
 ## Streaming
 
-`POST /api/chat/stream` accepts the same request body as `POST /api/chat` and returns `text/event-stream`. Available for any chat model flagged `streaming: true` in the catalog (23 models as of v0.16.0, covering all four providers).
+`POST /api/chat/stream` accepts the same request body as `POST /api/chat` and returns `text/event-stream`. Available for any chat model flagged `streaming: true` in the catalog (36 models as of v0.21.1, covering all five providers: Anthropic, xAI, Bedrock Nova, Workers AI, and OpenAI proxied).
 
 Wire format:
 

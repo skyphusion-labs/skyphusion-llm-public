@@ -94,18 +94,19 @@ export const MODELS: ModelEntry[] = [
   { id: "@cf/google/gemma-4-26b-a4b-it",                label: "Gemma 4 26B (vision)",         group: "Chat \u00b7 Frontier", type: "chat", capabilities: ["vision"], streaming: true },
   // OpenAI open weights
   { id: "@cf/openai/gpt-oss-20b",                       label: "GPT-OSS 20B",                  group: "Chat \u00b7 OpenAI",   type: "chat", capabilities: [], streaming: true },
-  // OpenAI proxied via AI Gateway unified billing (v0.21.0). Routed through
-  // env.AI.run("openai/<model>", { messages }) on the generic chat path;
-  // extractOutput already handles both the chat-completions ({choices}) and
-  // Responses API ({output[].content[]}) shapes these return. streaming is
-  // intentionally OFF: the stream gate returns 501 for provider "openai"
-  // until an OpenAI SSE parser exists. capabilities is empty for now;
-  // multimodal-in through the proxied binding is unverified, so the attach
-  // affordance stays off until tested.
-  { id: "openai/gpt-5.5",                               label: "GPT-5.5 (OpenAI, needs CF credits)",          group: "Chat \u00b7 OpenAI",   type: "chat", capabilities: [], provider: "openai" },
-  { id: "openai/gpt-5.4",                               label: "GPT-5.4 (OpenAI, needs CF credits)",          group: "Chat \u00b7 OpenAI",   type: "chat", capabilities: [], provider: "openai" },
-  { id: "openai/gpt-5.4-mini",                          label: "GPT-5.4 mini (OpenAI, needs CF credits)",     group: "Chat \u00b7 OpenAI",   type: "chat", capabilities: [], provider: "openai" },
-  { id: "openai/o4-mini",                               label: "o4-mini (OpenAI, reasoning, needs CF credits)", group: "Chat \u00b7 OpenAI", type: "chat", capabilities: [], provider: "openai" },
+  // OpenAI proxied via AI Gateway unified billing (v0.21.0; streaming added
+  // v0.21.1). Routed through env.AI.run("openai/<model>", { messages }) on the
+  // generic chat path; extractOutput handles both the chat-completions
+  // ({choices}) and Responses API ({output[].content[]}) shapes. streaming: true
+  // uses callOpenAIStream + interpretOpenAISSEFrame (which tolerates both the
+  // OpenAI-native delta and CF-normalized flat frame shapes); confirmed live
+  // against gpt-5.5 in v0.21.1, including token-usage on the final frame.
+  // capabilities is empty: multimodal-in through the proxied binding is
+  // unverified, so the attach affordance stays off.
+  { id: "openai/gpt-5.5",                               label: "GPT-5.5 (OpenAI, needs CF credits)",          group: "Chat \u00b7 OpenAI",   type: "chat", capabilities: [], provider: "openai", streaming: true },
+  { id: "openai/gpt-5.4",                               label: "GPT-5.4 (OpenAI, needs CF credits)",          group: "Chat \u00b7 OpenAI",   type: "chat", capabilities: [], provider: "openai", streaming: true },
+  { id: "openai/gpt-5.4-mini",                          label: "GPT-5.4 mini (OpenAI, needs CF credits)",     group: "Chat \u00b7 OpenAI",   type: "chat", capabilities: [], provider: "openai", streaming: true },
+  { id: "openai/o4-mini",                               label: "o4-mini (OpenAI, reasoning, needs CF credits)", group: "Chat \u00b7 OpenAI", type: "chat", capabilities: [], provider: "openai", streaming: true },
   // Meta
   { id: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",     label: "Llama 3.3 70B (fp8)",          group: "Chat \u00b7 Meta",     type: "chat", capabilities: [], streaming: true },
   { id: "@cf/meta/llama-3.2-11b-vision-instruct",       label: "Llama 3.2 11B (vision)",       group: "Chat \u00b7 Meta",     type: "chat", capabilities: ["vision"], streaming: true },

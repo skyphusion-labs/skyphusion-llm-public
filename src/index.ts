@@ -31,6 +31,7 @@ import { callAnthropic, callAnthropicStream } from "./providers/anthropic";
 import { callXai, callXaiStream } from "./providers/xai";
 import { callBedrockNova, callBedrockNovaStream, callBedrockPegasus } from "./providers/bedrock";
 import { callWorkersAIStream } from "./providers/workers-ai";
+import { callOpenAIStream } from "./providers/openai";
 import type {
   InputImageAttachment,
   InputAudioAttachment,
@@ -342,10 +343,10 @@ async function handleChatStream(request: Request, env: Env, ctx: ExecutionContex
   if (!model.streaming) {
     return json({ error: `Model ${model.id} does not support streaming. Use /api/chat (non-streaming) or pick a streaming-capable model.` }, { status: 400 });
   }
-  // Pass 4: Anthropic + Workers AI + xAI + Bedrock Nova.
+  // Pass 5 (v0.21.0): Anthropic + Workers AI + xAI + Bedrock Nova + OpenAI.
   // Workers AI catalog entries omit `provider` (the type allows this and the
   // ModelEntry default per the type comment is "workers-ai"); BYOK providers
-  // set it explicitly.
+  // and OpenAI set it explicitly.
   //
   // Bedrock Pegasus is single-shot video Q&A (uses InvokeModel, not
   // ConverseStream) and is not flagged streaming in the catalog, so it
@@ -356,6 +357,7 @@ async function handleChatStream(request: Request, env: Env, ctx: ExecutionContex
     model.provider !== "anthropic" &&
     model.provider !== "xai" &&
     model.provider !== "bedrock" &&
+    model.provider !== "openai" &&
     !isWorkersAI
   ) {
     return json({ error: `Streaming for provider '${model.provider}' is not yet implemented.` }, { status: 501 });
@@ -1336,6 +1338,8 @@ async function runChatStream(request: Request, env: Env, model: ModelEntry, body
         streamGenerator = callXaiStream(env, model, messages, upstreamAbort.signal);
       } else if (model.provider === "bedrock") {
         streamGenerator = callBedrockNovaStream(env, model, effectiveSystemPrompt || undefined, messages, upstreamAbort.signal);
+      } else if (model.provider === "openai") {
+        streamGenerator = callOpenAIStream(env, model, messages, upstreamAbort.signal);
       } else {
         streamGenerator = callWorkersAIStream(env, model, messages, upstreamAbort.signal);
       }

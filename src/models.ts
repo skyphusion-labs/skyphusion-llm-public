@@ -45,7 +45,9 @@ export interface ModelEntry {
   label: string;
   group: string;
   type: ModelType;
-  capabilities: Array<"vision">;
+  // "vision" = accepts image input in chat; "image-input" = image-to-video
+  // source image required (e.g. alibaba/hh1-i2v, v0.21.5).
+  capabilities: Array<"vision" | "image-input">;
   provider?: Provider; // defaults to "workers-ai" when omitted
   // For video models: if set, the worker uses the per-provider BYOK endpoint
   // (xAI direct API for xai/*) instead of the env.AI.run binding. The value
@@ -171,7 +173,10 @@ export const MODELS: ModelEntry[] = [
   { id: "minimax/hailuo-2.3-fast",                      label: "Hailuo 2.3 Fast (MiniMax, needs CF credits)",      group: "Video Gen", type: "video", capabilities: [], provider: "minimax" },
   { id: "xai/grok-imagine-video",                       label: "Grok Imagine Video (xAI, BYOK)",                   group: "Video Gen", type: "video", capabilities: [], provider: "xai",      byok_alias: "grok-imagine-video" },
   { id: "runwayml/gen-4.5",                             label: "Gen-4.5 (RunwayML, needs CF credits)",             group: "Video Gen", type: "video", capabilities: [], provider: "runwayml" },
-  { id: "alibaba/hh1-t2v",                              label: "HappyHorse 1.0 (Alibaba, img2vid, needs CF credits)", group: "Video Gen", type: "video", capabilities: [], provider: "alibaba" },
+  { id: "alibaba/hh1-t2v",                              label: "HappyHorse 1.0 T2V (Alibaba, needs CF credits)", group: "Video Gen", type: "video", capabilities: [], provider: "alibaba" },
+  // Image-to-video (v0.21.5): requires a source image. Flagged "image-input";
+  // runVideo requires body.image_url, and buildGenParams sends the i2v shape.
+  { id: "alibaba/hh1-i2v",                              label: "HappyHorse 1.0 I2V (Alibaba, image-to-video, needs CF credits)", group: "Video Gen", type: "video", capabilities: ["image-input"], provider: "alibaba" },
   { id: "pixverse/v6",                                  label: "PixVerse v6 (needs CF credits)",                   group: "Video Gen", type: "video", capabilities: [], provider: "pixverse" },
   { id: "pixverse/v5.6",                                label: "PixVerse v5.6 (needs CF credits)",                 group: "Video Gen", type: "video", capabilities: [], provider: "pixverse" },
   { id: "vidu/q3-pro",                                  label: "Vidu Q3 Pro (needs CF credits)",                   group: "Video Gen", type: "video", capabilities: [], provider: "vidu" },

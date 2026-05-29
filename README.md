@@ -36,7 +36,7 @@ A working template for the Cloudflare AI stack. One Worker, no framework, no bui
 
 **Image generation:** Google Nano Banana Pro (Unified Billing), FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM. FLUX.2 models accept up to 4 reference images (v0.16.0) for image-to-image generation, downscaled client-side to 512px.
 
-**Video generation:** Google Veo 3.1 / 3.1 Fast / 3 / 3 Fast (Unified Billing), ByteDance Seedance 2.0 / 2.0 Fast, MiniMax Hailuo 2.3 / 2.3 Fast, RunwayML Gen-4.5, Alibaba HappyHorse 1.0, PixVerse v6 / v5.6, Vidu Q3 Pro / Q3 Turbo, xAI Grok Imagine Video. BYOK for xAI, Unified Billing for the rest (durable via Cloudflare Workflows).
+**Video generation:** Google Veo 3.1 / 3.1 Fast / 3 / 3 Fast (Unified Billing), ByteDance Seedance 2.0 / 2.0 Fast, MiniMax Hailuo 2.3 / 2.3 Fast, RunwayML Gen-4.5, Alibaba HappyHorse 1.0 T2V and I2V (image-to-video, v0.21.5), PixVerse v6 / v5.6, Vidu Q3 Pro / Q3 Turbo, xAI Grok Imagine Video. BYOK for xAI, Unified Billing for the rest (durable via Cloudflare Workflows).
 
 **Music generation:** MiniMax Music 2.6 (Unified Billing, durable via Workflows).
 
@@ -432,11 +432,20 @@ This deployment supports both. The router picks per-model based on a `byok_alias
 | `bytedance/seedance-2.0`, `seedance-2.0-fast` | Unified | needs CF credits | CF partner, no public API |
 | `minimax/hailuo-2.3`, `hailuo-2.3-fast` | Unified | needs CF credits | CF partner, no public API |
 | `runwayml/gen-4.5` | Unified | needs CF credits | CF partner |
-| `alibaba/hh1-t2v` | Unified | needs CF credits | image-to-video only |
+| `alibaba/hh1-t2v` | Unified | needs CF credits | text-to-video |
+| `alibaba/hh1-i2v` | Unified | needs CF credits | image-to-video; requires `image_url` (v0.21.5) |
 | `pixverse/v6`, `v5.6` | Unified | needs CF credits | CF partner |
 | `vidu/q3-pro`, `q3-turbo` | Unified | needs CF credits | CF partner |
 
 The "needs CF credits" entries appear in the menu but will fail until you enable Unified Billing.
+
+### Image-to-video (alibaba/hh1-i2v, v0.21.5)
+
+`alibaba/hh1-i2v` animates a source image instead of generating from text alone. It's flagged `capabilities: ["image-input"]`, and `runVideo` requires a `image_url` field (a fetchable image URL) in the request; without it the call 400s before a job is created. The param shape differs from text-to-video (image + integer `duration` + `720P`, no `aspect_ratio`/`generate_audio`), so `buildGenParams` (`src/longrun-params.ts`) selects the i2v shape when `imageUrl` is present. Output is the same `{state, result:{video}}` envelope as the other video models, so it rides the existing workflow download-to-R2 step. Confirmed live (~113s for a 720P / 5s clip).
+
+This first pass takes a fetchable URL only. Two source flows are deferred (see session notes), both blocked on the same enabler, getting a private R2 object to hh1-i2v as a URL it can fetch:
+- **User-uploaded source image:** store the upload to R2, then either presign a GET URL or read-and-inline as a base64 data URI (one probe decides which hh1-i2v accepts).
+- **Chaining from image gen:** feed a Nano Banana Pro output (already in R2) straight into hh1-i2v. This is the Cloudflare-side front end of an image-to-video pipeline.
 
 ### Enabling Unified Billing
 

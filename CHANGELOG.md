@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.21.5
+
+First image-to-video model: `alibaba/hh1-i2v`. Animates a source image. Confirmed live (~113s for a 720P / 5s clip). No schema, no migration, no new dependencies, no new worker secrets.
+
+### What changed
+
+- **`src/longrun-params.ts`** (new): `buildGenParams(kind, { prompt, lyrics, imageUrl })`, a pure param builder extracted from the workflow so the per-model shapes are unit-testable. The shapes genuinely differ and the wrong one is a rejected upstream call: text-to-video sends `{ prompt, duration:"8s", aspect_ratio, resolution:"720p", generate_audio }` (string duration), while hh1-i2v sends `{ image, resolution:"720P", duration:<int 3-15> }` and (per its `additionalProperties:false` schema) must NOT carry the t2v fields. i2v is selected by the presence of `imageUrl`, so the workflow keeps a single `video` kind.
+- **`src/index.ts`**: `image_url` added to `ChatRequest`; `imageUrl` threaded through `LongRunParams` and the workflow; `runVideo` requires `image_url` for models flagged `image-input` (400 if missing, before a row is created); the workflow now calls `buildGenParams`.
+- **`src/models.ts`**: `alibaba/hh1-i2v` added (`capabilities: ["image-input"]`); the capability type extended to `"vision" | "image-input"`. Also fixed a pre-existing mislabel: `alibaba/hh1-t2v` was labeled "img2vid" in the catalog and "image-to-video only" in the README, but it is text-to-video.
+- **`tests/longrun-params.test.ts`** (new): 5 tests (t2v vs i2v vs music shapes; i2v carries no t2v fields; optional prompt/lyrics omitted when blank).
+- **`README.md`**: video summary + matrix updated; new image-to-video subsection.
+- **`package.json`**: 0.21.4 -> 0.21.5.
+
+Worker typecheck clean. Worker tests: 155/155 (150 prior + 5 new).
+
+### Scope (first pass) and what's deferred
+
+This pass takes a fetchable `image_url` only, the lowest-unknown slice, which isolates and proves the param shape and the output-to-R2 path. Two source flows remain, both blocked on the same enabler (getting a private R2 object to hh1-i2v as a fetchable URL):
+
+1. **User-uploaded source image:** store the upload to R2, then presign a GET URL or read-and-inline as a base64 data URI. One probe decides which hh1-i2v accepts (`image` is `format: uri`; a `data:` URI may satisfy it and skip presigning).
+2. **Chaining from Nano Banana Pro:** feed a generated image (already in R2) into hh1-i2v, the Cloudflare-side front of an image-to-video pipeline. Same presigned-R2 dependency.
+
+Both are specced in the session notes. The presigned-R2 GET helper is the shared unlock and is worth building once for both.
+
 ## v0.21.4
 
 Gemini SSE streaming. Gemini 3.1 Pro (added non-streaming in v0.21.3) now streams. Confirmed live in the UI. No schema, no migration, no new dependencies, no new worker secrets.

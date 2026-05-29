@@ -33,6 +33,7 @@ import { callBedrockNova, callBedrockNovaStream, callBedrockPegasus } from "./pr
 import { callWorkersAIStream } from "./providers/workers-ai";
 import { callOpenAIStream } from "./providers/openai";
 import { callGemini, callGeminiStream } from "./providers/google";
+import { buildGenParams } from "./longrun-params";
 import type {
   InputImageAttachment,
   InputAudioAttachment,
@@ -72,6 +73,7 @@ interface ChatRequest {
   system_prompt?: string;
   user_input: string;
   attachments?: InputAttachment[];
+  image_url?: string;   // v0.21.5: source image for image-to-video models (hh1-i2v); a fetchable URL
   use_docs?: boolean;   // Pass 2: when true, retrieve top-K chunks from Vectorize and inject as context
   use_web_search?: boolean;  // v0.17.0: when true, query Tavily + Wikipedia and inject snippets as context
   conversation_id?: string;  // Multi-turn: when present, continue an existing conversation
@@ -1559,6 +1561,16 @@ async function runVideo(
   // (30s-3min), which exceeds the ~30s waitUntil budget after an HTTP
   // response. The workflow keeps the call alive across step boundaries
   // and retries each step independently.
+
+  // Image-to-video models (e.g. alibaba/hh1-i2v, flagged "image-input")
+  // require a source image. First pass (v0.21.5): accept a fetchable URL via
+  // body.image_url. Attachment upload + nano-banana chaining (which need an
+  // R2 read or a presigned GET URL) are the next layer; see session notes.
+  const needsImage = model.capabilities.includes("image-input");
+  if (needsImage && !(body.image_url && body.image_url.trim())) {
+    return json({ error: "This image-to-video model requires 'image_url' (a fetchable image URL)." }, { status: 400 });
+  }
+
   const row = await persistChat(env, {
     userEmail,
     model: model.id,
@@ -1587,6 +1599,7 @@ async function runVideo(
         userEmail,
         modelId: model.id,
         prompt: body.user_input,
+        imageUrl: needsImage ? body.image_url : undefined,
         kind: "video",
         startedAtIso: startedAt,
       } satisfies LongRunParams,
@@ -3575,6 +3588,7 @@ interface LongRunParams extends Record<string, unknown> {
   modelId: string;
   prompt: string;
   lyrics?: string;          // music only
+  imageUrl?: string;        // image-to-video only (hh1-i2v); presence selects i2v params
   kind: LongRunKind;
   startedAtIso: string;
 }
@@ -3590,7 +3604,7 @@ interface LongRunResult {
 
 export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
   async run(event: WorkflowEvent<LongRunParams>, step: WorkflowStep): Promise<void> {
-    const { rowId, userEmail, modelId, prompt, lyrics, kind, startedAtIso } = event.payload;
+    const { rowId, userEmail, modelId, prompt, lyrics, imageUrl, kind, startedAtIso } = event.payload;
 
     // Best-effort row-fail helper. Used in the outer catch to surface
     // workflow-level failures to the polling client. Failures inside this
@@ -3614,18 +3628,7 @@ export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
         "invoke-model",
         { retries: { limit: 1, delay: "30 seconds", backoff: "linear" } },
         async (): Promise<string> => {
-          const params: Record<string, unknown> = kind === "video"
-            ? {
-                prompt,
-                duration: "8s",
-                aspect_ratio: "16:9",
-                resolution: "720p",
-                generate_audio: true,
-              }
-            : { prompt };
-          if (kind === "music" && lyrics && lyrics.trim()) {
-            params.lyrics = lyrics;
-          }
+          const params = buildGenParams(kind, { prompt, lyrics, imageUrl });
 
           const result = await aiRun(this.env, modelId, params) as LongRunResult;
 

@@ -7,7 +7,7 @@
 // the rest are regression coverage for the shapes that already shipped.
 
 import { describe, it, expect } from "vitest";
-import { extractOutput, extractUsage } from "../src/output-extract";
+import { extractOutput, extractUsage, detectProviderFailure } from "../src/output-extract";
 
 describe("extractOutput", () => {
   it("returns a bare string unchanged", () => {
@@ -115,5 +115,36 @@ describe("extractUsage", () => {
   it("does not throw on null / undefined", () => {
     expect(() => extractUsage(null)).not.toThrow();
     expect(() => extractUsage(undefined)).not.toThrow();
+  });
+});
+
+describe("detectProviderFailure", () => {
+  it("returns the upstream error from a { state: 'Failed', error } envelope", () => {
+    const r = { state: "Failed", error: "Model execution failed (Upstream provider is unavailable)" };
+    expect(detectProviderFailure(r)).toBe("Model execution failed (Upstream provider is unavailable)");
+  });
+
+  it("falls back to the state when a Failed envelope has no error string", () => {
+    expect(detectProviderFailure({ state: "Failed" })).toBe('provider returned state "Failed"');
+  });
+
+  it("treats any non-Completed state as a failure", () => {
+    expect(detectProviderFailure({ state: "Cancelled" })).toBe('provider returned state "Cancelled"');
+  });
+
+  it("returns null for a Completed envelope (the async success shape)", () => {
+    expect(detectProviderFailure({ state: "Completed", result: { video: "https://..." } })).toBeNull();
+  });
+
+  it("returns null for normal sync chat responses (no state field)", () => {
+    expect(detectProviderFailure({ choices: [{ message: { content: "hi" } }] })).toBeNull();
+    expect(detectProviderFailure({ content: [{ type: "text", text: "hi" }] })).toBeNull();
+    expect(detectProviderFailure({ response: "hi" })).toBeNull();
+  });
+
+  it("does not throw on null / undefined / string", () => {
+    expect(detectProviderFailure(null)).toBeNull();
+    expect(detectProviderFailure(undefined)).toBeNull();
+    expect(detectProviderFailure("plain string")).toBeNull();
   });
 });

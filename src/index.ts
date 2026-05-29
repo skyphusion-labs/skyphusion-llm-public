@@ -24,7 +24,7 @@ import { MODELS } from "./models";
 import type { Env } from "./env";
 import { parseDataUrl, base64ToBytes, extFromMime } from "./utils";
 import { aiRun, aiLogId } from "./ai-binding";
-import { extractOutput, extractUsage } from "./output-extract";
+import { extractOutput, extractUsage, detectProviderFailure } from "./output-extract";
 import { chunkText } from "./chunking";
 import { parseDiscordExport, chunkDiscordMessages } from "./discord";
 import { callAnthropic, callAnthropicStream } from "./providers/anthropic";
@@ -588,6 +588,16 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
   } catch (err) {
     const m = err instanceof Error ? err.message : String(err);
     return json({ error: `AI call failed: ${m}` }, { status: 502 });
+  }
+
+  // Some providers (notably OpenAI/Gemini proxied via unified billing) return
+  // a failure envelope { state: "Failed", error: "..." } as a resolved value
+  // instead of throwing. Surface it as a 502 here; otherwise extractOutput
+  // would stringify the envelope into chats.output and persist the failed
+  // turn as a success.
+  const providerFailure = detectProviderFailure(result);
+  if (providerFailure) {
+    return json({ error: `Model execution failed: ${providerFailure}` }, { status: 502 });
   }
 
   const latency = Date.now() - start;

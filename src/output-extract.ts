@@ -84,3 +84,26 @@ export function extractUsage(result: unknown): { in_: number | null; out_: numbe
   }
   return { in_: null, out_: null };
 }
+
+// Detect a provider failure envelope returned as a normal resolved value
+// rather than thrown. Unified-billing proxied models (seen first with the
+// OpenAI chat models in v0.21.0) can return { state: "Failed", error: "..." }
+// from env.AI.run instead of rejecting; the gateway uses the same envelope
+// the LongRunWorkflow already checks for video/music. Without catching it,
+// extractOutput would JSON.stringify the envelope into chats.output and a
+// failed turn would persist as if it succeeded.
+//
+// Sync chat responses (OpenAI {choices}, Anthropic {content}, Workers AI
+// {response}) carry no `state` field, so a present `state` that isn't
+// "Completed" is the signal. Returns the upstream error message (for the
+// caller to surface as a 502) or null when the result looks normal.
+export function detectProviderFailure(result: unknown): string | null {
+  if (!result || typeof result !== "object") return null;
+  const r = result as Record<string, unknown>;
+  if (typeof r.state === "string" && r.state !== "Completed") {
+    return typeof r.error === "string" && r.error.trim()
+      ? r.error
+      : `provider returned state "${r.state}"`;
+  }
+  return null;
+}

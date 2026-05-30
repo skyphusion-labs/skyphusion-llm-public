@@ -675,7 +675,7 @@ function renderOutputArtifactHTML(oa) {
       <div class="output-actions"><a href="${escapeHtml(url)}" download>download</a></div>`;
   } else if (oa.type === "video") {
     return `
-      <video class="output-video" controls preload="metadata" src="${escapeHtml(url)}"></video>
+      <video class="output-video" controls muted preload="metadata" src="${escapeHtml(url)}"></video>
       <div class="output-actions"><a href="${escapeHtml(url)}" download>download</a></div>`;
   }
   return "";

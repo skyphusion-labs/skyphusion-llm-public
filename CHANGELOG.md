@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.21.8
+
+Output video is muted by default in the UI, and a note on hh1-i2v audio. Tiny release.
+
+### Muted video playback
+
+The output `<video>` now renders with `muted` (controls still allow unmuting). hh1-i2v bakes a generated audio track into its output, and that soundtrack was playing on preview. Muting by default stops the throwaway audio from blasting; anyone who wants it can unmute via the controls.
+
+### hh1-i2v has no audio toggle (documented so we don't re-probe it)
+
+There is no way to stop hh1-i2v from generating audio. Probed live: sending `audio: false` (or any audio field) fails with "Unsupported field passed: audio. Valid fields: image, prompt, negative_prompt, resolution, duration, seed, watermark." The model always generates a soundtrack, and it bills for it under Unified Billing whether or not the track is used.
+
+If you need a silent file (e.g. to add your own music or dialogue when assembling videos), strip or replace the audio downstream with ffmpeg, where the video is assembled (the OVH box), not in the worker (Workers have no ffmpeg; a WASM remux would be disproportionate):
+
+- Drop audio, keep video untouched: `ffmpeg -i in.mp4 -c copy -an out.mp4`
+- Add your own track and drop the generated one in one pass: `ffmpeg -i in.mp4 -i track.mp3 -map 0:v:0 -map 1:a:0 -c:v copy -shortest out.mp4`
+
+The second is the assembly step you'd run anyway; the explicit `-map` simply never carries the generated audio forward, so stripping is not separate work.
+
+### Touch points
+
+- `public/app.js`: `muted` on the output video element.
+- `package.json`: 0.21.7 -> 0.21.8.
+
+Worker tests: 159/159 (unchanged; UI-only change). The v0.21.8 audio-param probe in `buildGenParams` was reverted after the live probe confirmed the field is rejected; the i2v param shape is unchanged from v0.21.6.
+
 ## v0.21.7
 
 Cross-model artifact reuse: a model can consume what a previous model generated in the same conversation, with no download/re-upload. Confirmed live. No schema, no migration, no new dependencies, no new worker secrets.

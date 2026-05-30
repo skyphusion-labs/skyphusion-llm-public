@@ -198,6 +198,22 @@ async function r2KeyToDataUri(env: Env, key: string, userEmail: string): Promise
   return `data:${mime};base64,${bytesToBase64(bytes)}`;
 }
 
+// Attachment-by-reference (v0.21.7): an image or full-video attachment may
+// carry an R2 `key` (an artifact already produced in this conversation)
+// instead of inline `data`. Hydrate `data` from R2 once, here at the request
+// boundary, so every downstream consumer (vision chat, FLUX.2 reference
+// images, Pegasus video-Q&A) works unchanged. Ownership is enforced by
+// r2KeyToDataUri. This is what lets a model use what a previous model in the
+// same conversation generated, with no download/re-upload.
+async function resolveAttachmentKeys(env: Env, attachments: InputAttachment[], userEmail: string): Promise<InputAttachment[]> {
+  return Promise.all(attachments.map(async (att) => {
+    if ((att.type === "image" || att.type === "video_full") && att.key && !att.data) {
+      return { ...att, data: await r2KeyToDataUri(env, att.key, userEmail) };
+    }
+    return att;
+  }));
+}
+
 async function r2DeleteSafe(env: Env, key: string): Promise<void> {
   try { await env.R2.delete(key); } catch { /* ignore */ }
 }
@@ -324,6 +340,13 @@ async function handleChat(request: Request, env: Env, ctx: ExecutionContext): Pr
   const model = MODELS.find((x) => x.id === body.model);
   if (!model) {
     return json({ error: `Unknown model: ${body.model}` }, { status: 400 });
+  }
+
+  // Hydrate attachment-by-reference (image/video attachments carrying an R2
+  // key instead of inline data) before routing, so every handler sees ready
+  // attachments. v0.21.7: cross-model artifact reuse within a conversation.
+  if (body.attachments?.length) {
+    body.attachments = await resolveAttachmentKeys(env, body.attachments, getUserEmail(request));
   }
 
   if (model.type === "chat") return runChat(request, env, model, body);
@@ -458,7 +481,7 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
       if (!parsed) return json({ error: "Invalid image data URL" }, { status: 400 });
       const bytes = base64ToBytes(parsed.base64);
       const key = await r2Put(env, "in", parsed.mime, bytes, userEmail);
-      imageDataUrls.push(att.data);
+      imageDataUrls.push(att.data!); // guaranteed by the parsed guard above (data may be hydrated from a key)
       persistedAtt.push({ type: "image", key, mime: parsed.mime, filename: att.filename });
     } else if (att.type === "audio") {
       const parsed = att.data ? parseDataUrl(att.data) : null;
@@ -1266,7 +1289,7 @@ async function runChatStream(request: Request, env: Env, model: ModelEntry, body
       if (!parsed) return json({ error: "Invalid image data URL" }, { status: 400 });
       const bytes = base64ToBytes(parsed.base64);
       const key = await r2Put(env, "in", parsed.mime, bytes, userEmail);
-      imageDataUrls.push(att.data);
+      imageDataUrls.push(att.data!); // guaranteed by the parsed guard above (data may be hydrated from a key)
       persistedAtt.push({ type: "image", key, mime: parsed.mime, filename: att.filename });
     } else if (att.type === "audio") {
       const parsed = att.data ? parseDataUrl(att.data) : null;

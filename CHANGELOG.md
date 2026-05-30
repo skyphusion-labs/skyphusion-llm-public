@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.21.7
+
+Cross-model artifact reuse: a model can consume what a previous model generated in the same conversation, with no download/re-upload. Confirmed live. No schema, no migration, no new dependencies, no new worker secrets.
+
+### The mechanism: attachment-by-reference
+
+An image or full-video attachment may now carry an R2 `key` (an artifact already produced in the conversation) instead of inline `data`. `resolveAttachmentKeys` hydrates `key` -> `data` once, at the request dispatch chokepoint, before routing, so every downstream consumer (vision chat, FLUX.2 reference images, Pegasus video-Q&A, image-to-video) works unchanged. Ownership is enforced by `r2KeyToDataUri` (the object's `customMetadata.user_email` must match the requester), so a client can't reference another user's artifact.
+
+### What's wired
+
+- **Backend (general):** `InputImageAttachment` and `InputVideoFullAttachment` gain an optional `key` (with `data` now optional); `resolveAttachmentKeys` at the dispatch boundary resolves them. One place, all consumers benefit.
+- **Frontend (images, end to end):** switching to any image-consuming model carries the most recent conversation image forward automatically, by reference, unless the user attached their own. Image-to-video receives it via `image_key`; vision chat and FLUX.2 reference receive it as an image attachment-by-key. The i2v input surfaces a visible "will animate the previous generated image" hint so the carry-forward isn't silent.
+
+The end-to-end flow now works in the UI: generate an image with `google/nano-banana-pro`, switch to `alibaba/hh1-i2v` (or a vision chat model, or FLUX.2), and the image is already the source. Confirmed live.
+
+### Incidental fix
+
+The attachments send-gate in the frontend only fired for `chat`/`stt` model types, which meant FLUX.2 reference images attached in the UI for an `image`-type model were collected but never sent. The gate now also includes FLUX.2 image models, so user-attached reference images actually reach the worker.
+
+### Touch points
+
+- `src/types.ts`: `key` on image + video_full attachments; `data` optional.
+- `src/index.ts`: `resolveAttachmentKeys`; resolution at the dispatch chokepoint.
+- `src/providers/bedrock.ts`: guard for now-optional video data in Pegasus.
+- `public/app.js`: `latestArtifactKey`, `modelConsumesImage`, `isFlux2Model` helpers; carry-forward in the request build (`image_key` for i2v, attachment-by-key for vision/FLUX.2); send-gate fix; i2v carry-forward indicator.
+- `package.json`: 0.21.6 -> 0.21.7.
+
+Worker typecheck clean. Worker tests: 159/159 (unchanged; the new backend logic is a thin map over the already-tested `r2KeyToDataUri`, and the frontend is not under tsc/vitest).
+
+### Deferred
+
+- **Video-as-input carry-forward** is backend-ready (the `key` mechanism covers video_full) but not auto-wired in the frontend, detecting "this model consumes video" cleanly wants a capability flag rather than a guess. Small follow-up.
+- Per-model carry-forward indicators for vision chat and FLUX.2 (i2v has one; the others carry forward silently).
+
 ## v0.21.6
 
 Image-to-video source flows: uploads and chaining. Completes hh1-i2v (whose v0.21.5 first pass took only a fetchable URL). The headline is a fully Cloudflare-side image-to-video pipeline, confirmed live end to end (~100s). No schema, no migration, no new dependencies, no new worker secrets.

@@ -3,7 +3,7 @@
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Typecheck](https://github.com/SkyPhusion/skyphusion-llm-public/actions/workflows/typecheck.yml/badge.svg)](https://github.com/SkyPhusion/skyphusion-llm-public/actions/workflows/typecheck.yml)
 
-A multimodal AI playground deployed as a single Cloudflare Worker. 38 chat models across 6 providers, image / TTS / STT / video / music generation, RAG over PDF and XLSX, projects that scope a knowledge base and system prompt, Discord chat-log ingestion, opt-in web search via Tavily and Wikipedia, SSE streaming on supported chat models, and multi-turn conversations. One web UI behind Cloudflare Access, per-user history, R2 for all binary artifacts.
+A multimodal AI playground deployed as a single Cloudflare Worker. 38 chat models across 6 providers, image / TTS / STT / video / music generation, cross-model artifact reuse within a conversation (v0.21.7), RAG over PDF and XLSX, projects that scope a knowledge base and system prompt, Discord chat-log ingestion, opt-in web search via Tavily and Wikipedia, SSE streaming on supported chat models, and multi-turn conversations. One web UI behind Cloudflare Access, per-user history, R2 for all binary artifacts.
 
 <p align="center">
   <img src="docs/screenshot-desktop.jpg" alt="Desktop UI: image generation with FLUX-1 schnell" width="800"><br><br>
@@ -578,6 +578,14 @@ npx wrangler d1 execute skyphusion-llm-public --remote --file=schema.sql
 - **Worker bundle size**: with `unpdf` (~500KB) and `xlsx` (~500KB) bundled, the compressed worker exceeds the free-tier 1MB limit. **Workers Paid plan ($5/month) is required as of v0.11.0.**
 
 **Note on the xlsx dependency:** SheetJS stopped publishing to the npm registry several years ago; the `xlsx` name on npm is permanently stuck at 0.18.5. We install directly from SheetJS's CDN tarball URL (`https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz`), which gives us the current maintained version. The package still imports as `xlsx` so the code is unchanged. To upgrade, change the URL in `package.json` to point at the new version's tarball.
+
+## Cross-model artifact reuse (v0.21.7)
+
+A model can use what a previous model generated in the same conversation, without download/re-upload. Generate an image with `google/nano-banana-pro`, then switch to `alibaba/hh1-i2v` and the image is already the source; switch to a vision chat model and ask about it; switch to a FLUX.2 model and use it as a reference.
+
+The mechanism is **attachment-by-reference**. An image or full-video attachment may carry an R2 `key` (an artifact already produced in the conversation) instead of inline `data`. `resolveAttachmentKeys` hydrates the key to data once, at the request dispatch boundary, before routing, via `r2KeyToDataUri`, so every consumer (vision chat, FLUX.2 reference, Pegasus video-Q&A, image-to-video) works unchanged. Ownership is enforced: the object's `customMetadata.user_email` must match the requester, so a client can't reference another user's artifact.
+
+The frontend carries the most recent conversation image forward automatically when you switch to an image-consuming model (unless you attached your own). Image-to-video receives it via the `image_key` field; vision chat and FLUX.2 receive it as an attachment-by-key. Video-as-input carry-forward is supported on the backend but not yet auto-wired in the UI.
 
 ## Projects and knowledge stores
 

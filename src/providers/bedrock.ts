@@ -205,7 +205,12 @@ export async function callBedrockPegasus(
 
   // Decode the data URL to raw bytes, then re-encode as base64 (no data: prefix).
   // videoAtt.data is a "data:video/mp4;base64,AAAA..." string per the type.
+  // (data is optional on the type since v0.21.7 attachment-by-reference, but
+  // resolveAttachmentKeys hydrates it before we get here.)
   const dataUrl = videoAtt.data;
+  if (!dataUrl) {
+    throw new Error("Pegasus: video attachment has no data (unresolved reference)");
+  }
   const commaIdx = dataUrl.indexOf(",");
   if (commaIdx < 0) {
     throw new Error("Pegasus: video attachment data URL is malformed");

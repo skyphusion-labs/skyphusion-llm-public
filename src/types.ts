@@ -13,7 +13,9 @@
 
 export interface InputImageAttachment {
   type: "image";
-  data: string;        // data URL
+  data?: string;       // data URL (inline upload). Optional if `key` is set.
+  key?: string;        // v0.21.7: R2 key of an artifact already produced in this
+                       // conversation; resolved to `data` at the request boundary.
   mime?: string;
   filename?: string;
 }
@@ -31,7 +33,8 @@ export interface InputVideoFramesAttachment {
 }
 export interface InputVideoFullAttachment {
   type: "video_full";
-  data: string;        // data URL
+  data?: string;       // data URL (inline upload). Optional if `key` is set.
+  key?: string;        // v0.21.7: R2 key of a video artifact already in this conversation.
   mime?: string;
   filename?: string;
 }

@@ -277,6 +277,34 @@ function modelSupports(cap) {
   return !!m && (m.capabilities || []).includes(cap);
 }
 
+function isFlux2Model(m) {
+  return !!m && m.id.startsWith("@cf/black-forest-labs/flux-2-");
+}
+
+// v0.21.7: most recent artifact of a media type ("image" | "video") produced
+// earlier in the current conversation. Returns its R2 key, or null. The basis
+// of cross-model artifact reuse: carry a prior generated image/video forward
+// to whatever model you switch to, by reference, without re-upload.
+function latestArtifactKey(mediaType) {
+  for (let i = state.currentTurns.length - 1; i >= 0; i--) {
+    const a = state.currentTurns[i] && state.currentTurns[i].output_artifact;
+    if (a && a.key && (a.type === mediaType || (a.mime || "").startsWith(mediaType + "/"))) {
+      return a.key;
+    }
+  }
+  return null;
+}
+
+// Does the selected model consume an image as input? vision chat, FLUX.2
+// reference, or image-to-video (i2v). i2v uses the image_key field; the others
+// take it as an image attachment.
+function modelConsumesImage(m) {
+  if (!m) return false;
+  return (m.capabilities || []).includes("vision")
+      || (m.capabilities || []).includes("image-input")
+      || (m.type === "image" && isFlux2Model(m));
+}
+
 function updateAffordance() {
   const m = currentModel();
   if (!m) return;
@@ -286,6 +314,7 @@ function updateAffordance() {
   // v0.17.0: also default-hide the web-search toggle; chat branch shows it.
   useDocsRow.hidden = true;
   useWebSearchRow.hidden = true;
+  fileInput.style.display = ""; // v0.21.7: i2v branch hides it; reset for others
 
   if (m.type === "image") {
     systemPromptLabel.textContent = "negative prompt";
@@ -322,6 +351,18 @@ function updateAffordance() {
     attachRow.style.display = "none";
     state.pendingAttachments = [];
     renderAttachments();
+    // v0.21.7: image-to-video models animate the previous image in this
+    // conversation. Surface it so the carry-forward isn't a silent default.
+    if ((m.capabilities || []).includes("image-input")) {
+      userInput.placeholder = "describe the motion (animates your previous image, ~1-3 min)";
+      const priorImageKey = latestArtifactKey("image");
+      attachRow.style.display = "flex";
+      fileInput.style.display = "none"; // source is the prior image, not a manual attach (this pass)
+      attachHint.textContent = priorImageKey
+        ? "\u2713 will animate the previous generated image in this conversation"
+        : "generate an image in this conversation first, then switch here to animate it";
+      attachHint.classList.toggle("warn", !priorImageKey);
+    }
   } else if (m.type === "stt") {
     systemPromptLabel.textContent = "system prompt";
     systemPrompt.placeholder = "(unused for STT)";
@@ -1115,7 +1156,7 @@ async function run() {
       model,
       system_prompt,
       user_input: user_input || "(no text, attachments only)",
-      attachments: (m.type === "chat" || m.type === "stt") ? state.pendingAttachments : [],
+      attachments: (m.type === "chat" || m.type === "stt" || (m.type === "image" && isFlux2Model(m))) ? state.pendingAttachments : [],
       conversation_id: state.currentConversationId || undefined,
     };
     // RAG: only send the flag for chat models when the user has it toggled on
@@ -1134,6 +1175,28 @@ async function run() {
     // retrieval to the project's attached documents.
     if (m.type === "chat" && state.activeProjectId) {
       requestBody.project_id = state.activeProjectId;
+    }
+    // v0.21.7: cross-model artifact reuse. Make the most recent image generated
+    // earlier in THIS conversation available to whatever model you switched to,
+    // by R2 reference (no download/re-upload), unless the user attached their
+    // own image. i2v takes it via image_key (its param path differs); vision
+    // chat and FLUX.2 reference take it as an image attachment-by-key, which
+    // the worker hydrates at the request boundary.
+    {
+      const userHasImage = state.pendingAttachments.some((a) => a.type === "image");
+      if (modelConsumesImage(m) && !userHasImage) {
+        const priorImageKey = latestArtifactKey("image");
+        if (priorImageKey) {
+          if ((m.capabilities || []).includes("image-input")) {
+            requestBody.image_key = priorImageKey;
+          } else {
+            requestBody.attachments = [
+              ...(requestBody.attachments || []),
+              { type: "image", key: priorImageKey },
+            ];
+          }
+        }
+      }
     }
 
     const result = await api("/api/chat", {

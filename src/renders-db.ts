@@ -46,6 +46,7 @@ export interface RenderRow {
   submitted_at: number;
   updated_at: number;
   completed_at: number | null;
+  label: string | null;
 }
 
 function nowSeconds(): number {
@@ -144,7 +145,7 @@ export async function getRenderByIdForUser(
       id, user_email, job_id, project, bundle_key, quality_tier,
       render_overrides, status, output_key, output_json AS output,
       error, execution_time_ms, delay_time_ms,
-      submitted_at, updated_at, completed_at
+      submitted_at, updated_at, completed_at, label
     FROM renders
     WHERE id = ? AND user_email = ?`,
   )
@@ -152,6 +153,25 @@ export async function getRenderByIdForUser(
     .first<Record<string, unknown>>();
   if (!r) return null;
   return normalizeRow(r);
+}
+
+// Update one row's label. Empty / null clears it. Returns true when the
+// row existed and was owned by the caller; false otherwise (so a caller
+// can distinguish "not yours" from "saved" if it wants to).
+export async function setRenderLabel(
+  env: Env,
+  id: number,
+  userEmail: string,
+  label: string | null,
+): Promise<boolean> {
+  const now = Math.floor(Date.now() / 1000);
+  const result = await env.DB.prepare(
+    `UPDATE renders SET label = ?, updated_at = ? WHERE id = ? AND user_email = ?`,
+  )
+    .bind(label, now, id, userEmail)
+    .run();
+  const changes = (result.meta as { changes?: number } | undefined)?.changes ?? 0;
+  return changes > 0;
 }
 
 // True when at least one OTHER row references the same output_key. Used
@@ -200,7 +220,7 @@ export async function listRendersForUser(
       id, user_email, job_id, project, bundle_key, quality_tier,
       render_overrides, status, output_key, output_json AS output,
       error, execution_time_ms, delay_time_ms,
-      submitted_at, updated_at, completed_at
+      submitted_at, updated_at, completed_at, label
     FROM renders
     WHERE user_email = ?
     ORDER BY submitted_at DESC
@@ -265,5 +285,7 @@ function normalizeRow(r: Record<string, unknown>): RenderRow {
       r.completed_at === null || r.completed_at === undefined
         ? null
         : Number(r.completed_at),
+    label:
+      typeof r.label === "string" && r.label.length > 0 ? r.label : null,
   };
 }

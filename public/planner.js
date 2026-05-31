@@ -1104,6 +1104,10 @@ function buildHistoryRow(r) {
 
   li.appendChild(meta);
 
+  // v0.36.0: inline-editable label. Empty -> placeholder "+ label". Save
+  // on blur or Enter; Escape reverts. Failures alert and restore.
+  li.appendChild(buildHistoryLabelInput(r));
+
   const sub = document.createElement("div");
   sub.className = "planner-history-sub";
   const parts = [];
@@ -1280,6 +1284,73 @@ function deriveProjectFromKey(bundleKey) {
   const m = bundleKey.match(/^bundles\/(.+)\.tar\.gz$/);
   if (m) return m[1];
   return bundleKey;
+}
+
+// v0.36.0: free-form text input that doubles as the row's label display.
+// Reads as italic + dimmed when empty (shows "+ label" placeholder);
+// gains a border + normal weight on focus to signal "edit mode". On blur
+// or Enter, if the value changed, PATCH the row and update local state.
+// On Escape, revert without firing the network call.
+function buildHistoryLabelInput(row) {
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "planner-history-label-input";
+  input.value = row.label || "";
+  input.placeholder = "+ label";
+  input.maxLength = 200;
+  input.spellcheck = false;
+  input.title = "click to label this render (max 200 chars)";
+
+  // Track the last server-acknowledged value so we never PATCH on a
+  // blur that did not actually change anything.
+  let lastSaved = row.label || "";
+
+  const save = async () => {
+    const next = input.value.trim();
+    if (next === lastSaved) return;
+    try {
+      const resp = await fetch(
+        "/api/storyboard/renders/" + encodeURIComponent(row.id),
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ label: next || null }),
+        },
+      );
+      if (!resp.ok) {
+        let msg = "HTTP " + resp.status;
+        try {
+          const data = await resp.json();
+          if (data && data.error) msg = data.error;
+        } catch {
+          // non-JSON body; keep the HTTP code
+        }
+        throw new Error(msg);
+      }
+      const data = await resp.json();
+      lastSaved = data.label || "";
+      input.value = lastSaved;
+      row.label = lastSaved || null;
+    } catch (err) {
+      console.error("label save failed:", err);
+      window.alert("label save failed: " + err.message);
+      input.value = lastSaved;
+    }
+  };
+
+  input.addEventListener("blur", save);
+  input.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      input.blur();
+    } else if (ev.key === "Escape") {
+      ev.preventDefault();
+      input.value = lastSaved;
+      input.blur();
+    }
+  });
+
+  return input;
 }
 
 function historyStatusKind(status) {

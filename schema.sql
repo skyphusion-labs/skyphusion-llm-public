@@ -258,7 +258,8 @@ CREATE TABLE IF NOT EXISTS renders (
   delay_time_ms     INTEGER,
   submitted_at      INTEGER NOT NULL,
   updated_at        INTEGER NOT NULL,
-  completed_at      INTEGER
+  completed_at      INTEGER,
+  label             TEXT             -- free-form user-authored name (v0.36.0)
 );
 
 CREATE INDEX IF NOT EXISTS renders_by_user

@@ -1,5 +1,50 @@
 # Changelog
 
+## v0.36.0
+
+Render labels. New `label TEXT` column on the `renders` table lets each history row carry a free-form user-authored name. `PATCH /api/storyboard/renders/<id>` body `{ label: string | null }` saves it (ownership enforced via `user_email`; 200 char max; empty/null clears). The planner UI exposes an inline-editable input on every history row; click to edit, Enter or blur saves, Escape reverts. So a list of "cherry, cherry, cherry" can become "cherry-final-take1", "cherry-blue-dress", "cherry-seed-424242".
+
+### Migration
+
+```bash
+wrangler d1 execute skyphusion-llm --remote --file=migrate-v0.36.0.sql
+```
+
+The migration is a single `ALTER TABLE renders ADD COLUMN label TEXT`. SQLite's `ALTER TABLE ADD COLUMN` is NOT idempotent (re-running surfaces "duplicate column name"), but wrangler d1 execute treats it as a non-fatal warning and continues past, same as the v0.20.3 chunks ALTERs. Safe to re-apply.
+
+### Why
+
+Once you cycle through "cherry-final, cherry-final, cherry-final" trying different overrides or quality tiers, the history list becomes useless because every row looks identical. The label gives each render a human-readable identity without changing the project slug (which still drives the bundle key, the artifact path, and the RunPod payload). A label is purely metadata; the renderer never sees it.
+
+### Endpoint
+
+**`PATCH /api/storyboard/renders/<id>`** body `{ label: string | null }`. Returns `{ ok: true, id, label, user }` on success.
+
+- 400 on invalid id (`/api/storyboard/renders/abc`), missing `label` key in body, non-string-non-null `label`, or label longer than 200 chars
+- 404 on a not-found-or-not-owned row (ownership check happens via `getRenderByIdForUser` before the UPDATE, same as DELETE)
+- 200 on success, with the saved label echoed back so the UI can confirm round-trip without a second GET
+
+Only `label` is patchable today. Other columns would need their own PATCH-field validation; left as a follow-up if it ever matters.
+
+### UI behavior
+
+- Each history row now renders an `<input type="text">` styled as text-by-default (transparent border, italic dimmed placeholder `+ label`). On hover / focus the background and border become visible to signal "click to edit".
+- On blur (or Enter) the value is compared to the last server-acknowledged value; if changed, fires a PATCH. Empty / whitespace-only trims to `null` (clears the label). On failure, the input reverts to the last saved value and the error surfaces in a `window.alert`.
+- Escape reverts to the last saved value and blurs without firing the network call.
+- The 200 char cap is enforced both client-side (`maxLength="200"`) and server-side (the route returns 400 if it slips past). Labels longer than the visible width clip to a 320px max with text-overflow falling on the browser's default.
+
+### Code
+
+- `migrate-v0.36.0.sql`: new. The single `ALTER TABLE renders ADD COLUMN label TEXT`.
+- `schema.sql`: append `label TEXT` to the renders CREATE TABLE block so fresh DBs come up with the column.
+- `src/renders-db.ts`: add `label: string | null` to the `RenderRow` type and parse from the row in `normalizeRow` (empty string or absent column collapses to `null` so the UI does not need to guard both). New `setRenderLabel(env, id, userEmail, label)` function bumping `updated_at` alongside the label set. SELECT statements in `getRenderByIdForUser` and `listRendersForUser` extended with `label`.
+- `src/index.ts`: imports `setRenderLabel`. The existing `/renders/<id>` route regex now matches `PATCH` alongside the existing `DELETE`. New `handleRenderRowPatch` handler in a v0.36.0 section above "Chat (text generation, multimodal in)". Validates body, resolves the row (404 on miss), runs `setRenderLabel`, returns the saved label.
+- `public/planner.js`: `buildHistoryRow` appends an `<input>` between the meta line and the sub line via a new `buildHistoryLabelInput(row)`. The input owns its own save dispatcher (PATCH, error handling, optimistic local update). No global state needed.
+- `public/styles.css`: `.planner-history-label-input` styles. Reuses existing CSS tokens; behaves as text until focused.
+- `package.json`: 0.35.4 -> 0.36.0.
+
+MINOR per the convention: new schema column + new endpoint + new user-visible capability. Typecheck clean; tests 335/335 (D1-touching code not unit-tested in this codebase, matching the v0.34.0 / v0.35.4 pattern).
+
 ## v0.35.4
 
 `DELETE /api/storyboard/renders/<id>` removes one render row from D1 history. Optional `?artifact=true` query parameter also drops the silent MP4 from R2 when no other history row references the same `output_key`. Ownership is enforced via `user_email`; non-owners see 404 (indistinguishable from "row does not exist"). The planner UI gains a "delete" button on every history row with a confirmation prompt before any destructive call leaves the page.

@@ -50,6 +50,7 @@ import {
   getRenderByIdForUser,
   insertRender,
   listRendersForUser,
+  setRenderLabel,
   updateRenderFromView,
 } from "./renders-db";
 import { callWorkersAIStream } from "./providers/workers-ai";
@@ -342,9 +343,11 @@ export default {
     }
     // v0.35.4: delete one render row from history. Optional ?artifact=true
     // also removes the silent MP4 from R2 when no other row references it.
+    // v0.36.0: PATCH on the same path updates the row's label (only).
     const rd = url.pathname.match(/^\/api\/storyboard\/renders\/(\d+)$/);
-    if (rd && request.method === "DELETE") {
-      return handleRenderRowDelete(request, env, rd[1]);
+    if (rd) {
+      if (request.method === "DELETE") return handleRenderRowDelete(request, env, rd[1]);
+      if (request.method === "PATCH") return handleRenderRowPatch(request, env, rd[1]);
     }
     // v0.32.0: poll one render job by its RunPod-issued id.
     // v0.33.1: DELETE cancels the same job via RunPod's POST /cancel.
@@ -1260,6 +1263,73 @@ async function handleRenderRowDelete(
     artifactSkippedReason,
     user: userEmail,
   });
+}
+
+// ---------- PATCH /api/storyboard/renders/<id> (v0.36.0) ----------
+//
+// Update one render row's label. Only the `label` field is patchable
+// today; the request body is `{ label: string | null }`. Empty strings
+// and null both clear the label. Ownership enforced via user_email;
+// non-owners see 404. Returns the saved label so the UI can confirm
+// the round-trip succeeded without a second GET.
+
+interface RenderPatchRequest {
+  label?: unknown;
+}
+
+async function handleRenderRowPatch(
+  request: Request,
+  env: Env,
+  idStr: string,
+): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const id = Number(idStr);
+  if (!Number.isInteger(id) || id <= 0) {
+    return json({ error: "invalid id" }, { status: 400 });
+  }
+
+  let body: RenderPatchRequest;
+  try {
+    body = await request.json<RenderPatchRequest>();
+  } catch {
+    return json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  if (!("label" in body)) {
+    return json(
+      { error: "body must include `label` (string, null, or empty)" },
+      { status: 400 },
+    );
+  }
+
+  let label: string | null;
+  if (body.label === null) {
+    label = null;
+  } else if (typeof body.label === "string") {
+    const trimmed = body.label.trim();
+    if (trimmed.length > 200) {
+      return json(
+        { error: "label too long (200 char max)" },
+        { status: 400 },
+      );
+    }
+    label = trimmed.length === 0 ? null : trimmed;
+  } else {
+    return json(
+      { error: "label must be a string or null" },
+      { status: 400 },
+    );
+  }
+
+  // Resolve the row first so a missing / not-owned id returns 404 with
+  // the same error shape as DELETE; this also keeps the ownership check
+  // explicit instead of relying on the UPDATE's row-count.
+  const row = await getRenderByIdForUser(env, id, userEmail);
+  if (!row) {
+    return json({ error: "render not found" }, { status: 404 });
+  }
+
+  await setRenderLabel(env, id, userEmail, label);
+  return json({ ok: true, id, label, user: userEmail });
 }
 
 // ---------- Chat (text generation, multimodal in) ----------

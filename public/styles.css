@@ -2266,6 +2266,36 @@ textarea:focus {
   color: var(--fg-dim);
 }
 
+/* v0.36.0: inline-editable label input. Looks like text when idle, gains
+   a subtle border + bg on hover / focus to signal "click to edit". */
+.planner-history-label-input {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 12px;
+  color: var(--fg);
+  font-family: inherit;
+  width: 100%;
+  max-width: 320px;
+}
+
+.planner-history-label-input::placeholder {
+  color: var(--fg-dim);
+  opacity: 0.7;
+  font-style: italic;
+}
+
+.planner-history-label-input:hover {
+  background: var(--bg-elev2);
+}
+
+.planner-history-label-input:focus {
+  background: var(--bg-elev2);
+  border-color: var(--border);
+  outline: none;
+}
+
 .planner-history-actions {
   display: flex;
   gap: 8px;

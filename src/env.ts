@@ -42,4 +42,11 @@ export interface Env {
   // v0.17.0: Tavily Search API key for the optional web-search retrieval source.
   // Optional: when unset, web search uses Wikipedia only (no key required).
   TAVILY_API_KEY?: string;
+  // v0.32.0: RunPod serverless endpoint credentials for /api/storyboard/render.
+  // RUNPOD_API_KEY is a Bearer token from the RunPod console (User Settings ->
+  // API Keys). RUNPOD_ENDPOINT_ID is the vivijure-serverless endpoint id (the
+  // path segment after /v2/ on a RunPod endpoint URL). Both optional; the
+  // submit / poll routes return 503 with a clear error when either is missing.
+  RUNPOD_API_KEY?: string;
+  RUNPOD_ENDPOINT_ID?: string;
 }

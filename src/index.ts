@@ -36,6 +36,12 @@ import { findPlanningModel, PLANNING_MODELS } from "./planner-catalog";
 import { serializeStoryboardYaml } from "./planner-yaml";
 import type { SlotId } from "./storyboard-validate";
 import { assembleBundle, type TrainingImage } from "./bundle-assembler";
+import {
+  isValidJobId,
+  pollRenderJob,
+  submitRenderJob,
+  type RenderSubmitArgs,
+} from "./runpod-submit";
 import { callWorkersAIStream } from "./providers/workers-ai";
 import { callOpenAIStream } from "./providers/openai";
 import { callGemini, callGeminiStream } from "./providers/google";
@@ -315,6 +321,15 @@ export default {
     // it to R2 at bundles/<projectName>.tar.gz, returns the key + size.
     if (url.pathname === "/api/storyboard/bundle" && request.method === "POST") {
       return handleStoryboardBundle(request, env);
+    }
+    // v0.32.0: submit a render job to the vivijure-serverless RunPod endpoint.
+    if (url.pathname === "/api/storyboard/render" && request.method === "POST") {
+      return handleRenderSubmit(request, env);
+    }
+    // v0.32.0: poll one render job by its RunPod-issued id.
+    const rj = url.pathname.match(/^\/api\/storyboard\/render\/([A-Za-z0-9_-]+)$/);
+    if (rj && request.method === "GET") {
+      return handleRenderPoll(request, env, rj[1]);
     }
     if (url.pathname === "/api/history" && request.method === "GET") {
       return handleHistoryList(request, env);
@@ -724,6 +739,146 @@ async function handleStoryboardBundle(request: Request, env: Env): Promise<Respo
     bundleKey: result.bundleKey,
     sizeBytes: result.sizeBytes,
     fileCount: result.fileCount,
+    user: userEmail,
+  });
+}
+
+// ---------- /api/storyboard/render (v0.32.0) ----------
+//
+// Submit a render job to the vivijure-serverless RunPod endpoint and poll
+// its status. The submit route accepts the bundleKey returned by
+// /api/storyboard/bundle plus an optional qualityTier ("draft" | "standard"
+// | "final"; default "final") and optional renderOverrides (passed through
+// to rp_handler.py's `render_overrides` payload field for tuning per-shot
+// settings). Returns the RunPod-issued jobId; the UI polls
+// GET /api/storyboard/render/<jobId> for status.
+//
+// Response semantics (mirrors the /api/storyboard/plan matrix):
+//
+//   200 + {ok:true, jobId, status:"IN_QUEUE", ...}
+//     Job was accepted by RunPod.
+//
+//   400 + {error}
+//     Malformed request body, missing bundleKey, or invalid jobId on poll.
+//
+//   502 + {ok:false, errors, ...}
+//     RunPod's API rejected the call (4xx/5xx upstream) or the network
+//     request failed. Distinct from a job-level failure (which arrives
+//     via poll as status:"FAILED").
+//
+//   503 + {error}
+//     RUNPOD_API_KEY or RUNPOD_ENDPOINT_ID is not configured on the worker.
+//     Configure via: npx wrangler secret put RUNPOD_API_KEY
+//                    npx wrangler secret put RUNPOD_ENDPOINT_ID
+
+interface RenderSubmitRequest {
+  bundleKey?: unknown;
+  project?: unknown;
+  qualityTier?: unknown;
+  renderOverrides?: unknown;
+}
+
+async function handleRenderSubmit(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+
+  let body: RenderSubmitRequest;
+  try {
+    body = await request.json<RenderSubmitRequest>();
+  } catch {
+    return json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  if (typeof body.bundleKey !== "string" || body.bundleKey.trim().length === 0) {
+    return json({ error: "bundleKey is required (non-empty string)" }, { status: 400 });
+  }
+  if (body.qualityTier !== undefined && body.qualityTier !== "draft" && body.qualityTier !== "standard" && body.qualityTier !== "final") {
+    return json(
+      { error: "qualityTier must be 'draft' | 'standard' | 'final' if provided" },
+      { status: 400 },
+    );
+  }
+  if (
+    body.renderOverrides !== undefined &&
+    (typeof body.renderOverrides !== "object" || body.renderOverrides === null || Array.isArray(body.renderOverrides))
+  ) {
+    return json(
+      { error: "renderOverrides must be an object if provided" },
+      { status: 400 },
+    );
+  }
+  if (body.project !== undefined && typeof body.project !== "string") {
+    return json({ error: "project must be a string if provided" }, { status: 400 });
+  }
+
+  if (!env.RUNPOD_API_KEY || !env.RUNPOD_ENDPOINT_ID) {
+    return json(
+      {
+        error:
+          "RUNPOD_API_KEY and RUNPOD_ENDPOINT_ID must be set on the Worker. Configure via: npx wrangler secret put RUNPOD_API_KEY, then RUNPOD_ENDPOINT_ID.",
+      },
+      { status: 503 },
+    );
+  }
+
+  const args: RenderSubmitArgs = {
+    bundleKey: body.bundleKey,
+    project: typeof body.project === "string" ? body.project : undefined,
+    qualityTier: body.qualityTier as RenderSubmitArgs["qualityTier"] | undefined,
+    renderOverrides: body.renderOverrides as Record<string, unknown> | undefined,
+  };
+
+  const result = await submitRenderJob(env, args);
+  if (!result.ok) {
+    return json(
+      { ok: false, errors: [result.error], user: userEmail },
+      { status: 502 },
+    );
+  }
+  return json({
+    ok: true,
+    jobId: result.view.jobId,
+    status: result.view.status,
+    statusRaw: result.view.statusRaw,
+    user: userEmail,
+  });
+}
+
+async function handleRenderPoll(
+  request: Request,
+  env: Env,
+  jobId: string,
+): Promise<Response> {
+  const userEmail = getUserEmail(request);
+
+  if (!isValidJobId(jobId)) {
+    return json({ error: "invalid jobId format" }, { status: 400 });
+  }
+  if (!env.RUNPOD_API_KEY || !env.RUNPOD_ENDPOINT_ID) {
+    return json(
+      {
+        error:
+          "RUNPOD_API_KEY and RUNPOD_ENDPOINT_ID must be set on the Worker. Configure via: npx wrangler secret put RUNPOD_API_KEY, then RUNPOD_ENDPOINT_ID.",
+      },
+      { status: 503 },
+    );
+  }
+
+  const result = await pollRenderJob(env, jobId);
+  if (!result.ok) {
+    return json(
+      { ok: false, errors: [result.error], user: userEmail },
+      { status: 502 },
+    );
+  }
+  return json({
+    ok: true,
+    jobId: result.view.jobId,
+    status: result.view.status,
+    statusRaw: result.view.statusRaw,
+    output: result.view.output,
+    error: result.view.error,
+    executionTimeMs: result.view.executionTimeMs,
+    delayTimeMs: result.view.delayTimeMs,
     user: userEmail,
   });
 }

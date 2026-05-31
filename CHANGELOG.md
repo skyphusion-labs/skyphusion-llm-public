@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.32.0
+
+`POST /api/storyboard/render` submits a bundle to the vivijure-serverless RunPod endpoint and returns the RunPod-issued jobId. `GET /api/storyboard/render/<jobId>` polls one job's status (proxied through the Worker so the API key never leaves Cloudflare). Closes the loop on the planning pipeline: plan -> validate -> assemble bundle -> render -> poll. No new binding, no schema change, no new runtime dep. Adds two optional secrets to the Env interface: `RUNPOD_API_KEY` and `RUNPOD_ENDPOINT_ID`. Configure via `npx wrangler secret put RUNPOD_API_KEY` and `RUNPOD_ENDPOINT_ID`; the routes return 503 with a clear configure-via message when either is missing.
+
+### Why
+
+v0.31.0 made the bundle land on R2; the GPU worker on RunPod just needs the bundle key + the project name + the quality tier. RunPod's submit / poll surface is small and well-documented, so this is a thin proxy layer: take the bundleKey from the assembler's response, wrap it in the rp_handler.py-shaped input (`{project, bundle_key, quality_tier, render_overrides?}`), POST to `/v2/<endpointId>/run` with the user's stored Bearer token, return the jobId. The poll proxy keeps the API key on the worker rather than baking it into the browser.
+
+Persistence is deliberately omitted in this pass. The UI holds the jobId (in memory plus localStorage if it wants), polls the proxy, and downloads the rendered MP4 from R2 via the existing `/api/artifact/<key>` route. A D1-backed render-history table is a clean follow-up once the flow stabilizes; the planner UI does not need it for first-pass operation.
+
+### Endpoints
+
+- **`POST /api/storyboard/render`** — body `{ bundleKey, qualityTier?, renderOverrides?, project? }`. `bundleKey` is required. `qualityTier` is `"draft" | "standard" | "final"`, default `"final"`. `renderOverrides` is an opaque object passed through to rp_handler.py for per-shot tuning (Wan step count, seed, etc.). `project` defaults to the slug derived from `bundleKey` (stripping the `bundles/` prefix and `.tar.gz` suffix) so the bundle assembler and the render submit form one consistent project namespace; pass it explicitly only if the bundle was staged under a custom key. Returns `{ ok: true, jobId, status, statusRaw, user }` on success.
+
+- **`GET /api/storyboard/render/<jobId>`** — proxies RunPod's `/v2/<endpointId>/status/<jobId>`. Returns `{ ok: true, jobId, status, statusRaw, output?, error?, executionTimeMs?, delayTimeMs?, user }`. Status enum is the RunPod platform's literal strings: `IN_QUEUE | IN_PROGRESS | COMPLETED | FAILED | CANCELLED | TIMED_OUT`. Unknown status strings (in case RunPod adds new states) collapse to `IN_PROGRESS` for the typed `status` field but pass through verbatim as `statusRaw` so the UI can see what RunPod actually returned.
+
+### Response semantics (mirrors the /api/storyboard/plan matrix)
+
+- **200 + `{ok: true, ...}`** — Job accepted (submit) or status fetched (poll).
+- **400 + `{error}`** — Malformed request body, missing `bundleKey`, invalid `qualityTier`, or malformed `jobId` on poll. `jobId` is validated against `^[A-Za-z0-9_-]{1,128}$` at the route boundary so a malformed id never reaches RunPod as a path-traversal attempt.
+- **502 + `{ok: false, errors, ...}`** — RunPod's API rejected the call (auth, rate limit, endpoint id wrong) or the network request failed. Distinct from a *job-level* failure (which arrives via poll as `status: "FAILED"` with HTTP 200).
+- **503 + `{error}`** — `RUNPOD_API_KEY` or `RUNPOD_ENDPOINT_ID` is not configured on the worker. Error message names the secrets and the `wrangler secret put` commands.
+
+### Code
+
+- `src/runpod-submit.ts`: new. Pure helpers (`buildSubmitPayload`, `buildSubmitUrl`, `buildStatusUrl`, `buildCancelUrl`, `deriveProjectFromBundleKey`, `isValidJobId`, `normalizeRunpodResponse`) plus the two fetch dispatchers (`submitRenderJob`, `pollRenderJob`). The dispatchers never throw on HTTP 4xx / 5xx; they return a tagged result the route translates to a Worker response with the right status code.
+- `src/env.ts`: two new optional secrets, `RUNPOD_API_KEY` and `RUNPOD_ENDPOINT_ID`, with inline-doc pointers to the RunPod console paths to create them.
+- `src/index.ts`: one new route (`POST /api/storyboard/render`) plus one parameterized route (`GET /api/storyboard/render/<jobId>`); two new handlers `handleRenderSubmit` and `handleRenderPoll` in a v0.32.0 section between `/api/storyboard/bundle` and "Chat (text generation, multimodal in)". Both handlers do request-shape validation, 503 fail-fast on missing secrets, then call the dispatcher and shape the response per the matrix.
+- `tests/runpod-submit.test.ts`: new. 25 tests covering the pure helpers (payload shape with / without overrides; URL builders; project derivation from bundleKey, including the canonical bundle layout and the fallback path; jobId validation including path-traversal rejection; RunPod envelope normalization for queued / progress / completed / failed / unknown states). Dispatchers (which touch fetch + env) are not unit-tested in this pass, matching the planner.ts pattern; coverage of the wire shape comes from the pure helpers plus manual smoke against a real endpoint.
+- `package.json`: 0.31.0 -> 0.32.0.
+
+Tests 335/335 (310 existing + 25 new). Typecheck clean. Configuring the worker post-deploy is two `wrangler secret put` calls; no schema change, no new binding, no new runtime dep. After the secrets are set the planning surface closes the loop end to end.
+
 ## v0.31.0
 
 Storyboard bundle assembler. `POST /api/storyboard/bundle` takes a validated storyboard plus per-slot character refs (R2 keys or inline data URLs) and produces the `.tar.gz` the vivijure-serverless GPU worker pulls via `r2_io.download_and_extract`. Bundle is staged to R2 at `bundles/<projectName>.tar.gz`. `POST /api/storyboard/character-ref` uploads one image (PNG/JPEG/WEBP), returns the R2 key. No new binding, no schema change, no new runtime dep (POSIX ustar tar is hand-written, gzip via Workers-native `CompressionStream`).

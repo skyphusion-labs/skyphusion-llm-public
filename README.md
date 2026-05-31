@@ -215,6 +215,7 @@ The worker is the only public surface. R2 is private; the worker streams objects
 | GET    | `/api/history/:id`        | One chat row with full attachment + output references |
 | DELETE | `/api/history/:id`        | Delete a single chat row and clean up its R2 objects |
 | GET    | `/api/job/:id`            | Poll an async video / music generation job's status |
+| GET    | `/api/import/:id`         | Poll a durable `.zip` RAG import workflow's status (v0.26.0) |
 | GET    | `/api/documents`          | List uploaded RAG documents (optional `?project_id=N` filter) |
 | POST   | `/api/documents`          | Upload, chunk, embed, and store a doc (or a `.zip` to import many at once, v0.25.0) |
 | GET    | `/api/documents/:id`      | Document metadata plus first chunks preview |
@@ -246,9 +247,11 @@ Video and music generation can take 1-3 minutes per call, which exceeds the ~30-
 
 **Unified Billing video and music** (Veo/Seedance/Hailuo/Gen-4.5/HappyHorse/PixVerse/Vidu/MiniMax Music via Cloudflare credits) uses [Cloudflare Workflows](https://developers.cloudflare.com/workflows/). The `LongRunWorkflow` class (defined at the bottom of `src/index.ts`) holds the blocking `env.AI.run` call alive across step boundaries and retries each phase independently. Workflow instance IDs are stored on the chats row as `job_id` for traceability.
 
-The `[[workflows]]` binding in `wrangler.toml` declares this. Two operational notes:
+**Bulk ZIP import** (v0.26.0) reuses the same `LongRunWorkflow` binding with `kind: "zip_import"`. The uploaded archive is staged to R2, then the workflow expands it and ingests each inner file in its own step. The win here is different from video/music: it's not about wall-clock time but about subrequest budget. Each file's embedding is several subrequests, so a large archive done in one request could approach the per-invocation limit; one step per file gives each ingest a fresh budget. The client polls `GET /api/import/:id` for the summary. See [RAG ZIP import](#constraints).
 
-- Workflows are not supported in `wrangler dev --remote`. Local dev mode is fine; deploy to test the Unified Billing video and music paths.
+The `[[workflows]]` binding in `wrangler.toml` declares this (one binding serves all three kinds; no new binding was needed for ZIP import). Two operational notes:
+
+- Workflows are not supported in `wrangler dev --remote`. Local dev mode is fine; deploy to test the Unified Billing video and music paths and ZIP import.
 - To inspect a stuck job: `npx wrangler workflows instances describe skyphusion-longrun <job_id>` shows the per-step status, retry count, and any error messages.
 
 ## Multimodal handling
@@ -600,7 +603,7 @@ npx wrangler d1 execute skyphusion-llm-public --remote --file=schema.sql
 ### Constraints
 
 - **File types**: any file (v0.23.0). PDFs are extracted per page and spreadsheets (`.xlsx`/`.xls`) per sheet; every other file is read as UTF-8 text, which covers `.txt`/`.md` plus CSV, JSON, HTML, XML, source code, logs, config, and so on. Files whose bytes don't decode to usable text (binary formats like `.docx`, images) are rejected with a clear message rather than embedded as garbage. Scanned/image-only PDFs are still unsupported (they need OCR, deferred); modern PDFs created from Word/Pages/LaTeX/Google Docs export work fine.
-- **ZIP import** (v0.25.0): upload a `.zip` and the worker expands it, ingesting each inner file as its own document (using the in-zip path as the filename). Decompression is zero-dependency (a hand-rolled central-directory parser plus the Workers-native `DecompressionStream`); stored and deflate entries are supported, encrypted/zip64/other-method entries are skipped. Guards: 10 MB compressed cap (shared with regular uploads), and on expansion max 200 files, 50 MB total uncompressed, 10 MB per inner file. Unreadable inner files are skipped with a reason and reported, not fatal. Inner files are ingested sequentially, so very large archives can approach the Worker subrequest limit.
+- **ZIP import** (v0.25.0; durable via Workflows in v0.26.0): upload a `.zip` and the worker expands it, ingesting each inner file as its own document (using the in-zip path as the filename). Decompression is zero-dependency (a hand-rolled central-directory parser plus the Workers-native `DecompressionStream`); stored and deflate entries are supported, encrypted/zip64/other-method entries are skipped. Guards: 10 MB compressed cap (shared with regular uploads), and on expansion max 200 files, 50 MB total uncompressed, 10 MB per inner file. Unreadable inner files are skipped with a reason and reported, not fatal. As of v0.26.0 the import runs in a `LongRunWorkflow` (one step per file, each with a fresh subrequest budget), so large archives import without hitting the Worker per-invocation subrequest limit; the upload returns a `job_id` and the client polls `GET /api/import/:id`.
 - **Max file size**: 10MB per upload.
 - **Knowledge base**: per-user (scoped by `Cf-Access-Authenticated-User-Email`). By default all your uploaded docs are one corpus; selecting a project narrows retrieval to that project's documents (see [Projects and knowledge stores](#projects-and-knowledge-stores)).
 - **Retrieval default**: top-K = 5 chunks. Change `RETRIEVE_TOP_K` in the worker if you want more or fewer.

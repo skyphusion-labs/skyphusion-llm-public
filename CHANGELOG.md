@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.26.0
+
+ZIP import now runs durably in the `LongRunWorkflow` instead of synchronously, so large archives import without approaching the Worker per-invocation subrequest limit (the caveat noted in v0.25.0). Backend + frontend. No new binding, no schema change.
+
+### Why
+
+The v0.25.0 path expanded a zip and ingested every inner file in a single request. Each file's embedding is several subrequests, so a large archive could approach the per-invocation subrequest ceiling. Cloudflare Workflows run each step in its own context with a fresh subrequest budget, so moving each file's ingest into its own step removes that ceiling and makes the import durable (each step retries independently).
+
+### How it works
+
+1. `POST /api/documents` with a `.zip` stages the archive to R2 (the bytes can't ride the workflow event payload) and starts a `LongRunWorkflow` instance, returning `{ zip: true, async: true, job_id }` immediately.
+2. The workflow (`kind: "zip_import"`, reusing the existing `LONGRUN` binding) runs: step `unzip-and-stage` decompresses the archive and stages each inner file to a temp R2 object, returning only the small name+key list; one `ingest-<i>` step per file then ingests it with a fresh subrequest budget; a final `cleanup` step deletes the temp objects and the staged zip. The run returns an import summary.
+3. The client polls `GET /api/import/:id`, which maps the workflow instance status to `pending` / `done` / `failed` and returns the summary on completion. The summary records `user_email`, and the status endpoint only returns it to that user, so a guessed instance id can't read another user's import result. The documents list refreshes as files land, showing progress.
+
+A failed single-file ingest is still recorded as a skip (with reason), not a workflow failure. The zip-bomb and size guards from v0.25.0 are unchanged.
+
+### Code
+
+- `src/index.ts`: `LongRunParams` is now a union (`LongRunGenParams | ZipImportParams`); `LongRunWorkflow.run` branches on `kind`, with the existing video/music logic moved verbatim into `runGen` and a new `runZipImport`; `handleZipImport` stages the zip and starts the workflow instead of importing inline; new `handleImportStatus` + `GET /api/import/:id` route; new `ZipImportSummary` type.
+- `public/app.js`: `uploadDocument` recognizes the async response and polls `pollImport`; added a `sleep` helper.
+- `README.md`, `CLAUDE.md`: document the durable import path and the new route.
+- `package.json`: 0.25.0 -> 0.26.0.
+
+`ingestDocument`, `unzip`, the ZIP limits, and the binary guard are reused unchanged. No new dependency, no new binding (the existing `LONGRUN` workflow handles the new kind), no schema change. Workflows do not run under `wrangler dev --remote`; local dev mode and deploys are fine. Typecheck clean; tests 172/172.
+
 ## v0.25.0
 
 ZIP import for RAG: upload a `.zip` to the documents sidebar and each file inside is expanded and ingested as its own document. Backend + frontend.

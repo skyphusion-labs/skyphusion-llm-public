@@ -352,6 +352,12 @@ export default {
       return handleJobPoll(request, env, Number(j[1]));
     }
 
+    // v0.26.0: poll a durable zip-import workflow by its instance id.
+    const imp = url.pathname.match(/^\/api\/import\/([A-Za-z0-9-]+)$/);
+    if (imp && request.method === "GET") {
+      return handleImportStatus(request, env, imp[1]);
+    }
+
     const a = url.pathname.match(/^\/api\/artifact\/(.+)$/);
     if (a && request.method === "GET") {
       return handleArtifact(request, env, decodeURIComponent(a[1]));
@@ -2990,49 +2996,80 @@ async function ingestDocument(env: Env, userEmail: string, filename: string, mim
   };
 }
 
-// v0.25.0: expand a .zip upload and ingest each inner file as its own document.
-// Decompression is zero-dependency (src/zip.ts, DecompressionStream-based).
-// Each file runs through the same ingestDocument pipeline, so PDF/XLSX/text
-// extraction, the binary guard, and the per-document delete cascade all apply
-// per inner file. Files that can't be read (binary, encrypted, empty, over a
-// limit) are skipped with a reason rather than failing the whole import.
+// v0.26.0: a .zip upload is imported durably via the LongRunWorkflow rather
+// than synchronously. We stage the archive to R2 (the workflow reads it from
+// there, since 10MB can't ride the workflow event payload), kick off the
+// workflow, and return its instance id as job_id. The client polls
+// GET /api/import/:id for the result. Expansion + per-file ingest happen in
+// separate workflow steps, each with a fresh subrequest budget, so large
+// archives import without hitting the per-invocation subrequest limit that the
+// old synchronous path (v0.25.0) could approach.
 async function handleZipImport(env: Env, userEmail: string, zipBytes: Uint8Array): Promise<Response> {
-  let result;
+  // Stage the archive so the workflow can read it back. customMetadata.user_email
+  // matches the convention used for every other R2 object.
+  const zipKey = `tmp/${crypto.randomUUID()}.zip`;
   try {
-    result = await unzip(zipBytes, {
-      maxEntries: ZIP_MAX_ENTRIES,
-      maxTotalBytes: ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES,
-      maxFileBytes: ZIP_MAX_FILE_BYTES,
+    await env.R2.put(zipKey, zipBytes, {
+      httpMetadata: { contentType: "application/zip" },
+      customMetadata: { user_email: userEmail },
     });
   } catch (err) {
-    return json({ error: `Could not read zip: ${err instanceof Error ? err.message : String(err)}` }, { status: 400 });
+    return json({ error: `Failed to stage zip: ${err instanceof Error ? err.message : String(err)}` }, { status: 500 });
   }
 
-  const imported: Array<{ id: number; filename: string; chunk_count: number }> = [];
-  const skipped: Array<{ name: string; reason: string }> = [...result.skipped];
-
-  // Sequential to keep Worker subrequest usage bounded. A failure on one file
-  // (unreadable, empty, embed error) becomes a skip and does not abort the rest.
-  for (const entry of result.entries) {
-    const r = await ingestDocument(env, userEmail, entry.name, mimeFromName(entry.name), entry.bytes);
-    if (r.ok) imported.push({ id: r.id, filename: r.filename, chunk_count: r.chunk_count });
-    else skipped.push({ name: entry.name, reason: r.error });
+  const startedAt = new Date().toISOString();
+  let instanceId: string;
+  try {
+    const instance = await env.LONGRUN.create({
+      params: { kind: "zip_import", userEmail, zipKey, startedAtIso: startedAt } satisfies LongRunParams,
+    });
+    instanceId = instance.id;
+  } catch (err) {
+    await r2DeleteSafe(env, zipKey);
+    return json({ error: `Failed to start import: ${err instanceof Error ? err.message : String(err)}` }, { status: 502 });
   }
 
-  if (imported.length === 0) {
+  // async:true tells the client to poll /api/import/:id rather than expecting
+  // an inline result.
+  return json({ zip: true, async: true, job_id: instanceId });
+}
+
+// v0.26.0: poll a zip-import workflow. Translates the workflow instance status
+// into the same pending/done/failed vocabulary the rest of the UI uses. The
+// import summary is only returned to the user who started it (the workflow
+// records userEmail in its output), so a guessed instance id can't read another
+// user's result.
+async function handleImportStatus(request: Request, env: Env, id: string): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  let status: { status: string; output?: unknown; error?: unknown };
+  try {
+    const instance = await env.LONGRUN.get(id);
+    status = await instance.status();
+  } catch {
+    return json({ error: "Unknown import job" }, { status: 404 });
+  }
+
+  if (status.status === "complete") {
+    const summary = (status.output ?? {}) as Partial<ZipImportSummary>;
+    if (summary.userEmail !== userEmail) {
+      return json({ error: "Unknown import job" }, { status: 404 });
+    }
     return json({
-      zip: true, imported, skipped, imported_count: 0, total_chunks: 0,
-      error: skipped.length ? "No files in the zip could be imported." : "The zip contained no files.",
-    }, { status: 400 });
+      status: "done",
+      imported_count: summary.imported_count ?? 0,
+      total_chunks: summary.total_chunks ?? 0,
+      imported: summary.imported ?? [],
+      skipped: summary.skipped ?? [],
+    });
   }
 
-  return json({
-    zip: true,
-    imported,
-    skipped,
-    imported_count: imported.length,
-    total_chunks: imported.reduce((s, d) => s + d.chunk_count, 0),
-  });
+  if (status.status === "errored" || status.status === "terminated") {
+    const msg = typeof status.error === "string" ? status.error : JSON.stringify(status.error ?? "import failed");
+    return json({ status: "failed", error: msg });
+  }
+
+  // queued / running / waiting / paused / unknown -> still in progress.
+  return json({ status: "pending" });
 }
 
 async function handleDocumentUpload(request: Request, env: Env): Promise<Response> {
@@ -3818,7 +3855,7 @@ async function handleHealthDeep(env: Env): Promise<Response> {
 
 type LongRunKind = "video" | "music";
 
-interface LongRunParams extends Record<string, unknown> {
+interface LongRunGenParams extends Record<string, unknown> {
   rowId: number;
   userEmail: string;
   modelId: string;
@@ -3828,6 +3865,33 @@ interface LongRunParams extends Record<string, unknown> {
   imageKey?: string;        // image-to-video: an R2 key resolved to a data: URI in the workflow (uploads + chaining)
   kind: LongRunKind;
   startedAtIso: string;
+}
+
+// v0.26.0: durable bulk ZIP import. The uploaded archive is staged to R2
+// (`zipKey`) so its bytes never ride the workflow event payload; the workflow
+// unzips it and ingests each inner file in its own step. Putting each file in
+// a separate step gives each ingest a fresh Worker subrequest budget, which is
+// what lets a large archive import without hitting the per-invocation limit
+// that the synchronous v0.25.0 path could approach.
+interface ZipImportParams extends Record<string, unknown> {
+  kind: "zip_import";
+  userEmail: string;
+  zipKey: string;
+  startedAtIso: string;
+}
+
+type LongRunParams = LongRunGenParams | ZipImportParams;
+
+// Returned by the zip-import workflow run() and surfaced via the instance's
+// status().output to the polling client. userEmail is included so the status
+// endpoint can enforce per-user ownership (a guessed instance id can't read
+// another user's import result).
+interface ZipImportSummary {
+  userEmail: string;
+  imported_count: number;
+  total_chunks: number;
+  imported: Array<{ name: string; id: number; chunk_count: number }>;
+  skipped: Array<{ name: string; reason: string }>;
 }
 
 // Shape we expect back from env.AI.run for video and music. Both share the
@@ -3840,8 +3904,93 @@ interface LongRunResult {
 }
 
 export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
-  async run(event: WorkflowEvent<LongRunParams>, step: WorkflowStep): Promise<void> {
-    const { rowId, userEmail, modelId, prompt, lyrics, imageUrl, imageKey, kind, startedAtIso } = event.payload;
+  async run(event: WorkflowEvent<LongRunParams>, step: WorkflowStep): Promise<unknown> {
+    if (event.payload.kind === "zip_import") {
+      return this.runZipImport(event.payload, step);
+    }
+    return this.runGen(event.payload, step);
+  }
+
+  // v0.26.0: bulk ZIP import. Step 1 unzips the staged archive and stages each
+  // inner file to a temp R2 object (returning only the small name+key list, so
+  // we stay under the 1 MiB step-return cap and never pass bytes between
+  // steps). Each subsequent step ingests one file with a fresh subrequest
+  // budget. A failed ingest becomes a skip, not a workflow failure. A final
+  // step deletes the temp objects and the staged zip.
+  async runZipImport(p: ZipImportParams, step: WorkflowStep): Promise<ZipImportSummary> {
+    const { userEmail, zipKey } = p;
+
+    const { staged, skipped: unzipSkipped } = await step.do(
+      "unzip-and-stage",
+      { retries: { limit: 2, delay: "5 seconds", backoff: "exponential" } },
+      async (): Promise<{ staged: Array<{ name: string; key: string }>; skipped: Array<{ name: string; reason: string }> }> => {
+        const obj = await this.env.R2.get(zipKey);
+        if (!obj) throw new Error("staged zip not found in R2");
+        const bytes = new Uint8Array(await obj.arrayBuffer());
+        const { entries, skipped } = await unzip(bytes, {
+          maxEntries: ZIP_MAX_ENTRIES,
+          maxTotalBytes: ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES,
+          maxFileBytes: ZIP_MAX_FILE_BYTES,
+        });
+        const out: Array<{ name: string; key: string }> = [];
+        for (const e of entries) {
+          const key = `tmp/${crypto.randomUUID()}`;
+          await this.env.R2.put(key, e.bytes, { customMetadata: { user_email: userEmail } });
+          out.push({ name: e.name, key });
+        }
+        return { staged: out, skipped };
+      }
+    );
+
+    const imported: ZipImportSummary["imported"] = [];
+    const skipped: ZipImportSummary["skipped"] = [...unzipSkipped];
+
+    // One step per file: each gets its own subrequest budget. ingestDocument
+    // swallows its own errors into an ok:false result (after rolling back its
+    // partial writes), so an unreadable file does not abort the import.
+    for (let i = 0; i < staged.length; i++) {
+      const item = staged[i];
+      const res = await step.do(
+        `ingest-${i}`,
+        { retries: { limit: 2, delay: "5 seconds", backoff: "exponential" } },
+        async (): Promise<{ ok: true; name: string; id: number; chunk_count: number } | { ok: false; name: string; reason: string }> => {
+          const obj = await this.env.R2.get(item.key);
+          if (!obj) return { ok: false, name: item.name, reason: "staged file missing" };
+          const bytes = new Uint8Array(await obj.arrayBuffer());
+          const r = await ingestDocument(this.env, userEmail, item.name, mimeFromName(item.name), bytes);
+          return r.ok
+            ? { ok: true, name: item.name, id: r.id, chunk_count: r.chunk_count }
+            : { ok: false, name: item.name, reason: r.error };
+        }
+      );
+      if (res.ok) imported.push({ name: res.name, id: res.id, chunk_count: res.chunk_count });
+      else skipped.push({ name: res.name, reason: res.reason });
+    }
+
+    // Cleanup: drop the temp staged files and the staged zip. Best-effort; a
+    // leaked temp object under tmp/ is harmless and can be swept by an R2
+    // lifecycle rule. Done after all ingests so a per-file step retry can still
+    // re-read its staged object.
+    await step.do(
+      "cleanup",
+      { retries: { limit: 1, delay: "5 seconds", backoff: "linear" } },
+      async (): Promise<void> => {
+        for (const item of staged) await r2DeleteSafe(this.env, item.key);
+        await r2DeleteSafe(this.env, zipKey);
+      }
+    );
+
+    return {
+      userEmail,
+      imported_count: imported.length,
+      total_chunks: imported.reduce((s, d) => s + d.chunk_count, 0),
+      imported,
+      skipped,
+    };
+  }
+
+  async runGen(payload: LongRunGenParams, step: WorkflowStep): Promise<void> {
+    const { rowId, userEmail, modelId, prompt, lyrics, imageUrl, imageKey, kind, startedAtIso } = payload;
 
     // Best-effort row-fail helper. Used in the outer catch to surface
     // workflow-level failures to the polling client. Failures inside this

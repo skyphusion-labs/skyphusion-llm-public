@@ -37,7 +37,7 @@ Everything lives in one Worker `fetch` handler in `src/index.ts` (~3800 LOC). Pu
 - `src/output-extract.ts` — normalizes wildly different provider response shapes into output text/usage; `detectProviderFailure`, `extractProxiedImageUrl`.
 - `src/env.ts` — hand-authored `Env` binding interface (mirror of `wrangler.toml` bindings). `src/types.ts` — the `InputAttachment` discriminated union (request boundary).
 - `src/chunking.ts` / `src/discord.ts` — RAG chunking and DiscordChatExporter ingestion.
-- `src/zip.ts` — zero-dependency ZIP reader (central-directory parser + `DecompressionStream`) for RAG `.zip` import; each inner file is ingested as its own document via `ingestDocument` in `index.ts`.
+- `src/zip.ts` — zero-dependency ZIP reader (central-directory parser + `DecompressionStream`) for RAG `.zip` import; each inner file is ingested as its own document via `ingestDocument` in `index.ts`. The import runs durably in `LongRunWorkflow` (`kind: "zip_import"`), one step per file; the client polls `GET /api/import/:id`.
 - `src/longrun-params.ts` / `src/proxied-image-params.ts` — param builders for video/music and proxied image gen.
 - `public/` — vanilla JS/CSS/HTML frontend (`app.js`, `streaming-client.js`, `styles.css`, `index.html`), served via Workers Assets. No framework, no build.
 
@@ -58,6 +58,8 @@ Cloudflare Access gates the whole worker URL. The worker trusts `Cf-Access-Authe
 ### Long-running jobs (video/music, 30s–3min)
 
 These exceed the ~30s `ctx.waitUntil` budget, so they use **Cloudflare Workflows**. The `LongRunWorkflow` class (bottom of `src/index.ts`) holds the blocking `env.AI.run` call alive across retryable step boundaries; the workflow instance ID is persisted as `chats.job_id`. The one exception is BYOK xAI video, which uses submit-and-poll (`GET /api/job/:id` triggers a fresh invocation per poll). **Workflows do not run under `wrangler dev --remote`** — deploy to test Unified Billing video/music.
+
+The same `LONGRUN` binding also serves **bulk `.zip` RAG import** (`run()` branches on `kind`: `runGen` for video/music, `runZipImport` for archives). For zip import the motivation is subrequest budget, not wall-clock: one step per inner file gives each `ingestDocument` a fresh budget so a large archive doesn't hit the per-invocation subrequest ceiling. No chats row is involved; the client polls `GET /api/import/:id`, which reads the workflow instance's `status().output` summary (ownership-checked via the `user_email` recorded in that output).
 
 ## Wrangler bindings reference
 
@@ -102,7 +104,8 @@ All matched in the single `fetch` handler in `src/index.ts` (top-of-file comment
 | GET | `/api/history` | List caller's chats, newest first. |
 | GET / DELETE | `/api/history/:id` | One row (with attachments + output) / delete row + its R2 objects. |
 | GET | `/api/artifact/*` | Stream an R2 object, gated by `customMetadata.user_email`. |
-| GET | `/api/job/:id` | Poll an async video/music job status. |
+| GET | `/api/job/:id` | Poll an async video/music job status (reads the chats row). |
+| GET | `/api/import/:id` | Poll a durable `.zip` RAG import workflow (reads the `LongRunWorkflow` instance status). |
 | GET | `/api/conversations` | List caller's conversations (grouped by `conversation_id`). |
 | GET / DELETE | `/api/conversations/:id` | Full transcript / cascade-delete turns + R2 artifacts. |
 | PATCH | `/api/conversations/:id/project` | Move conversation to a project or clear it (v0.20.2). |

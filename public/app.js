@@ -1483,11 +1483,50 @@ async function loadDocuments() {
   }
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// v0.26.0: a .zip import runs durably in a background workflow. Poll its
+// status until done/failed, refreshing the document list as files land so the
+// user sees progress.
+async function pollImport(jobId, name) {
+  for (let i = 0; i < 600; i++) {  // ~20 min ceiling at 2s spacing
+    await sleep(2000);
+    let s;
+    try {
+      s = await api(`/api/import/${encodeURIComponent(jobId)}`);
+    } catch {
+      continue;  // transient; keep polling
+    }
+    if (s.status === "done") {
+      const skip = (s.skipped || []).length;
+      docStatus.classList.remove("error");
+      docStatus.textContent =
+        `Imported ${s.imported_count} file${s.imported_count === 1 ? "" : "s"} ` +
+        `(${s.total_chunks} chunks)${skip ? `, skipped ${skip}` : ""}`;
+      await loadDocuments();
+      setTimeout(() => {
+        if (docStatus.textContent.startsWith("Imported ")) docStatus.textContent = "";
+      }, 6000);
+      return;
+    }
+    if (s.status === "failed") {
+      docStatus.classList.add("error");
+      docStatus.textContent = `Import of ${name} failed: ${s.error || "unknown error"}`;
+      return;
+    }
+    // Still running: surface incremental progress via the document list.
+    await loadDocuments();
+    docStatus.textContent = `Importing ${name}\u2026 (${state.documentCount} files so far)`;
+  }
+  docStatus.textContent = `Import of ${name} still running; check back shortly.`;
+}
+
 async function uploadDocument(file) {
   if (!file) return;
   // Any file type is accepted. The worker extracts PDF and XLSX/XLS natively
   // and decodes everything else as text, rejecting only unreadable binaries.
-  // A .zip (v0.25.0) is expanded server-side and each inner file imported.
+  // A .zip (v0.25.0) is expanded server-side; as of v0.26.0 that runs in a
+  // background workflow and the client polls for the result.
   docStatus.classList.remove("error");
   const isZip = /\.zip$/i.test(file.name) || file.type === "application/zip" || file.type === "application/x-zip-compressed";
   docStatus.textContent = isZip ? `Importing ${file.name}\u2026` : `Uploading ${file.name}\u2026`;
@@ -1502,20 +1541,15 @@ async function uploadDocument(file) {
         data: dataUrl,
       }),
     });
-    if (result.zip) {
-      const skip = (result.skipped || []).length;
-      docStatus.textContent =
-        `Imported ${result.imported_count} file${result.imported_count === 1 ? "" : "s"} ` +
-        `(${result.total_chunks} chunks)${skip ? `, skipped ${skip}` : ""}`;
-    } else {
-      docStatus.textContent = `Uploaded ${result.filename}: ${result.chunk_count} chunks embedded`;
+    if (result.zip && result.async) {
+      await pollImport(result.job_id, file.name);
+      return;
     }
+    docStatus.textContent = `Uploaded ${result.filename}: ${result.chunk_count} chunks embedded`;
     await loadDocuments();
     // Clear status after a few seconds.
     setTimeout(() => {
-      if (docStatus.textContent.startsWith("Uploaded ") || docStatus.textContent.startsWith("Imported ")) {
-        docStatus.textContent = "";
-      }
+      if (docStatus.textContent.startsWith("Uploaded ")) docStatus.textContent = "";
     }, 5000);
   } catch (err) {
     docStatus.classList.add("error");

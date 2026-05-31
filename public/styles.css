@@ -1821,3 +1821,261 @@ textarea:focus {
   color: var(--fg-dim);
   text-transform: lowercase;
 }
+
+/* ---------- planner v0.33.0: bundle + render stages ---------- */
+
+.planner-stage-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  text-transform: lowercase;
+  color: var(--fg);
+}
+
+.planner-form .planner-stage-title {
+  margin-bottom: 12px;
+}
+
+.planner-stage {
+  border-top: 1px solid var(--border);
+  padding-top: 24px;
+  margin-top: 32px;
+}
+
+.planner-stage-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 12px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.planner-stage-header .planner-stage-title {
+  margin: 0;
+}
+
+.planner-stage-hint {
+  font-size: 13px;
+  color: var(--fg-dim);
+  margin: 0 0 16px;
+  line-height: 1.5;
+}
+
+.planner-bundle-cast {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.planner-slot-upload {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.planner-slot-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.planner-slot-head strong {
+  font-size: 14px;
+  color: var(--fg);
+}
+
+.planner-slot-bible {
+  font-size: 12px;
+  color: var(--fg-dim);
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+}
+
+.planner-slot-input { display: none; }
+
+.planner-slot-pick {
+  display: inline-block;
+  background: var(--bg-elev2);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  margin-bottom: 8px;
+}
+
+.planner-slot-pick:hover {
+  background: var(--bg);
+  border-color: var(--accent);
+}
+
+.planner-slot-list {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+  font-size: 12px;
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+}
+
+.planner-slot-entry {
+  display: flex;
+  gap: 12px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+  align-items: center;
+}
+
+.planner-slot-entry:last-child {
+  border-bottom: none;
+}
+
+.planner-slot-filename {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planner-slot-size {
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+
+.planner-slot-uploading { color: var(--warn); }
+.planner-slot-done { color: var(--accent); }
+.planner-slot-error { color: var(--error); }
+
+.planner-slot-summary {
+  font-size: 12px;
+  color: var(--fg-dim);
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.planner-bundle-result,
+.planner-render-output {
+  margin-top: 16px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.planner-bundle-result h3,
+.planner-render-output h4,
+.planner-render-log-wrap h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--fg-dim);
+  text-transform: lowercase;
+}
+
+.planner-bundle-result ul {
+  margin: 0 0 4px;
+  padding-left: 18px;
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+  font-size: 12px;
+}
+
+.planner-bundle-result li {
+  margin-bottom: 4px;
+  color: var(--error);
+}
+
+.planner-bundle-result code,
+.planner-render-meta code {
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+  background: var(--bg);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  color: var(--fg);
+}
+
+.planner-render-result {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+  margin-top: 16px;
+}
+
+.planner-render-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.planner-render-label {
+  font-size: 12px;
+  color: var(--fg-dim);
+  margin-right: 4px;
+}
+
+.planner-render-job-status {
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+  font-size: 12px;
+}
+
+.planner-render-status-running { color: var(--warn); }
+.planner-render-status-done { color: var(--accent); }
+.planner-render-status-error { color: var(--error); }
+
+.planner-render-log-wrap {
+  margin-bottom: 12px;
+}
+
+.planner-render-log-wrap pre {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+  font-size: 12px;
+  overflow: auto;
+  max-height: 360px;
+  margin: 0;
+  white-space: pre-wrap;
+  color: var(--fg);
+}
+
+.planner-render-output pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+  font-size: 12px;
+  padding: 8px;
+  margin: 0 0 12px;
+  overflow: auto;
+  max-height: 240px;
+  white-space: pre;
+  color: var(--fg);
+}
+
+.planner-render-link {
+  color: var(--fg-dim);
+  text-decoration: none;
+  font-size: 13px;
+  align-self: center;
+}
+
+.planner-render-link:hover {
+  color: var(--accent);
+}
+
+.planner-render-error {
+  background: var(--bg);
+  border-left: 3px solid var(--error);
+  color: var(--error);
+  padding: 8px 12px;
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+  font-size: 12px;
+  margin-top: 8px;
+  white-space: pre-wrap;
+}

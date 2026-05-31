@@ -20,6 +20,8 @@
     </header>
 
     <section class="planner-form">
+      <h2 class="planner-stage-title">1. plan</h2>
+
       <label class="planner-field">
         <span>model</span>
         <select id="planner-model"></select>
@@ -67,6 +69,74 @@
       <div id="planner-raw" class="planner-raw" hidden>
         <h3>raw model output</h3>
         <pre id="planner-raw-content"></pre>
+      </div>
+    </section>
+
+    <!-- v0.33.0: bundle stage. Revealed after a successful plan. -->
+    <section id="planner-bundle" class="planner-stage" hidden>
+      <header class="planner-stage-header">
+        <h2 class="planner-stage-title">2. assemble bundle</h2>
+        <span id="planner-bundle-status" class="planner-status"></span>
+      </header>
+      <p class="planner-stage-hint">
+        upload training images for each character slot that the validated
+        storyboard locked in (usually 8 or more per slot for LoRA training).
+        each file is staged to R2 immediately. when every slot has staged
+        images, click "bundle" to assemble the .tar.gz the GPU worker pulls.
+      </p>
+      <div id="planner-bundle-cast" class="planner-bundle-cast"></div>
+      <div class="planner-actions">
+        <button id="planner-bundle-btn" type="button" class="planner-primary">bundle</button>
+        <span id="planner-bundle-meta" class="planner-status"></span>
+      </div>
+      <div id="planner-bundle-result" class="planner-bundle-result" hidden></div>
+    </section>
+
+    <!-- v0.33.0: render stage. Revealed after a successful bundle. -->
+    <section id="planner-render" class="planner-stage" hidden>
+      <header class="planner-stage-header">
+        <h2 class="planner-stage-title">3. render</h2>
+        <span id="planner-render-status" class="planner-status"></span>
+      </header>
+      <p class="planner-stage-hint">
+        submit the bundle to the vivijure-serverless RunPod endpoint. the
+        worker pulls it, trains LoRAs, renders SDXL keyframes plus Wan I2V
+        motion, exports a silent MP4 to R2. the status pane polls every 8
+        seconds until the job reaches COMPLETED, FAILED, CANCELLED, or
+        TIMED_OUT.
+      </p>
+      <label class="planner-field">
+        <span>quality tier</span>
+        <select id="planner-quality-tier">
+          <option value="draft">draft (33 frames, 8 steps; fastest, lowest quality)</option>
+          <option value="standard">standard (33 frames, 12 steps)</option>
+          <option value="final" selected>final (97 frames, 22 steps; production quality)</option>
+        </select>
+      </label>
+      <div class="planner-actions">
+        <button id="planner-render-btn" type="button" class="planner-primary">render</button>
+        <span id="planner-render-meta" class="planner-status"></span>
+      </div>
+      <div id="planner-render-result" class="planner-render-result" hidden>
+        <div class="planner-render-meta">
+          <div><span class="planner-render-label">job:</span> <code id="planner-render-job-id"></code></div>
+          <div><span class="planner-render-label">status:</span> <span id="planner-render-job-status" class="planner-render-job-status"></span></div>
+          <div id="planner-render-scene" hidden></div>
+          <div id="planner-render-phase" hidden></div>
+          <div id="planner-render-error" class="planner-render-error" hidden></div>
+        </div>
+        <div id="planner-render-log-wrap" class="planner-render-log-wrap" hidden>
+          <h4>render log</h4>
+          <pre id="planner-render-log"></pre>
+        </div>
+        <div id="planner-render-output" class="planner-render-output" hidden>
+          <h4>output</h4>
+          <pre id="planner-render-output-content"></pre>
+          <div class="planner-actions">
+            <a id="planner-render-download" href="#" class="planner-primary" download>download silent MP4</a>
+            <a id="planner-render-open" href="#" target="_blank" rel="noopener" class="planner-render-link">open in new tab</a>
+          </div>
+        </div>
       </div>
     </section>
   </main>

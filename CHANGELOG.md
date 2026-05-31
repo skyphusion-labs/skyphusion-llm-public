@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.33.0
+
+End-to-end planning UI at `/planner.html`. The page now walks the three-stage pipeline in the browser: plan -> bundle -> render. After the validated storyboard JSON / YAML appears, per-slot upload widgets reveal for each character in `use_characters`; selecting files immediately stages each one through `POST /api/storyboard/character-ref` to R2. Clicking "bundle" assembles via `POST /api/storyboard/bundle`. Clicking "render" submits via `POST /api/storyboard/render` and starts an 8-second poll loop on `GET /api/storyboard/render/<jobId>`, showing scene index, phase, the live render log, and an "open silent MP4" download link when the job hits `COMPLETED`. No backend change, no new endpoint, no new runtime dep.
+
+### Why
+
+v0.29.x through v0.32.x built the backend surface for the planning pipeline. v0.30.0 surfaced the plan stage in a browser; until now the bundle + render stages were only callable via curl. This commit closes the loop so someone who is not you can drive a render entirely from the browser, with no shell required and no API key in the page. The Cloudflare Access cookie that gates `/planner.html` is the same one that gates every `/api/storyboard/*` route, so authn and authz are unchanged.
+
+### Layout
+
+Three stages, each a numbered section that reveals on the previous stage's success:
+
+1. **plan** (always visible) -- model picker, brief textarea, four cast rows (slot A through D with check-to-include, name input, bible textarea). On success the validated JSON + YAML render in the existing side-by-side panel, and the bundle stage reveals.
+
+2. **assemble bundle** -- per-slot upload widget for each character in `storyboard.use_characters`, pre-populated with the name + bible from the plan-stage cast form (read-only summary; edit by re-planning). The widget accepts PNG / JPEG / WEBP via a multi-file input; each selected file uploads immediately, with per-file status (`uploading...` / `staged` / `failed: <reason>`). When every slot has at least one staged image, the "bundle" button assembles the `.tar.gz` and reveals the render stage. Unsupported file types fail loudly without contacting the worker.
+
+3. **render** -- quality-tier dropdown (`draft` / `standard` / `final`, defaulting to `final` to match the smoke-tested cherry path) and a "render" button. After submit, a result panel reveals with the RunPod job id, status badge (`IN_QUEUE` / `IN_PROGRESS` / `COMPLETED` / `FAILED` / `CANCELLED` / `TIMED_OUT`), live scene index, phase, and the tail of the render log. The 8-second poll loop runs until the job hits a terminal status. On `COMPLETED` the silent MP4 surfaces as a download link plus an "open in new tab" link, both pointing at `/api/artifact/<output_key>`. On any terminal failure status the panel shows the error and the executionTime so the user can decide whether to re-bundle or re-plan.
+
+### State and reset behavior
+
+Re-running "plan" clears both the bundle stage and the render stage and stops any active poll loop. Re-running "bundle" against new uploads stops the prior render stage from showing stale state. The pollTimer is cleaned up on every dispatcher entry so two concurrent polls never overlap.
+
+### Code
+
+- `public/planner.html`: new "bundle" and "render" sections appended after the existing output panel. Plan section labeled "1. plan", bundle "2. assemble bundle", render "3. render" for stage clarity. Same head boilerplate and footer script include as before.
+- `public/planner.js`: previously ~280 lines (v0.30.0); now ~720 lines. Adds module-scope state objects (`planState`, `bundleState`, `renderState`), per-slot upload widget builder + file-upload dispatcher, bundle assembly call, render submit + poll loop with live log + scene / phase display, plus helpers (`formatBytes`, `formatDuration`, `setJobStatusBadge`, terminal-state detection). Uses DOM construction over innerHTML for any text that flows from server responses; no escape-and-stringify pattern needed.
+- `public/styles.css`: ~210 lines appended at the end. Reuses the existing CSS tokens; responsive collapse via the existing 800px breakpoint already covers the new stages. Stages share the same border-top + spacing convention so the visual rhythm matches the existing plan output panel.
+- `package.json`: 0.32.0 -> 0.33.0.
+
+Tests / typecheck unchanged: only TypeScript is in `src/`; this addition is pure HTML / JS / CSS. Tests 335/335. The page is reachable the moment the next `npx wrangler deploy` ships the updated `public/` assets bundle.
+
 ## v0.32.0
 
 `POST /api/storyboard/render` submits a bundle to the vivijure-serverless RunPod endpoint and returns the RunPod-issued jobId. `GET /api/storyboard/render/<jobId>` polls one job's status (proxied through the Worker so the API key never leaves Cloudflare). Closes the loop on the planning pipeline: plan -> validate -> assemble bundle -> render -> poll. No new binding, no schema change, no new runtime dep. Adds two optional secrets to the Env interface: `RUNPOD_API_KEY` and `RUNPOD_ENDPOINT_ID`. Configure via `npx wrangler secret put RUNPOD_API_KEY` and `RUNPOD_ENDPOINT_ID`; the routes return 503 with a clear configure-via message when either is missing.

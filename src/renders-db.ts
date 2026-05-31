@@ -131,6 +131,63 @@ export async function updateRenderFromView(env: Env, view: RunpodJobView): Promi
     .run();
 }
 
+// Fetch one row by D1 PK, scoped to the caller's user_email. Returns null
+// when the row does not exist OR when it belongs to another user (we do
+// not distinguish so a guessed id cannot enumerate other users' rows).
+export async function getRenderByIdForUser(
+  env: Env,
+  id: number,
+  userEmail: string,
+): Promise<RenderRow | null> {
+  const r = await env.DB.prepare(
+    `SELECT
+      id, user_email, job_id, project, bundle_key, quality_tier,
+      render_overrides, status, output_key, output_json AS output,
+      error, execution_time_ms, delay_time_ms,
+      submitted_at, updated_at, completed_at
+    FROM renders
+    WHERE id = ? AND user_email = ?`,
+  )
+    .bind(id, userEmail)
+    .first<Record<string, unknown>>();
+  if (!r) return null;
+  return normalizeRow(r);
+}
+
+// True when at least one OTHER row references the same output_key. Used
+// to gate R2 artifact deletion: re-renders of the same project can share
+// an output filename (rp_handler.py writes `renders/<project>/<name>.mp4`,
+// so a re-render at the same name would overwrite), and we never want to
+// strand a still-referenced artifact.
+export async function countOtherRowsWithOutputKey(
+  env: Env,
+  id: number,
+  outputKey: string,
+): Promise<number> {
+  const r = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM renders WHERE output_key = ? AND id != ?`,
+  )
+    .bind(outputKey, id)
+    .first<{ n: number }>();
+  return Number(r?.n ?? 0);
+}
+
+// Delete one row by D1 PK + user_email. Returns true when a row was
+// actually removed (i.e., the row existed and the caller owned it).
+export async function deleteRenderRow(
+  env: Env,
+  id: number,
+  userEmail: string,
+): Promise<boolean> {
+  const result = await env.DB.prepare(
+    `DELETE FROM renders WHERE id = ? AND user_email = ?`,
+  )
+    .bind(id, userEmail)
+    .run();
+  const changes = (result.meta as { changes?: number } | undefined)?.changes ?? 0;
+  return changes > 0;
+}
+
 export async function listRendersForUser(
   env: Env,
   userEmail: string,

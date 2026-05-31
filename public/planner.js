@@ -1141,8 +1141,60 @@ function buildHistoryRow(r) {
   rerun.addEventListener("click", () => rerunBundle(r));
   actions.appendChild(rerun);
 
+  // v0.35.4: delete the row from history (and the silent MP4 from R2 when
+  // no other row references it). Confirmation prompt before any destructive
+  // request leaves the page.
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "planner-history-action planner-history-action-delete";
+  del.textContent = "delete";
+  del.title = "remove this row from history and (if not shared) the silent MP4 from R2";
+  del.addEventListener("click", () => deleteHistoryRow(r));
+  actions.appendChild(del);
+
   li.appendChild(actions);
   return li;
+}
+
+// v0.35.4: prompt + delete one history row. The artifact-cleanup query
+// flag is sent only when the row has an output_key (no point asking the
+// worker to clean nothing). Refreshes the list on success so the row
+// disappears immediately.
+async function deleteHistoryRow(row) {
+  const hasArtifact = !!row.output_key;
+  const prompt = hasArtifact
+    ? "delete this render from history (and the silent MP4 in R2 if no other row references it)?"
+    : "delete this render from history?";
+  if (!window.confirm(prompt)) return;
+
+  const url =
+    "/api/storyboard/renders/" + encodeURIComponent(row.id)
+    + (hasArtifact ? "?artifact=true" : "");
+  let resp = null;
+  let data = null;
+  try {
+    resp = await fetch(url, { method: "DELETE" });
+    data = await resp.json();
+  } catch (err) {
+    window.alert("delete failed: " + err.message);
+    return;
+  }
+
+  if (!resp.ok || !data || data.ok !== true) {
+    const errMsg = (data && data.error) || ("HTTP " + resp.status);
+    window.alert("delete failed: " + errMsg);
+    return;
+  }
+
+  if (hasArtifact && data.artifactSkippedReason) {
+    // Soft notice: the row is gone but the artifact stayed. Surface so
+    // the user is not surprised that the file is still on R2.
+    console.info("artifact preserved:", data.artifactSkippedReason);
+  }
+
+  // Refresh so the row drops out of the list immediately and the
+  // auto-refresh loop re-arms from the new state.
+  loadHistory();
 }
 
 // v0.35.1: load a bundle key (from a history row or a paste prompt) into

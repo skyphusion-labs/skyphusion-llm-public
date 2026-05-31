@@ -45,6 +45,9 @@ import {
   type RenderSubmitArgs,
 } from "./runpod-submit";
 import {
+  countOtherRowsWithOutputKey,
+  deleteRenderRow,
+  getRenderByIdForUser,
   insertRender,
   listRendersForUser,
   updateRenderFromView,
@@ -336,6 +339,12 @@ export default {
     // v0.34.0: list this user's render history (D1-backed; ownership via user_email).
     if (url.pathname === "/api/storyboard/renders" && request.method === "GET") {
       return handleRendersList(request, env);
+    }
+    // v0.35.4: delete one render row from history. Optional ?artifact=true
+    // also removes the silent MP4 from R2 when no other row references it.
+    const rd = url.pathname.match(/^\/api\/storyboard\/renders\/(\d+)$/);
+    if (rd && request.method === "DELETE") {
+      return handleRenderRowDelete(request, env, rd[1]);
     }
     // v0.32.0: poll one render job by its RunPod-issued id.
     // v0.33.1: DELETE cancels the same job via RunPod's POST /cancel.
@@ -1171,6 +1180,86 @@ async function handleRendersList(request: Request, env: Env): Promise<Response> 
       { status: 500 },
     );
   }
+}
+
+// ---------- DELETE /api/storyboard/renders/<id> (v0.35.4) ----------
+//
+// Delete one render row from D1 history. Ownership is enforced via
+// user_email; a non-owner sees 404 (indistinguishable from "row does
+// not exist"), so a guessed id cannot enumerate other users' rows.
+//
+// Optional ?artifact=true also removes the silent MP4 from R2 when no
+// OTHER history row references the same output_key (re-renders of the
+// same project can share an output filename because rp_handler.py
+// writes `renders/<project>/<name>.mp4`; we never strand a still-
+// referenced artifact). The bundle at row.bundle_key is NEVER deleted:
+// re-renders share it by design, and the user can prune via
+// `wrangler r2 object delete` if they want.
+
+async function handleRenderRowDelete(
+  request: Request,
+  env: Env,
+  idStr: string,
+): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const id = Number(idStr);
+  if (!Number.isInteger(id) || id <= 0) {
+    return json({ error: "invalid id" }, { status: 400 });
+  }
+
+  const row = await getRenderByIdForUser(env, id, userEmail);
+  if (!row) {
+    return json({ error: "render not found" }, { status: 404 });
+  }
+
+  const url = new URL(request.url);
+  const deleteArtifact = url.searchParams.get("artifact") === "true";
+
+  let artifactDeleted = false;
+  let artifactSkippedReason: string | null = null;
+  if (deleteArtifact) {
+    if (!row.output_key) {
+      artifactSkippedReason = "row has no output_key";
+    } else {
+      const otherCount = await countOtherRowsWithOutputKey(env, id, row.output_key);
+      if (otherCount > 0) {
+        artifactSkippedReason =
+          otherCount
+          + " other history row" + (otherCount === 1 ? "" : "s")
+          + " reference this output_key; artifact left on R2";
+      } else {
+        try {
+          await env.R2.delete(row.output_key);
+          artifactDeleted = true;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          artifactSkippedReason = "R2 delete failed: " + message;
+        }
+      }
+    }
+  }
+
+  const deleted = await deleteRenderRow(env, id, userEmail);
+  if (!deleted) {
+    // Row vanished between the resolve and the delete (race condition).
+    // Treat as success since the end state matches the request.
+    return json({
+      ok: true,
+      id,
+      artifactDeleted,
+      artifactSkippedReason,
+      note: "row was already gone",
+      user: userEmail,
+    });
+  }
+
+  return json({
+    ok: true,
+    id,
+    artifactDeleted,
+    artifactSkippedReason,
+    user: userEmail,
+  });
 }
 
 // ---------- Chat (text generation, multimodal in) ----------

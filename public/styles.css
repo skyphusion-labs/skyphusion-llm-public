@@ -2290,3 +2290,15 @@ textarea:focus {
   border-color: var(--accent);
   color: var(--accent);
 }
+
+/* v0.35.4: destructive variant for the delete button */
+.planner-history-action-delete {
+  color: var(--error);
+  border-color: var(--error);
+}
+
+.planner-history-action-delete:hover {
+  background: var(--bg);
+  border-color: var(--error);
+  color: var(--error);
+}

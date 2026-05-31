@@ -1,5 +1,43 @@
 # Changelog
 
+## v0.35.4
+
+`DELETE /api/storyboard/renders/<id>` removes one render row from D1 history. Optional `?artifact=true` query parameter also drops the silent MP4 from R2 when no other history row references the same `output_key`. Ownership is enforced via `user_email`; non-owners see 404 (indistinguishable from "row does not exist"). The planner UI gains a "delete" button on every history row with a confirmation prompt before any destructive call leaves the page.
+
+### Why
+
+Once a user accumulates a dozen renders the list gets unwieldy. Manual D1 surgery via `wrangler d1 execute` is awkward and bypasses the artifact cleanup. This commit lands the per-row delete cleanly:
+
+- D1 row delete is the primary action; the row is the canonical history record.
+- R2 artifact delete is opt-in (`?artifact=true`); the UI sets it when the row has an `output_key`.
+- The bundle at `row.bundle_key` is NEVER deleted: re-renders share it by design, and accidentally pruning a bundle would break "re-render" on any other row pointing at it. Bundles can be removed via `wrangler r2 object delete` if the user wants.
+- The artifact cleanup is sharing-aware: `countOtherRowsWithOutputKey` checks if any other row references the same `output_key` before issuing the R2 delete. Rp_handler.py writes outputs at `renders/<project>/<filename>`, so a re-render with the same filename overwrites; we never strand a still-referenced artifact.
+
+### Endpoint
+
+**`DELETE /api/storyboard/renders/<id>`** — `id` is the D1 autoincrement PK (the `id` column on the `renders` table, NOT the RunPod `job_id`). 400 on a malformed id (`/api/storyboard/renders/abc` returns "invalid id"); 404 on a not-found-or-not-owned row; 200 on success with `{ ok: true, id, artifactDeleted, artifactSkippedReason, user }`. `artifactSkippedReason` carries a human-readable explanation when `?artifact=true` was set but the R2 delete did not happen (no `output_key`, shared by N other rows, or the R2 call itself failed). A row that vanished between resolve and delete (race condition) is treated as success with a `note: "row was already gone"` because the end state matches the request.
+
+### URL naming
+
+`/api/storyboard/render/<jobId>` (singular, with the RunPod jobId) handles things RunPod knows about: poll, cancel. `/api/storyboard/renders/<id>` (plural, with the D1 row id) handles things only our DB knows about: list, delete. The two endpoints are intentionally distinct so a route handler never has to disambiguate "is this a jobId or a row id".
+
+### UI behavior
+
+- Each history row gains a "delete" button styled with the `--error` token so it stands apart from the existing "view" / "download" / "re-render" actions.
+- Click fires a `window.confirm` with copy that depends on whether the row has an `output_key`: with artifact, the prompt mentions "the silent MP4 in R2 if no other row references it"; without, just "delete this render from history?".
+- Confirmed: `fetch DELETE` against the route with the artifact query flag, then refresh the history list so the row disappears immediately. The auto-refresh loop (v0.35.2) re-arms from the new state.
+- `artifactSkippedReason` on the response is `console.info`'d so a power user inspecting the dev tools sees why a particular file stayed on R2.
+
+### Code
+
+- `src/renders-db.ts`: three new functions exported. `getRenderByIdForUser` resolves a row by PK + user_email; returns null for not-found or not-owned (one query, ownership baked in). `countOtherRowsWithOutputKey` counts rows sharing an `output_key` excluding the current id, used by the artifact-cleanup gate. `deleteRenderRow` runs the DELETE and returns true when a row was actually removed.
+- `src/index.ts`: route `DELETE /api/storyboard/renders/<id>` registered next to the existing list endpoint. New `handleRenderRowDelete` handler in a v0.35.4 section above "Chat (text generation, multimodal in)". The handler resolves the row (404 on miss), optionally deletes the R2 artifact gated by the sharing check, then deletes the row.
+- `public/planner.js`: `buildHistoryRow` appends a "delete" button to the actions div. `deleteHistoryRow(row)` prompts via `window.confirm`, fires the DELETE, and calls `loadHistory()` on success.
+- `public/styles.css`: `.planner-history-action-delete` variant tinted with the `--error` token.
+- `package.json`: 0.35.3 -> 0.35.4.
+
+No new binding, no new schema column, no new runtime dep. Tests / typecheck unchanged: D1 paths are not unit-tested in this codebase (matches the existing pattern for D1-heavy code). Tests 335/335.
+
 ## v0.35.3
 
 `renderOverrides` JSON textarea in the render stage on `/planner.html`. Collapsible `<details>` wrapper labeled "render overrides (advanced, optional)"; empty by default. Submit parses as JSON object on the way out, errors stay in the panel without leaving the stage. Re-render from history pre-fills the textarea from the row's stored `render_overrides` and opens the details so the user sees we are carrying overrides forward. Frontend-only.

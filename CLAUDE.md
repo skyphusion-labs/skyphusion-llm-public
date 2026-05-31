@@ -58,6 +58,35 @@ Cloudflare Access gates the whole worker URL. The worker trusts `Cf-Access-Authe
 
 These exceed the ~30s `ctx.waitUntil` budget, so they use **Cloudflare Workflows**. The `LongRunWorkflow` class (bottom of `src/index.ts`) holds the blocking `env.AI.run` call alive across retryable step boundaries; the workflow instance ID is persisted as `chats.job_id`. The one exception is BYOK xAI video, which uses submit-and-poll (`GET /api/job/:id` triggers a fresh invocation per poll). **Workflows do not run under `wrangler dev --remote`** — deploy to test Unified Billing video/music.
 
+## Wrangler bindings reference
+
+Declared in `wrangler.example.toml` (the committed template; the real `wrangler.toml` is gitignored). Mirror every binding in the `Env` interface (`src/env.ts`). Create the backing resources via the `npm run db:*` scripts and the `npx wrangler ... create` commands in the README.
+
+| Binding | Type | Purpose |
+|---|---|---|
+| `AI` | `[ai]` | Unified AI binding — Workers AI models directly + Unified Billing partners through AI Gateway. BYOK providers bypass it. |
+| `DB` | `[[d1_databases]]` (`skyphusion-llm-public`) | Chat metadata, conversations, RAG chunk text, projects. Fill in `database_id` after `wrangler d1 create`. |
+| `R2` | `[[r2_buckets]]` (`skyphusion-llm-public`) | All binary artifacts (input + generated output). |
+| `VEC` | `[[vectorize]]` (`skyphusion-llm-vec`) | RAG embeddings, 768-dim (`@cf/baai/bge-base-en-v1.5`), cosine. |
+| `ASSETS` | `[assets]` (`./public`) | Static frontend served via Workers Assets. |
+| `LONGRUN` | `[[workflows]]` (`skyphusion-longrun` / `LongRunWorkflow`) | Durable execution for long-running video/music gen (v0.12.0). |
+
+Also: `[observability] enabled = true` (dashboard log tailing). `compatibility_date` is pinned in the template.
+
+**Secrets** (set with `npx wrangler secret put <NAME>`; not in the template). For local dev, put them in `.dev.vars` (gitignored) instead:
+
+| Secret | Required? | Purpose |
+|---|---|---|
+| `GATEWAY_ID` | Yes | AI Gateway slug; every `env.AI.run` call passes it. |
+| `ANTHROPIC_API_KEY` | BYOK | Anthropic chat. |
+| `XAI_API_KEY` | BYOK | xAI chat + Grok Imagine video. |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | BYOK | Bedrock (SigV4 via `aws4fetch`). |
+| `AWS_REGION` | Optional | Defaults `us-east-1` (Nova). |
+| `AWS_REGION_PEGASUS` | Optional | Defaults `us-west-2` (Pegasus only in `us-west-2`/`eu-west-1`). |
+| `OPENAI_API_KEY` | Optional | v0.22.1; **image only** — direct call for `gpt-image-1.5` transparent PNG. Without it, that model falls back to opaque via Unified Billing. OpenAI chat does NOT use it. |
+| `TAVILY_API_KEY` | Optional | v0.17.0; web-search retrieval. Falls back to Wikipedia-only when unset. |
+| `CF_AIG_TOKEN` | Optional | Only if Authenticated Gateway is enabled. |
+
 ## Conventions (from CONTRIBUTING.md — enforced)
 
 - **No em-dashes (U+2014) or en-dashes (U+2013) anywhere in source.** Use commas, semicolons, or parentheses.

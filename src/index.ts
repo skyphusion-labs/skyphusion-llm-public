@@ -31,6 +31,10 @@ import { parseDiscordExport, chunkDiscordMessages } from "./discord";
 import { callAnthropic, callAnthropicStream } from "./providers/anthropic";
 import { callXai, callXaiStream } from "./providers/xai";
 import { callBedrockNova, callBedrockNovaStream, callBedrockPegasus } from "./providers/bedrock";
+import { planStoryboard, type PlannerCharacter } from "./planner";
+import { findPlanningModel, PLANNING_MODELS } from "./planner-catalog";
+import { serializeStoryboardYaml } from "./planner-yaml";
+import type { SlotId } from "./storyboard-validate";
 import { callWorkersAIStream } from "./providers/workers-ai";
 import { callOpenAIStream } from "./providers/openai";
 import { callGemini, callGeminiStream } from "./providers/google";
@@ -284,6 +288,11 @@ export default {
     if (url.pathname === "/api/chat/stream" && request.method === "POST") {
       return handleChatStream(request, env, ctx);
     }
+    // v0.29.0: storyboard planner. Drafts a board via Anthropic/xAI/Workers AI,
+    // validates against the storyboard-validate schema, returns JSON + YAML.
+    if (url.pathname === "/api/storyboard/plan" && request.method === "POST") {
+      return handleStoryboardPlan(request, env);
+    }
     if (url.pathname === "/api/history" && request.method === "GET") {
       return handleHistoryList(request, env);
     }
@@ -452,6 +461,130 @@ async function handleChatStream(request: Request, env: Env, ctx: ExecutionContex
   }
 
   return runChatStream(request, env, model, body);
+}
+
+// ---------- /api/storyboard/plan (v0.29.0) ----------
+//
+// Drafts a storyboard JSON via the selected planning model (Anthropic BYOK,
+// xAI BYOK, or a Workers AI text model from PLANNING_MODELS), validates it
+// against the storyboard-validate schema, and returns the validated JSON
+// plus a bundle-ready storyboard.yaml string. Does NOT submit anything to
+// RunPod or assemble a bundle; the caller decides whether to re-prompt the
+// model with the validator errors or hand off to the bundle assembler.
+//
+// Request body:
+//   { brief: string, characters: PlannerCharacter[], model: string }
+//
+// Response (200, ok:true): validated storyboard + serialized YAML + log id.
+// Response (200, ok:false): validation errors + raw model output, so the UI
+//   can show what went wrong and re-prompt. This is the normal "model did
+//   not follow the schema" path; not an HTTP error.
+// Response (400): malformed request body or model not in catalog.
+// Response (502): upstream provider call failed (network, auth, model
+//   rejection) - distinct from model-output-bad-schema.
+
+interface StoryboardPlanRequest {
+  brief?: unknown;
+  characters?: unknown;
+  model?: unknown;
+}
+
+async function handleStoryboardPlan(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+
+  let raw: StoryboardPlanRequest;
+  try {
+    raw = await request.json<StoryboardPlanRequest>();
+  } catch {
+    return json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  if (typeof raw.model !== "string" || raw.model.trim().length === 0) {
+    return json({ error: "model is required (non-empty string)" }, { status: 400 });
+  }
+  if (typeof raw.brief !== "string" || raw.brief.trim().length === 0) {
+    return json({ error: "brief is required (non-empty string)" }, { status: 400 });
+  }
+  if (!Array.isArray(raw.characters)) {
+    return json(
+      { error: "characters is required (array, may be empty)" },
+      { status: 400 },
+    );
+  }
+
+  // Catalog check at the route boundary so an unknown model id returns 400
+  // instead of the dispatcher's ok:false envelope (which the UI would treat
+  // as a model-output failure and try to re-prompt).
+  if (!findPlanningModel(raw.model)) {
+    return json(
+      {
+        error: `model "${raw.model}" is not in the planning catalog`,
+        catalog: PLANNING_MODELS.map((m) => m.id),
+      },
+      { status: 400 },
+    );
+  }
+
+  // Validate each character. Slot must be A/B/C/D; name and bible must be
+  // strings. Empty bible is allowed (planner UI may not have finished cast
+  // prep before the user kicks off planning).
+  const characters: PlannerCharacter[] = [];
+  for (let i = 0; i < raw.characters.length; i++) {
+    const c = raw.characters[i] as { slot?: unknown; name?: unknown; bible?: unknown };
+    if (
+      typeof c?.slot !== "string" ||
+      !["A", "B", "C", "D"].includes(c.slot) ||
+      typeof c.name !== "string" ||
+      typeof c.bible !== "string"
+    ) {
+      return json(
+        {
+          error: `characters[${i}] must be {slot: "A"|"B"|"C"|"D", name: string, bible: string}`,
+        },
+        { status: 400 },
+      );
+    }
+    characters.push({ slot: c.slot as SlotId, name: c.name, bible: c.bible });
+  }
+
+  const result = await planStoryboard(env, {
+    brief: raw.brief,
+    characters,
+    model: raw.model,
+  });
+
+  if (!result.ok) {
+    // Upstream call failures (network, auth, model rejection) get 502 so
+    // the UI surfaces them as service errors. Model-output failures
+    // (parse / schema) stay 200 with ok:false so the UI shows the errors
+    // and lets the user retry without treating the endpoint as broken.
+    // The dispatcher tags upstream failures with one of these prefixes.
+    const upstreamFailure = result.errors.some((e) =>
+      /^(provider call failed|model execution failed)/.test(e),
+    );
+    return json(
+      {
+        ok: false,
+        errors: result.errors,
+        raw: result.raw,
+        provider: result.provider,
+        model: result.model,
+        logId: result.logId,
+        user: userEmail,
+      },
+      { status: upstreamFailure ? 502 : 200 },
+    );
+  }
+
+  return json({
+    ok: true,
+    storyboard: result.storyboard,
+    yaml: serializeStoryboardYaml(result.storyboard),
+    provider: result.provider,
+    model: result.model,
+    logId: result.logId,
+    user: userEmail,
+  });
 }
 
 // ---------- Chat (text generation, multimodal in) ----------

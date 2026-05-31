@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.29.0
+
+`POST /api/storyboard/plan` wires the v0.28.0 storyboard planner into the Worker's HTTP surface. The frontend calls a single endpoint with `{brief, characters, model}` and gets back either `{ok: true, storyboard, yaml}` (a validated `StoryboardValidated` JSON plus a bundle-ready storyboard.yaml string) or `{ok: false, errors, raw}` (validator failures plus the raw model output so the UI can show what went wrong and re-prompt). No new binding, no schema change, no new runtime dep.
+
+### Why
+
+v0.28.0 added `planStoryboard` as a callable module but no Worker route invoked it. Without a route, the planner is dead code from the frontend's perspective. Wiring it directly into the existing fetch handler keeps the addition tiny (one route line, one handler function), follows the same pattern as `/api/chat` and `/api/chat/stream`, and lets the planner UI iterate against a real endpoint immediately.
+
+### Response semantics
+
+The route distinguishes four cases by status code AND the `ok` field, so the UI can branch correctly:
+
+- **200 + `{ok: true, storyboard, yaml, provider, model, logId, user}`** — The model produced JSON that passed `validateStoryboard`. `storyboard` is the validated normalized form (with `style_category`/`style_preset` collapsed to `"None"` per the schema rule, `projectName` derived from `normalizeProjectName(title)`, etc.). `yaml` is the bundle-ready storyboard.yaml string produced by `serializeStoryboardYaml(storyboard)`, ready to drop into the R2 bundle the GPU worker pulls.
+- **200 + `{ok: false, errors, raw, provider, model, logId, user}`** — The model executed but its output did not parse as JSON or did not satisfy the schema. The UI shows the errors, optionally appends them to the next user message, and re-prompts. This is the normal "model did not follow the schema" path, not an HTTP error.
+- **400 + `{error, catalog?}`** — Malformed request body, missing required field, malformed character entry, or a `model` id not in the planning catalog. When the failure is an unknown model, the response includes the list of valid catalog ids so the picker can refresh.
+- **502 + `{ok: false, errors, raw, ...}`** — Upstream provider call failed (network, auth, rate limit, model rejection). Distinct from "model output bad" so the UI can show a "service error, retry" affordance rather than "model said no, try again". The dispatcher tags these errors with `provider call failed:` or `model execution failed:` prefixes.
+
+### Auth and observability
+
+Same Cloudflare Access path as every other route (gateway-enforced upstream; the route reads `cf-access-authenticated-user-email` for attribution, echoed as `user` on the response). No new secret, no new env var. The AI Gateway log id flows back to the client as `logId` so a UI debug surface or a future persistence layer can link each plan back to the gateway entry.
+
+### Code
+
+- `src/index.ts`: import `planStoryboard`, `PlannerCharacter`, `findPlanningModel`, `PLANNING_MODELS`, `serializeStoryboardYaml`, and `SlotId`. Route registered at `POST /api/storyboard/plan` right after `/api/chat/stream`. New `handleStoryboardPlan(request, env)` handler in a v0.29.0 section between `/api/chat/stream` and "Chat (text generation, multimodal in)". The handler does request-shape validation (model present and non-empty, brief present and non-empty, characters an array, each character has a valid slot id and string name+bible), catalog membership check (400 fail-fast instead of letting the dispatcher return ok:false), then awaits `planStoryboard(env, ...)` and shapes the response per the table above.
+- `package.json`: 0.28.0 -> 0.29.0.
+
+The handler itself sits inside `src/index.ts` (which the plain-Node vitest pool cannot load), so it follows the same no-route-tests pattern as `/api/chat` and `/api/chat/stream`; coverage comes from the underlying module tests (`planner-prompt`, `planner-yaml`, `planner-catalog`, plus the `storyboard-validate` tests it transitively exercises) plus manual smoke. Typecheck clean; tests 269/269.
+
 ## v0.28.0
 
 Provider-selectable storyboard planner. `planStoryboard({brief, characters, model})` drafts a board as JSON via Anthropic BYOK, xAI BYOK, or Workers AI (one non-streaming completion), strips `\`\`\`json` fences, JSON.parses the completion, runs it through `validateStoryboard` from v0.27.0, and returns the validated `StoryboardValidated` or the error list. `serializeStoryboardYaml` emits the storyboard.yaml the vivijure-serverless GPU worker reads. No new runtime dependency. No new binding, no schema change. Does NOT submit anything to RunPod; the caller decides whether to re-prompt the model with the validator errors or hand off to the bundle assembler.

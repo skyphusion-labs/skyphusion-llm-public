@@ -1,5 +1,45 @@
 # Changelog
 
+## v0.38.0
+
+`localStorage` form-state persistence on `/planner.html`. Every meaningful state-changing event (brief edit, cast field change, model picker change, plan success, image upload completion, bundle assembly, render submit, filter toggle, render overrides edit, quality tier change) snapshots to localStorage under `skyphusion.planner.state.v1`. On page load, `restorePersistedState()` rebuilds the plan, bundle, and render panels and reattaches a live SSE stream to in-flight renders. Tab close no longer eats the user's work. Frontend-only.
+
+### Why
+
+The pipeline at v0.37.1 had a load-bearing hole: an accidental tab close after writing a 500-word brief, uploading 24 character refs (~50 MB), validating a storyboard, and submitting a render lost everything except the row in the D1 history. The user had to redo the plan ($ tokens), re-upload (50 MB), and click "view" on the right history row to get back to the render they were watching. This commit closes that hole entirely: open the page, see your work, click render.
+
+### What gets persisted
+
+- **Plan form**: model id, brief textarea contents, four cast rows (checked + name + bible per slot).
+- **Plan result**: validated `StoryboardValidated` JSON + the bundle-ready YAML string + the cast at plan-time. Restoring shows the JSON / YAML panel in `(restored from previous session)` state without re-running the model call.
+- **Bundle stage**: per-slot upload entries (filename, size, mime, R2 key, status), the assembled `bundleKey`. On restore, "uploading"-status entries are filtered out (the upload was interrupted by the reload; the bytes never landed); "done" entries hydrate the file list with their R2 keys preserved so the bundle can assemble without re-upload.
+- **Render stage**: jobId, bundleKey, qualityTier, renderOverrides textarea, currentProject + currentLabel (for notifications), last-known status. Restoring with a non-terminal jobId calls `resumeRender(synthetic row)` which reattaches the SSE stream.
+- **History filters**: v0.37.1's text + three checkboxes. Restored before the first `loadHistory()` so the initial render uses the saved view.
+
+### What is NOT persisted
+
+- Live SSE / poll timers (browser GC handles them on tab close; reload reattaches via `resumeRender` if the render is still in flight).
+- Validation errors (transient by design; re-running plan refreshes them).
+- Notification permission state (the browser already persists this).
+- Notification `alreadyNotified` set (per-session; a reload IS a new session, so a render that finished while the tab was closed will fire its terminal notification on first poll/stream event after reload).
+- Modal / dialog visibility (always computed from state).
+
+### Edge cases handled
+
+- **Quota exceeded** (`localStorage` full): `savePersistedState` catches, logs, and silently no-ops. The planner still works; just no persistence until next reload.
+- **Corrupted stash** (JSON.parse fails): `loadPersistedState` clears the key and returns null. Next save replaces it.
+- **Interrupted uploads** on reload: filtered out so the user sees only the entries whose R2 ingest completed. Re-add the missing files; the existing keys are intact.
+- **Stale render row** (D1 row deleted, but localStorage still has jobId): `resumeRender` polls RunPod directly, not D1, so the status still streams. The row simply doesn't appear in the history list.
+- **R2 bundle key now invalid**: render submit returns the GPU side's error; user can re-bundle. Detection at the render call, not on restore.
+- **Async data races**: model picker value restored after `loadModels()` resolves (the picker has no options until then); history filter checkboxes restored before `loadHistory()` so the first render uses the saved filter set.
+
+### Code
+
+- `public/planner.js`: ~880 -> ~1180 lines. New module-level constants `STORAGE_KEY` and `PERSIST_DEBOUNCE_MS`. New section with `savePersistedState`, `persistSoon` (500ms debounce), `loadPersistedState`, four `collect*State` snapshotters, four `restore*` rebuilders, and `restorePersistedState` orchestrator. `showBundleStage` signature gains an optional `initialUploads` param so restoration can pre-populate the per-slot file list without going through `handleSlotFiles`. Save calls added at the touchpoints: cast field change listeners, brief input, model change, plan success, upload completion, bundle assembly, render submit, filter changes, override / tier edits. Restoration wired in `DOMContentLoaded` ahead of the async loaders.
+- `package.json`: 0.37.1 -> 0.38.0.
+
+No backend change. Tests / typecheck unchanged (pure browser API code). Tests 335/335. MINOR per the convention: substantial new capability with real UX impact.
+
 ## v0.37.1
 
 Filter + search on the history list. A small filter bar above the render rows: text input matches `project` and `label` substring (case-insensitive), three checkboxes gate the status buckets (in-flight / done / failed), and a counter on the right reads `12 renders` when everything is visible or `showing 3 of 12` when filtered. All client-side over the already-loaded rows; no fetch on filter change. Frontend-only addition.

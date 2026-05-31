@@ -19,6 +19,12 @@ const SLOT_IDS = ["A", "B", "C", "D"];
 const POLL_INTERVAL_MS = 8000;
 const HISTORY_LIMIT = 25;
 const HISTORY_AUTO_REFRESH_MS = 30000;
+// v0.38.0: localStorage key for the persisted planner state. Bumped when
+// the shape changes incompatibly so a stale stash never crashes restore.
+const STORAGE_KEY = "skyphusion.planner.state.v1";
+// v0.38.0: debounce form-input saves so a typed brief does not write to
+// localStorage on every keystroke.
+const PERSIST_DEBOUNCE_MS = 500;
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -52,6 +58,260 @@ const notifyState = {
   permission: "default",
   alreadyNotified: new Set(),
 };
+
+// ---------- localStorage persistence (v0.38.0) ----------
+//
+// Snapshots every meaningful state-changing event (brief edit, cast field
+// change, plan success, image upload completion, bundle assembly, render
+// submit, filter toggle) to localStorage under STORAGE_KEY. On page load,
+// restorePersistedState() rebuilds the plan / bundle / render panels and
+// reattaches a live SSE stream when the persisted render is in-flight.
+// Corrupted stash silently clears and proceeds with fresh state; quota
+// exceeded silently no-ops (the planner still works, persistence just
+// stops until next reload).
+
+let persistTimer = null;
+
+function persistSoon() {
+  if (persistTimer) clearTimeout(persistTimer);
+  persistTimer = setTimeout(savePersistedState, PERSIST_DEBOUNCE_MS);
+}
+
+function savePersistedState() {
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  try {
+    const snapshot = {
+      planForm: collectPlanFormState(),
+      planResult: collectPlanResultState(),
+      bundleStage: collectBundleStageState(),
+      renderStage: collectRenderStageState(),
+      historyFilters: { ...historyState.filters },
+      savedAt: Math.floor(Date.now() / 1000),
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+  } catch (err) {
+    // QuotaExceededError on private mode, etc. Persistence is best-effort;
+    // a save failure does not block the user's planning flow.
+    console.warn("savePersistedState failed:", err);
+  }
+}
+
+function loadPersistedState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (err) {
+    console.warn("loadPersistedState failed; clearing:", err);
+    try { localStorage.removeItem(STORAGE_KEY); } catch {}
+    return null;
+  }
+}
+
+// ---------- State collectors (read DOM + module state) ----------
+
+function collectPlanFormState() {
+  const modelEl = $("#planner-model");
+  return {
+    modelId: modelEl ? modelEl.value : "",
+    brief: $("#planner-brief").value,
+    cast: SLOT_IDS.map((slot) => {
+      const row = document.querySelector('.planner-cast-row[data-slot="' + slot + '"]');
+      if (!row) return { slot, checked: false, name: "", bible: "" };
+      return {
+        slot,
+        checked: row.querySelector("[data-cast-include]").checked,
+        name: row.querySelector(".planner-cast-name").value,
+        bible: row.querySelector(".planner-cast-bible").value,
+      };
+    }),
+  };
+}
+
+function collectPlanResultState() {
+  if (!planState.storyboard) return null;
+  return {
+    storyboard: planState.storyboard,
+    cast: planState.cast,
+    yaml: $("#planner-yaml").textContent,
+  };
+}
+
+function collectBundleStageState() {
+  const stage = $("#planner-bundle");
+  if (!stage || stage.hidden) return null;
+  return {
+    perSlotUploads: { ...bundleState.perSlotUploads },
+    bundleKey: bundleState.bundleKey,
+  };
+}
+
+function collectRenderStageState() {
+  const stage = $("#planner-render");
+  if (!stage || stage.hidden) return null;
+  if (!renderState.jobId && !bundleState.bundleKey) return null;
+  const tierEl = $("#planner-quality-tier");
+  const overridesEl = $("#planner-render-overrides");
+  return {
+    jobId: renderState.jobId,
+    bundleKey: bundleState.bundleKey,
+    qualityTier: tierEl ? tierEl.value : "final",
+    renderOverridesText: overridesEl ? overridesEl.value : "",
+    currentProject: renderState.currentProject,
+    currentLabel: renderState.currentLabel,
+    lastKnownStatus: lastKnownStatusFromPanel(),
+  };
+}
+
+function lastKnownStatusFromPanel() {
+  const el = $("#planner-render-job-status");
+  return el ? el.textContent || null : null;
+}
+
+// ---------- Restorers ----------
+
+function restorePersistedState() {
+  const stash = loadPersistedState();
+  if (!stash) return null;
+
+  // Filters first so loadHistory's first render uses the restored view.
+  if (stash.historyFilters) restoreHistoryFilters(stash.historyFilters);
+
+  // Plan form fields. Model picker value is set later (after loadModels).
+  if (stash.planForm) restorePlanForm(stash.planForm);
+
+  // Plan result panel (storyboard JSON + YAML side-by-side view).
+  if (stash.planResult) restorePlanResultPanel(stash.planResult);
+
+  // Bundle stage (per-slot upload widgets with already-staged R2 keys).
+  if (stash.bundleStage && stash.planResult) {
+    restoreBundleStagePanel(stash.bundleStage, stash.planResult);
+  }
+
+  // Render stage + reattach an SSE stream for in-flight renders.
+  if (stash.renderStage) restoreRenderStagePanel(stash.renderStage);
+
+  return stash;
+}
+
+function restoreHistoryFilters(saved) {
+  historyState.filters.text = typeof saved.text === "string" ? saved.text : "";
+  historyState.filters.showInFlight = saved.showInFlight !== false;
+  historyState.filters.showDone = saved.showDone !== false;
+  historyState.filters.showFailed = saved.showFailed !== false;
+  // Mirror to the form controls so the visible state matches the
+  // persisted state. applyHistoryFilters runs when loadHistory completes.
+  $("#planner-history-search").value = historyState.filters.text;
+  $("#planner-filter-inflight").checked = historyState.filters.showInFlight;
+  $("#planner-filter-done").checked = historyState.filters.showDone;
+  $("#planner-filter-failed").checked = historyState.filters.showFailed;
+}
+
+function restorePlanForm(saved) {
+  if (typeof saved.brief === "string") $("#planner-brief").value = saved.brief;
+  if (Array.isArray(saved.cast)) {
+    for (const entry of saved.cast) {
+      const row = document.querySelector('.planner-cast-row[data-slot="' + entry.slot + '"]');
+      if (!row) continue;
+      const check = row.querySelector("[data-cast-include]");
+      const name = row.querySelector(".planner-cast-name");
+      const bible = row.querySelector(".planner-cast-bible");
+      check.checked = !!entry.checked;
+      name.disabled = !entry.checked;
+      bible.disabled = !entry.checked;
+      name.value = entry.name || "";
+      bible.value = entry.bible || "";
+    }
+  }
+}
+
+function restorePlanResultPanel(saved) {
+  if (!saved.storyboard) return;
+  planState.storyboard = saved.storyboard;
+  planState.cast = saved.cast || [];
+
+  $("#planner-output").hidden = false;
+  $("#planner-output-meta").textContent = "(restored from previous session)";
+  $("#planner-output-state").textContent = "ok";
+  $("#planner-output-state").className = "planner-output-state planner-success";
+  $("#planner-errors").hidden = true;
+  $("#planner-result").hidden = false;
+  $("#planner-raw").hidden = true;
+  $("#planner-json").textContent = JSON.stringify(saved.storyboard, null, 2);
+  $("#planner-yaml").textContent = saved.yaml || "";
+}
+
+function restoreBundleStagePanel(savedBundle, savedPlanResult) {
+  // Filter out "uploading" entries: those were interrupted by the reload
+  // and would mislead the user about state. The R2 ingest never finished
+  // for them, so they would not be in the bundle anyway.
+  const filteredUploads = {};
+  for (const slot of Object.keys(savedBundle.perSlotUploads || {})) {
+    filteredUploads[slot] = (savedBundle.perSlotUploads[slot] || []).filter(
+      (e) => e.status !== "uploading",
+    );
+  }
+
+  // showBundleStage rebuilds the widgets; pass the filtered uploads so the
+  // freshly-built rows hydrate with previously-staged R2 keys.
+  showBundleStage(savedPlanResult.storyboard, savedPlanResult.cast || [], filteredUploads);
+
+  // If the bundle was already assembled, restore the result panel + bundle
+  // key + open the render stage (without yet activating it).
+  if (savedBundle.bundleKey) {
+    bundleState.bundleKey = savedBundle.bundleKey;
+    showBundleResult({
+      ok: true,
+      bundleKey: savedBundle.bundleKey,
+      sizeBytes: 0, // unknown after reload; UI shows "0 B"; acceptable
+      fileCount: 0,
+    });
+    setBundleStatus("restored from previous session", "loading");
+  }
+}
+
+function restoreRenderStagePanel(saved) {
+  if (!saved.jobId && !saved.bundleKey) return;
+
+  bundleState.bundleKey = saved.bundleKey || bundleState.bundleKey;
+
+  // Restore form fields first so the user sees the chosen tier and any
+  // overrides text even if there is no live render to attach to.
+  if (saved.qualityTier) $("#planner-quality-tier").value = saved.qualityTier;
+  if (typeof saved.renderOverridesText === "string") {
+    $("#planner-render-overrides").value = saved.renderOverridesText;
+    if (saved.renderOverridesText.trim().length > 0) {
+      const details = $(".planner-overrides-details");
+      if (details) details.open = true;
+    }
+  }
+
+  if (!saved.jobId) {
+    // Render stage was open but no submit happened. Reveal the stage and
+    // let the user click "render" when ready.
+    $("#planner-render").hidden = false;
+    setRenderStatus("restored from previous session", "loading");
+    return;
+  }
+
+  // Active render. Reuse resumeRender's wiring by building a synthetic
+  // row from the persisted state; the function reattaches the SSE stream
+  // when the status is non-terminal.
+  resumeRender({
+    job_id: saved.jobId,
+    project: saved.currentProject || "(restored)",
+    label: saved.currentLabel || null,
+    bundle_key: saved.bundleKey,
+    quality_tier: saved.qualityTier || "final",
+    status: saved.lastKnownStatus || "IN_PROGRESS",
+    output_key: null,
+    output: null,
+    error: null,
+  });
+}
 
 // ---------- Cast editor (plan stage) ----------
 
@@ -88,7 +348,12 @@ function renderCast() {
       name.disabled = !enabled;
       bible.disabled = !enabled;
       if (enabled) name.focus();
+      persistSoon();
     });
+    // v0.38.0: persist cast field changes so the brief + names + bibles
+    // survive a tab close.
+    name.addEventListener("input", persistSoon);
+    bible.addEventListener("input", persistSoon);
 
     row.appendChild(check);
     row.appendChild(name);
@@ -246,6 +511,7 @@ function renderPlanResult(httpStatus, data, model, characters) {
       data.storyboard && data.storyboard.scenes ? data.storyboard.scenes.length : 0;
     setStatus("planned successfully (" + sceneCount + " scenes)", "success");
     showBundleStage(data.storyboard, characters);
+    savePersistedState();
     return;
   }
 
@@ -288,10 +554,10 @@ function repromptWithErrors() {
 
 // ---------- Bundle stage ----------
 
-function showBundleStage(storyboard, characters) {
+function showBundleStage(storyboard, characters, initialUploads) {
   planState.storyboard = storyboard;
   planState.cast = characters;
-  bundleState.perSlotUploads = {};
+  bundleState.perSlotUploads = initialUploads ? { ...initialUploads } : {};
   bundleState.bundleKey = null;
 
   const useChars =
@@ -316,12 +582,22 @@ function showBundleStage(storyboard, characters) {
     root.appendChild(note);
   } else {
     for (const slot of useChars) {
-      bundleState.perSlotUploads[slot] = [];
+      // v0.38.0: only initialize an empty array when we did not get
+      // pre-populated uploads from restoration. Otherwise the existing
+      // entries are preserved.
+      if (!bundleState.perSlotUploads[slot]) {
+        bundleState.perSlotUploads[slot] = [];
+      }
       const ch = characters.find((c) => c.slot === slot) || {
         name: "Character " + slot,
         bible: "",
       };
       root.appendChild(buildSlotUploadRow(slot, ch));
+      // Hydrate the file list from any pre-existing entries (typically
+      // staged-to-R2 keys from before a tab close).
+      if (bundleState.perSlotUploads[slot].length > 0) {
+        renderSlotList(slot);
+      }
     }
   }
 
@@ -419,6 +695,9 @@ async function handleSlotFiles(slot, fileList) {
       entry.error = err.message || String(err);
     }
     renderSlotList(slot);
+    // v0.38.0: persist after every status transition so a tab close in the
+    // middle of a multi-file upload preserves what already landed on R2.
+    savePersistedState();
   }
 }
 
@@ -564,6 +843,7 @@ async function bundleNow() {
     setBundleStatus("staged", "success");
     showBundleResult(data);
     showRenderStage();
+    savePersistedState();
     return;
   }
 
@@ -725,6 +1005,9 @@ async function submitRender() {
   // Refresh the history list so the new render appears at the top
   // without the user needing to click "refresh" manually.
   loadHistory();
+  // v0.38.0: persist the new jobId so a tab close resumes the stream
+  // on the next reload.
+  savePersistedState();
 }
 
 // v0.35.0: open a server-sent event connection to the worker so render
@@ -1682,9 +1965,31 @@ function formatDuration(ms) {
 
 document.addEventListener("DOMContentLoaded", () => {
   renderCast();
-  loadModels();
+  // v0.38.0: restore form + result panels + render stream BEFORE async
+  // data loaders fire, so the user sees their work immediately on reload.
+  // The model picker value is set after loadModels resolves (its options
+  // are populated by an async fetch).
+  const stash = restorePersistedState();
+  loadModels().then(() => {
+    if (stash && stash.planForm && stash.planForm.modelId) {
+      const select = $("#planner-model");
+      if (select) {
+        const found = Array.from(select.options).some(
+          (o) => o.value === stash.planForm.modelId,
+        );
+        if (found) select.value = stash.planForm.modelId;
+      }
+    }
+  });
   loadHistory();
   initNotifications();
+  // v0.38.0: persist on brief / model picker change so the planner's
+  // long-form input survives a tab close. Cast field listeners are
+  // wired in renderCast().
+  $("#planner-brief").addEventListener("input", persistSoon);
+  $("#planner-model").addEventListener("change", persistSoon);
+  $("#planner-quality-tier").addEventListener("change", persistSoon);
+  $("#planner-render-overrides").addEventListener("input", persistSoon);
   $("#planner-plan").addEventListener("click", plan);
   $("#planner-reprompt").addEventListener("click", repromptWithErrors);
   $("#planner-bundle-btn").addEventListener("click", bundleNow);
@@ -1695,22 +2000,27 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#planner-history-custom").addEventListener("click", promptCustomBundle);
 
   // v0.37.1: client-side filter inputs. No fetch on change; just re-render
-  // the already-loaded rows through the new filter state.
+  // the already-loaded rows through the new filter state. v0.38.0 also
+  // persists the filter state so reload restores the user's view.
   $("#planner-history-search").addEventListener("input", (ev) => {
     historyState.filters.text = ev.target.value;
     applyHistoryFilters();
+    persistSoon();
   });
   $("#planner-filter-inflight").addEventListener("change", (ev) => {
     historyState.filters.showInFlight = ev.target.checked;
     applyHistoryFilters();
+    savePersistedState();
   });
   $("#planner-filter-done").addEventListener("change", (ev) => {
     historyState.filters.showDone = ev.target.checked;
     applyHistoryFilters();
+    savePersistedState();
   });
   $("#planner-filter-failed").addEventListener("change", (ev) => {
     historyState.filters.showFailed = ev.target.checked;
     applyHistoryFilters();
+    savePersistedState();
   });
 
   // v0.35.2: pause auto-refresh while the tab is backgrounded; resume on

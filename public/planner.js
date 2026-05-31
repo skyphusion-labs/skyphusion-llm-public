@@ -18,6 +18,7 @@
 const SLOT_IDS = ["A", "B", "C", "D"];
 const POLL_INTERVAL_MS = 8000;
 const HISTORY_LIMIT = 25;
+const HISTORY_AUTO_REFRESH_MS = 30000;
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -982,7 +983,23 @@ function resetRenderStage() {
 // to in-progress renders. Past renders that already reached COMPLETED
 // surface the silent MP4 directly via a "download" link.
 
+// v0.35.2: dedupes concurrent loadHistory calls (refresh button + auto-
+// refresh tick + post-submit refresh can all overlap). Cleared in the
+// finally block whether the fetch succeeded or threw.
+let isLoadingHistory = false;
+// v0.35.2: setTimeout handle for the auto-refresh loop. Lives only while
+// at least one history row is in a non-terminal status; set in
+// maybeScheduleHistoryRefresh, cleared at the start of each loadHistory
+// and on tab visibility -> hidden.
+let historyRefreshTimer = null;
+
 async function loadHistory() {
+  if (isLoadingHistory) return;
+  if (historyRefreshTimer) {
+    clearTimeout(historyRefreshTimer);
+    historyRefreshTimer = null;
+  }
+  isLoadingHistory = true;
   try {
     const resp = await fetch("/api/storyboard/renders?limit=" + HISTORY_LIMIT);
     if (!resp.ok) throw new Error("HTTP " + resp.status);
@@ -991,9 +1008,30 @@ async function loadHistory() {
   } catch (err) {
     // Silent: a history load failure should not block the planning flow.
     // The user can still plan, bundle, render normally; only the history
-    // surface is missing.
+    // surface is missing. Do not auto-reschedule on error; the user can
+    // click refresh or wait for the next intentional trigger.
     console.error("history load failed:", err);
+  } finally {
+    isLoadingHistory = false;
   }
+}
+
+// v0.35.2: schedule the next refresh whenever the rendered list still
+// contains an in-flight row. Goes idle (no timer scheduled) when every
+// row has reached a terminal status, so a page left open after a long
+// render does not keep hitting the DB. Re-armed on every loadHistory
+// success (called from inside renderHistoryList).
+function maybeScheduleHistoryRefresh(rows) {
+  if (historyRefreshTimer) {
+    clearTimeout(historyRefreshTimer);
+    historyRefreshTimer = null;
+  }
+  if (document.hidden) return; // page in background; do not schedule
+  if (!Array.isArray(rows) || rows.length === 0) return;
+  const TERMINAL = ["COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"];
+  const hasInFlight = rows.some((r) => TERMINAL.indexOf(r.status) < 0);
+  if (!hasInFlight) return;
+  historyRefreshTimer = setTimeout(loadHistory, HISTORY_AUTO_REFRESH_MS);
 }
 
 function renderHistoryList(rows) {
@@ -1010,6 +1048,7 @@ function renderHistoryList(rows) {
     list.appendChild(buildHistoryRow(r));
   }
   section.hidden = false;
+  maybeScheduleHistoryRefresh(rows);
 }
 
 function buildHistoryRow(r) {
@@ -1273,6 +1312,20 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#planner-render-cancel").addEventListener("click", cancelRender);
   $("#planner-history-refresh").addEventListener("click", loadHistory);
   $("#planner-history-custom").addEventListener("click", promptCustomBundle);
+
+  // v0.35.2: pause auto-refresh while the tab is backgrounded; resume on
+  // return with an immediate refresh so the list catches up after a long
+  // hidden interval (which the auto-refresh loop intentionally skips).
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      if (historyRefreshTimer) {
+        clearTimeout(historyRefreshTimer);
+        historyRefreshTimer = null;
+      }
+    } else {
+      loadHistory();
+    }
+  });
 
   $("#planner-brief").addEventListener("keydown", (ev) => {
     if ((ev.metaKey || ev.ctrlKey) && ev.key === "Enter") {

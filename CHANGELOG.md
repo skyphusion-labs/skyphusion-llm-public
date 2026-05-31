@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.35.2
+
+History list on `/planner.html` auto-refreshes every 30 seconds while at least one row is in a non-terminal status. Goes idle (no more polling) once every visible row has reached `COMPLETED` / `FAILED` / `CANCELLED` / `TIMED_OUT`. Pauses when the tab is backgrounded and resumes with an immediate refresh on return. Frontend-only addition.
+
+### Why
+
+Until now, a user who left `/planner.html` open with one or more in-flight renders had to click "refresh" (or open each render's view to engage the SSE stream) to see their queue progress. The v0.35.0 stream already kept the actively-viewed render's row current in D1, but other in-flight rows in the same list stayed stale. This commit closes that gap: the list keeps itself current with one cheap GET every 30s for as long as any row needs it, then goes silent.
+
+### Behavior
+
+- After every successful `loadHistory`, `maybeScheduleHistoryRefresh(rows)` inspects the freshly-rendered list. If at least one row's `status` is non-terminal, it sets a 30-second timer for the next `loadHistory`. If every row is terminal (or the list is empty), no timer is scheduled.
+- `loadHistory` dedupes concurrent calls via `isLoadingHistory`. Refresh button + auto-refresh tick + post-submit refresh can all overlap; only one fetch runs at a time.
+- `visibilitychange` listener: tab going hidden cancels the pending timer (no point hitting the worker for an invisible UI). Tab returning to visible fires an immediate `loadHistory` so the user sees the current state without waiting for the next 30s tick, then the loop re-arms from the fresh data.
+- Failed history fetch does NOT auto-retry. A transient blip is silently logged; the user can hit refresh manually. Reduces the noise of a flaky network making the list churn.
+
+### Code
+
+- `public/planner.js`: new `HISTORY_AUTO_REFRESH_MS = 30000` constant. New `isLoadingHistory` flag and `historyRefreshTimer` handle in module scope. `loadHistory` reworked to dedupe via the flag and clear any pending auto-refresh at entry. New `maybeScheduleHistoryRefresh(rows)` helper called at the end of `renderHistoryList`. `visibilitychange` listener wired in the existing `DOMContentLoaded` block.
+- `package.json`: 0.35.1 -> 0.35.2.
+
+No backend change. Tests / typecheck unchanged. Tests 335/335.
+
 ## v0.35.1
 
 Reuse an existing bundle without re-running plan + bundle. Two new affordances on `/planner.html`: a "re-render" button on every history row, and a "use bundle key..." button in the history header that opens a prompt for an arbitrary R2 bundle key. Both load the bundle key into the render stage, pre-select the same quality tier the previous run used (for the history-row path), and let the user pick a tier and click "render" to submit a fresh job against the same `.tar.gz`. Frontend-only addition.

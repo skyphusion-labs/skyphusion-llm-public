@@ -19,6 +19,19 @@
       <a href="/" class="planner-back">&larr; chat</a>
     </header>
 
+    <!-- v0.34.1: render history. Loaded on page open from /api/storyboard/renders.
+         Hidden when the user has no past renders. Each row has a "view" action
+         that loads its status into the render stage (and starts polling if the
+         job is still in flight) and a "download" link when the silent MP4 is
+         already in R2. -->
+    <section id="planner-history" class="planner-history" hidden>
+      <header class="planner-history-header">
+        <h2 class="planner-stage-title">recent renders</h2>
+        <button id="planner-history-refresh" type="button" class="planner-history-refresh">refresh</button>
+      </header>
+      <ul id="planner-history-list" class="planner-history-list"></ul>
+    </section>
+
     <section class="planner-form">
       <h2 class="planner-stage-title">1. plan</h2>
 

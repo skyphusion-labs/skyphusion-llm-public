@@ -1,5 +1,40 @@
 # Changelog
 
+## v0.34.1
+
+`/planner.html` surfaces the render history that v0.34.0 persists. A "recent renders" section reveals at the top of the page when the user has past renders. Each row shows project, quality tier, status, relative submitted / completed timestamps, executionTime, plus a "view" action that resumes the render stage with the row's stored snapshot and re-starts polling for in-flight jobs, and a "download" link directly to the silent MP4 when `output_key` is set. Closes the user-visible loop on render history. No backend change.
+
+### Why
+
+v0.34.0 made renders survive a tab close on the backend; v0.34.1 makes that survival visible. Before this commit, a user who reloaded `/planner.html` lost access to any in-flight render (the planner.js `renderState.jobId` lived only in memory). Now the page loads recent renders on open, the user clicks "view" on the one they want, and the render stage picks up where it left off with the live poll loop reattached.
+
+### Layout
+
+- A new `<section id="planner-history">` at the top of the planner layout (between the page header and the plan form). Hidden by default; revealed only when `/api/storyboard/renders` returns at least one row.
+- Each row is a flex card with: project name (bold) + quality tier (chip) + status (color-coded), submitted/finished/duration metadata line, action buttons (`view` always, `download` when the silent MP4 is in R2). Status colors match the render-pane convention (`--warn` for in-flight, `--accent` for COMPLETED, `--error` for terminal failures).
+- A "refresh" button in the section header pulls a fresh snapshot from `/api/storyboard/renders?limit=25`. The list also auto-refreshes after a successful render submit so the new job appears at the top without manual intervention.
+
+### Resume flow
+
+Clicking "view" on a history row calls `resumeRender(row)`:
+
+1. Stops any active poll loop on a different jobId.
+2. Sets `renderState.jobId` and `bundleState.bundleKey` from the row.
+3. Reveals the render stage and populates the result panel from the stored snapshot (status badge, scene index / phase / log / output / error all rehydrated when present).
+4. If the row's status is terminal (`COMPLETED` / `FAILED` / `CANCELLED` / `TIMED_OUT`), the panel renders the final state and the panel status reads `... (from history)`. If still in flight, the panel reads `resumed; polling every 8s` and the live poll loop reattaches.
+5. Scrolls the render stage into view.
+
+`resumeRender` reuses the existing render-stage DOM and the `pollRender` loop, so any future behavior added to a live poll (e.g. cancel button visibility per the v0.33.1 work) flows through to resumed history rows automatically.
+
+### Code
+
+- `public/planner.html`: new `<section id="planner-history">` block above the plan form. Hidden by default; the page-load `loadHistory()` call reveals it when rows exist.
+- `public/planner.js`: ~720 lines (v0.33.x) -> ~880 lines. Adds `loadHistory`, `renderHistoryList`, `buildHistoryRow`, `historyStatusKind`, `resumeRender`, `formatRelative`. Wires `loadHistory()` into init, after a successful submit, and to the refresh button click.
+- `public/styles.css`: ~125 lines appended. `.planner-history*` styles reuse the existing CSS tokens; status colors mirror the render-pane convention.
+- `package.json`: 0.34.0 -> 0.34.1.
+
+Tests / typecheck unchanged: pure HTML / JS / CSS addition. Tests 335/335. The page is reachable the moment the next `npx wrangler deploy` ships the updated `public/` assets bundle.
+
 ## v0.34.0
 
 D1-backed render history. Every `POST /api/storyboard/render` now writes a row to a new `renders` table keyed by the RunPod job_id; poll and cancel update the row with the latest status, output, error, and timing. `GET /api/storyboard/renders` returns the authenticated user's renders newest first, ownership-enforced via `user_email = cf-access-authenticated-user-email`. Renders survive a tab close, a worker restart, and the planner UI losing its in-memory `renderState.jobId`. No new binding, no new runtime dep; uses the existing `env.DB` binding.

@@ -17,6 +17,7 @@
 
 const SLOT_IDS = ["A", "B", "C", "D"];
 const POLL_INTERVAL_MS = 8000;
+const HISTORY_LIMIT = 25;
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -673,6 +674,9 @@ async function submitRender() {
   setJobStatusBadge(data.status || "IN_QUEUE");
   setRenderStatus("submitted; polling every " + (POLL_INTERVAL_MS / 1000) + "s", "loading");
   pollRender();
+  // Refresh the history list so the new render appears at the top
+  // without the user needing to click "refresh" manually.
+  loadHistory();
 }
 
 async function pollRender() {
@@ -861,6 +865,179 @@ function resetRenderStage() {
   setRenderStatus("", "");
 }
 
+// ---------- Render history (v0.34.1) ----------
+//
+// Loads the user's recent renders from GET /api/storyboard/renders on page
+// open and after every successful submit. Each row's "view" action resumes
+// the render stage with the row's stored snapshot and re-starts polling
+// when the job is still in flight, so a tab close no longer loses access
+// to in-progress renders. Past renders that already reached COMPLETED
+// surface the silent MP4 directly via a "download" link.
+
+async function loadHistory() {
+  try {
+    const resp = await fetch("/api/storyboard/renders?limit=" + HISTORY_LIMIT);
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const data = await resp.json();
+    renderHistoryList(data.renders || []);
+  } catch (err) {
+    // Silent: a history load failure should not block the planning flow.
+    // The user can still plan, bundle, render normally; only the history
+    // surface is missing.
+    console.error("history load failed:", err);
+  }
+}
+
+function renderHistoryList(rows) {
+  const section = $("#planner-history");
+  const list = $("#planner-history-list");
+  list.innerHTML = "";
+
+  if (!rows || rows.length === 0) {
+    section.hidden = true;
+    return;
+  }
+
+  for (const r of rows) {
+    list.appendChild(buildHistoryRow(r));
+  }
+  section.hidden = false;
+}
+
+function buildHistoryRow(r) {
+  const li = document.createElement("li");
+  li.className = "planner-history-item";
+  li.dataset.jobId = r.job_id;
+
+  const meta = document.createElement("div");
+  meta.className = "planner-history-meta";
+
+  const project = document.createElement("strong");
+  project.textContent = r.project || "(no project)";
+  meta.appendChild(project);
+
+  const tier = document.createElement("span");
+  tier.className = "planner-history-tier";
+  tier.textContent = r.quality_tier || "?";
+  meta.appendChild(tier);
+
+  const status = document.createElement("span");
+  status.className =
+    "planner-history-status planner-history-status-" + historyStatusKind(r.status);
+  status.textContent = r.status;
+  meta.appendChild(status);
+
+  li.appendChild(meta);
+
+  const sub = document.createElement("div");
+  sub.className = "planner-history-sub";
+  const parts = [];
+  if (r.submitted_at) parts.push("submitted " + formatRelative(r.submitted_at));
+  if (r.completed_at) parts.push("finished " + formatRelative(r.completed_at));
+  if (r.execution_time_ms) parts.push("ran " + formatDuration(r.execution_time_ms));
+  sub.textContent = parts.join(" · ");
+  li.appendChild(sub);
+
+  const actions = document.createElement("div");
+  actions.className = "planner-history-actions";
+
+  const view = document.createElement("button");
+  view.type = "button";
+  view.className = "planner-history-action";
+  view.textContent = "view";
+  view.addEventListener("click", () => resumeRender(r));
+  actions.appendChild(view);
+
+  if (r.output_key) {
+    const dl = document.createElement("a");
+    dl.href = "/api/artifact/" + r.output_key;
+    dl.download = (r.project || "silent") + ".mp4";
+    dl.className = "planner-history-action";
+    dl.textContent = "download";
+    actions.appendChild(dl);
+  }
+
+  li.appendChild(actions);
+  return li;
+}
+
+function historyStatusKind(status) {
+  if (status === "COMPLETED") return "done";
+  if (status === "FAILED" || status === "CANCELLED" || status === "TIMED_OUT") return "error";
+  return "running";
+}
+
+// Load the render stage with the past render's stored state and resume
+// polling when the job is still in flight. Skips the plan + bundle stages
+// since the user is jumping straight to "see this render's status".
+function resumeRender(row) {
+  if (renderState.pollTimer) {
+    clearTimeout(renderState.pollTimer);
+    renderState.pollTimer = null;
+  }
+  renderState.jobId = row.job_id;
+  bundleState.bundleKey = row.bundle_key;
+
+  const renderSection = $("#planner-render");
+  renderSection.hidden = false;
+  $("#planner-render-result").hidden = false;
+  $("#planner-render-job-id").textContent = row.job_id;
+  setJobStatusBadge(row.status);
+
+  // Reset transient panels before populating from the row.
+  $("#planner-render-scene").hidden = true;
+  $("#planner-render-phase").hidden = true;
+  $("#planner-render-error").hidden = true;
+  $("#planner-render-log-wrap").hidden = true;
+  $("#planner-render-output").hidden = true;
+
+  if (row.output) {
+    const outpan = $("#planner-render-output");
+    outpan.hidden = false;
+    $("#planner-render-output-content").textContent = JSON.stringify(row.output, null, 2);
+    if (row.output_key) {
+      const url = "/api/artifact/" + row.output_key;
+      $("#planner-render-download").href = url;
+      $("#planner-render-download").download = (row.project || "silent") + ".mp4";
+      $("#planner-render-open").href = url;
+    }
+    // In-flight rows may carry a render log on the persisted output blob;
+    // surface it for visual continuity with a live poll.
+    if (row.output && typeof row.output === "object" && Array.isArray(row.output.log)) {
+      const wrap = $("#planner-render-log-wrap");
+      wrap.hidden = false;
+      $("#planner-render-log").textContent = row.output.log.join("\n");
+    }
+  }
+
+  if (row.error) {
+    const err = $("#planner-render-error");
+    err.hidden = false;
+    err.textContent = row.error;
+  }
+
+  const terminal = ["COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"];
+  if (terminal.indexOf(row.status) < 0) {
+    setRenderStatus("resumed; polling every " + (POLL_INTERVAL_MS / 1000) + "s", "loading");
+    pollRender();
+  } else {
+    const kind = row.status === "COMPLETED" ? "success" : "error";
+    setRenderStatus(row.status.toLowerCase() + " (from history)", kind);
+  }
+
+  renderSection.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function formatRelative(unixSeconds) {
+  if (!unixSeconds) return "";
+  const now = Math.floor(Date.now() / 1000);
+  const delta = now - Number(unixSeconds);
+  if (delta < 60) return delta + "s ago";
+  if (delta < 3600) return Math.floor(delta / 60) + "m ago";
+  if (delta < 86400) return Math.floor(delta / 3600) + "h ago";
+  return Math.floor(delta / 86400) + "d ago";
+}
+
 // ---------- Status / formatting helpers ----------
 
 function setStatus(text, kind) {
@@ -906,11 +1083,13 @@ function formatDuration(ms) {
 document.addEventListener("DOMContentLoaded", () => {
   renderCast();
   loadModels();
+  loadHistory();
   $("#planner-plan").addEventListener("click", plan);
   $("#planner-reprompt").addEventListener("click", repromptWithErrors);
   $("#planner-bundle-btn").addEventListener("click", bundleNow);
   $("#planner-render-btn").addEventListener("click", submitRender);
   $("#planner-render-cancel").addEventListener("click", cancelRender);
+  $("#planner-history-refresh").addEventListener("click", loadHistory);
 
   $("#planner-brief").addEventListener("keydown", (ev) => {
     if ((ev.metaKey || ev.ctrlKey) && ev.key === "Enter") {

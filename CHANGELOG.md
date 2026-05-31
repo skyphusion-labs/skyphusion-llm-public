@@ -1,5 +1,95 @@
 # Changelog
 
+## v0.22.1
+
+Fix + follow-through on v0.22.0: gpt-image-1.5 transparency now works via a BYOK direct call, and the broken proxy params are fixed. Backend only.
+
+### The v0.22.0 bug
+
+`openai/gpt-image-1.5` 7003-errored on every call: `Unsupported fields passed: background, output_format. Valid fields: prompt, images, quality, size, style`. The CF Unified Billing proxy for gpt-image-1.5 does NOT forward `background`/`output_format`, despite CF's catalog note ("use 1.5 for transparent PNGs"), which refers to the underlying model, not the proxy surface. So native transparency is unavailable through the proxy on both Recraft and gpt-image-1.5.
+
+### The fix (two parts)
+
+1. The proxy path for `openai` now sends only proxy-valid fields (`{ prompt, quality, size }`), so gpt-image-1.5 works again as an OPAQUE model with no key required.
+2. Transparency is delivered by a BYOK direct call that bypasses the proxy. OpenAI's own `/v1/images/generations` accepts `background: "transparent"` + `output_format: "png"` and returns base64 (`data[0].b64_json`); GPT image models never return a URL. New `src/providers/openai-image.ts`. `runImage` uses it when `OPENAI_API_KEY` is set, and falls back to the opaque proxy path when it is not. So nothing breaks without the key; setting the key opts into transparent PNGs.
+
+### To enable transparent assets (the one action required)
+
+```
+npx wrangler secret put OPENAI_API_KEY
+```
+
+Then redeploy. With the key set, gpt-image-1.5 generations come back as transparent RGBA PNGs (billed to your OpenAI account, BYOK, not CF credits). Verify:
+
+```
+curl -sS https://<worker-host>/api/chat -H 'content-type: application/json' \
+  -d '{"model":"openai/gpt-image-1.5","user_input":"a single cartoon gold coin sprite, centered, nothing else"}'
+# then on the stored artifact:
+python3 -c "from PIL import Image; im=Image.open('coin.png'); print(im.mode, im.getextrema())"   # expect RGBA + non-trivial alpha
+```
+
+### Code
+
+- `src/env.ts`: optional `OPENAI_API_KEY` (image-only; chat stays on the proxy).
+- `src/providers/openai-image.ts` (new): `generateOpenAIImage(apiKey, modelId, prompt)` -> `{ bytes, mime }`.
+- `src/index.ts`: `runImage` proxied branch gains an `openai` + key sub-branch (BYOK transparent) ahead of the opaque proxy fallback.
+- `src/proxied-image-params.ts`: `openai` case drops the proxy-rejected fields.
+- `tests/proxied-image-params.test.ts`: openai case asserts the opaque proxy shape and that `background`/`output_format` are absent.
+- `package.json`: 0.22.0 -> 0.22.1.
+
+No schema, no migration, no new dependency, no new binding. Typecheck clean; tests 164/164.
+
+### Recraft / GIF unchanged
+
+recraftv4 stays opaque (no alpha on the CF proxy), returns webp. GIF remains out of scope; PNG-with-alpha is the deliverable.
+
+## v0.22.0
+
+Proxied image-gen, part 1: transparent PNG via gpt-image-1.5, plus Recraft V4. Backend only.
+
+### What this adds
+
+Two new Image Gen models and one new provider slug (`recraft`):
+
+- `openai/gpt-image-1.5` (provider `openai`): the transparent-PNG model. CF's own catalog routes transparency here (the `openai/gpt-image-2` page states transparent backgrounds are unsupported there and to use 1.5). The worker requests `background: "transparent"` + `output_format: "png"`.
+- `recraft/recraftv4` (provider `recraft`): opaque, art-directed (strong composition and text rendering, style controls). The CF Recraft proxy exposes no alpha flag, only an opaque `background_color`, so this is NOT a transparency model. Returns webp. Added for logos, icons on solid backgrounds, and style-controlled scene art.
+
+### Why not Recraft for transparency
+
+The original plan was Recraft. Verifying `recraft/recraftv4` against the CF model page showed its only background control is `controls.background_color: { rgb: [...] }` (opaque), with no alpha option, and it returns webp. Recraft's own platform supports transparent generation; the CF proxy surface does not pass it through. gpt-image-1.5 is the supported path on CF.
+
+### The code
+
+- `src/models.ts`: `"recraft"` added to the `Provider` union; the two entries above added to the Image Gen group.
+- `src/proxied-image-params.ts` (new): `buildProxiedImageParams(provider, prompt)` returns the per-provider request shape. Each proxied schema is `additionalProperties:false`, so each provider gets only its accepted keys; the `@cf` `{ width, height, steps, negative_prompt }` shape is rejected by all three. Lives in its own module (like `output-extract.ts`) so it is unit-testable without importing `cloudflare:workers`.
+- `src/index.ts`: `runImage`'s proxied branch generalized from `if (model.provider === "google")` to `if (model.provider)` (the `@cf` entries carry no `provider`, so this is exactly the proxied set), and the hardcoded google params replaced with the helper. The shared tail (`detectProviderFailure` -> `extractProxiedImageUrl` -> `fetch` -> mime from response content-type) is unchanged; reading mime from the header already handles recraftv4's webp.
+- `tests/proxied-image-params.test.ts` (new): asserts the three provider shapes, that no shape leaks the `@cf` keys, and that the openai shape carries `background:"transparent"`.
+
+### Touch points
+
+- `src/models.ts`, `src/index.ts` (import + one branch + a stale-comment fix), `src/proxied-image-params.ts` (new), `tests/proxied-image-params.test.ts` (new).
+- `package.json`: 0.21.10 -> 0.22.0.
+
+No schema, no migration (v0.22.0 adds no D1 statements), no new dependency, no new binding, no `worker-configuration.d.ts` regen.
+
+### Verify live before trusting transparency in prod (NOT yet done)
+
+1. Confirm the proxy forwards `background: transparent` and the output is real RGBA, not an opaque PNG. CF's rendered parameter table for gpt-image-1.5 lists prompt/quality/size/style but does not surface `background`/`output_format`, though the underlying OpenAI model supports both:
+
+   ```
+   curl -sS https://<worker-host>/api/chat \
+     -H 'content-type: application/json' \
+     -d '{"model":"openai/gpt-image-1.5","user_input":"a single cartoon gold coin sprite, centered, nothing else"}'
+   ```
+
+   Then on the stored artifact: `python3 -c "from PIL import Image; im=Image.open('coin.png'); print(im.mode, im.getextrema())"` and expect `RGBA` with a non-trivial alpha channel. If it comes back `RGB`/opaque, the proxy dropped `background`; fall back to a generate-then-matte pass (Recraft remove-background or RMBG/BiRefNet).
+
+2. Confirm BYOK vs Unified Billing for `openai/*` image. The CF raw-response example shows `gatewayMetadata.keySource: "BYOK"`, suggesting an OpenAI key may need to be configured on the gateway rather than CF credits. If so it is a gateway config item, not code; until configured it fails with a credentials error, same as the other proxied models.
+
+3. recraftv4 returns webp, not png (the CF output schema's `image/svg+xml` is a docs typo). Harmless as wired since mime comes from the response header; if a downstream consumer needs png, add a transcode for `provider === "recraft"`.
+
+GIF is intentionally out of scope: PNG-with-alpha is the deliverable (8-bit alpha, standard sprite format); GIF transparency is 1-bit and no model emits GIF.
+
 ## v0.21.10
 
 Fix: actually allow image upload / drag-drop / paste on i2v models. Completes the incomplete v0.21.9 fix. Frontend only.

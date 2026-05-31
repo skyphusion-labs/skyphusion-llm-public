@@ -38,7 +38,8 @@ export type Provider =
   | "runwayml"
   | "alibaba"
   | "pixverse"
-  | "vidu";
+  | "vidu"
+  | "recraft";
 
 export interface ModelEntry {
   id: string;
@@ -137,6 +138,17 @@ export const MODELS: ModelEntry[] = [
   // Google proxied (Unified Billing): URL-returning, different schema from the
   // @cf models; handled by the provider:"google" branch in runImage (v0.21.2).
   { id: "google/nano-banana-pro",                       label: "Nano Banana Pro (Google, needs CF credits)",   group: "Image Gen",            type: "image", capabilities: [], provider: "google" },
+  // gpt-image-1.5 (v0.22.0/.1). Transparency is NOT available through the CF
+  // proxy: that schema is { prompt, images, quality, size, style } and
+  // 7003-rejects background/output_format. So the worker uses a BYOK direct call
+  // to api.openai.com when OPENAI_API_KEY is set (transparent PNG), and falls
+  // back to the opaque proxy path otherwise. See providers/openai-image.ts and
+  // the v0.22.1 CHANGELOG entry.
+  { id: "openai/gpt-image-1.5",                         label: "GPT Image 1.5 (OpenAI; transparent PNG with OPENAI_API_KEY, else opaque)", group: "Image Gen", type: "image", capabilities: [], provider: "openai" },
+  // recraftv4 is opaque and art-directed (the CF proxy exposes no alpha flag,
+  // only an opaque background_color). Strong text rendering and style controls;
+  // returns webp. Added for logos/icons-on-bg/styled scenes, NOT transparency.
+  { id: "recraft/recraftv4",                            label: "Recraft V4 (art-directed, opaque, needs CF credits)", group: "Image Gen", type: "image", capabilities: [], provider: "recraft" },
   { id: "@cf/black-forest-labs/flux-2-klein-9b",        label: "FLUX 2 Klein 9B (frontier)",   group: "Image Gen",            type: "image", capabilities: [] },
   { id: "@cf/black-forest-labs/flux-2-klein-4b",        label: "FLUX 2 Klein 4B (faster)",     group: "Image Gen",            type: "image", capabilities: [] },
   { id: "@cf/black-forest-labs/flux-2-dev",             label: "FLUX 2 Dev (multi-reference)", group: "Image Gen",            type: "image", capabilities: [] },

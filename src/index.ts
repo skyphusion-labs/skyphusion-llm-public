@@ -34,6 +34,8 @@ import { callWorkersAIStream } from "./providers/workers-ai";
 import { callOpenAIStream } from "./providers/openai";
 import { callGemini, callGeminiStream } from "./providers/google";
 import { buildGenParams } from "./longrun-params";
+import { buildProxiedImageParams } from "./proxied-image-params";
+import { generateOpenAIImage } from "./providers/openai-image";
 import type {
   InputImageAttachment,
   InputAudioAttachment,
@@ -704,9 +706,12 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
 async function runImage(request: Request, env: Env, model: ModelEntry, body: ChatRequest): Promise<Response> {
   const userEmail = getUserEmail(request);
 
-  // OpenAI image gen has a different API (POST /v1/images/generations with a
-  // different response shape). Route to a dedicated helper that returns the
-  // (bytes, mime) tuple, then share the R2-put + persist + respond tail.
+  // Image gen splits two ways. Proxied models (those with a `provider`:
+  // nano-banana/google, gpt-image-1.5/openai, recraftv4/recraft) go through the
+  // gateway binding, return a URL, and share one code path. The @cf models
+  // (no `provider`) return base64 or a ReadableStream and need the bypass +
+  // shape-detection handling below. Both converge on the (bytes, mime) tuple
+  // and the shared R2-put + persist + respond tail.
   let bytes: Uint8Array;
   let mime: string;
   let latency: number;
@@ -714,22 +719,32 @@ async function runImage(request: Request, env: Env, model: ModelEntry, body: Cha
 
   const start = Date.now();
   try {
-    if (model.provider === "google") {
-      // Google proxied image (nano-banana family): Unified Billing via the
-      // gateway. Schema differs from the @cf models in two ways verified
-      // against the CF model page:
-      //   - Input is { prompt, output_format } and additionalProperties:false,
-      //     so the @cf { width, height, steps, negative_prompt } shape is
-      //     rejected. system_prompt has no negative_prompt slot here; ignored.
-      //   - Output is a URL, not base64, in the { state, result } envelope:
-      //     { state: "Completed", result: { image: "<url>" } }.
-      // So we fetch the URL and store the bytes, like the video path does.
-      // (First pass is text-to-image only; the schema's image_input[] for
-      // reference/editing is a later add, mirroring the FLUX.2 ref-image work.)
-      const result = await aiRun(env, model.id, {
-        prompt: body.user_input,
-        output_format: "png",
-      });
+    if (model.provider) {
+      if (model.provider === "openai" && env.OPENAI_API_KEY) {
+        // BYOK direct: the only path that yields a transparent PNG (the proxy
+        // rejects background/output_format). Returns base64, decoded in the
+        // helper; no gateway log id since this bypasses the AI Gateway.
+        ({ bytes, mime } = await generateOpenAIImage(env.OPENAI_API_KEY, model.id, body.user_input));
+        logId = null;
+      } else {
+      // Proxied image (Unified Billing via the gateway): nano-banana (google),
+      // recraftv4 (recraft, opaque), and gpt-image-1.5 (openai) ONLY as the
+      // opaque fallback when no OPENAI_API_KEY is set (the transparent path is
+      // the BYOK branch above).
+      // The @cf models carry no `provider`, so this branch is exactly the
+      // proxied set. Per-provider request shape comes from buildProxiedImageParams
+      // because each upstream schema is additionalProperties:false and rejects
+      // the @cf { width, height, steps, negative_prompt } shape; system_prompt
+      // has no negative_prompt slot on any of them and is ignored.
+      //
+      // All three return a URL (not base64) in the { state, result } envelope:
+      //   { state: "Completed", result: { image: "<url>" } }
+      // so we fetch the URL and store the bytes, like the video path does. mime
+      // comes from the response content-type (recraftv4 returns webp, the
+      // openai/google paths return png), so no format is hardcoded on the store.
+      // (First pass is text-to-image only; gpt-image-1.5's images[] editing and
+      // reference inputs are a later add, mirroring the FLUX.2 ref-image work.)
+      const result = await aiRun(env, model.id, buildProxiedImageParams(model.provider, body.user_input));
       logId = aiLogId(env);
 
       const failure = detectProviderFailure(result);
@@ -746,6 +761,7 @@ async function runImage(request: Request, env: Env, model: ModelEntry, body: Cha
       }
       bytes = new Uint8Array(await aresp.arrayBuffer());
       mime = aresp.headers.get("content-type") || "image/png";
+      }
     } else {
     // Two Cloudflare-side complications for Workers AI image gen as of
     // 2026-Q1, both manifesting as either:

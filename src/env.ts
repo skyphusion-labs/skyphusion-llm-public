@@ -26,6 +26,12 @@ export interface Env {
   LONGRUN: Workflow;
   ANTHROPIC_API_KEY?: string; // optional; preferred is to store in AI Gateway dashboard
   XAI_API_KEY?: string;       // optional; preferred is to store in AI Gateway dashboard
+  // v0.22.1: OpenAI BYOK, used ONLY for direct image gen (transparent PNG).
+  // OpenAI chat/image otherwise route through the Unified Billing proxy, but the
+  // proxy's image schema rejects `background`/`output_format`, so transparency
+  // requires a direct call to api.openai.com. When this key is set, gpt-image-1.5
+  // goes direct + transparent; when unset, it falls back to the opaque proxy path.
+  OPENAI_API_KEY?: string;
   // v0.11.0: AWS credentials for Bedrock BYOK. Scope IAM key to Bedrock invoke only.
   // AWS_REGION defaults to us-east-1 for Nova; Pegasus 1.2 requires us-west-2 or eu-west-1.
   AWS_ACCESS_KEY_ID?: string;

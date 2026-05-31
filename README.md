@@ -231,7 +231,7 @@ The worker is the only public surface. R2 is private; the worker streams objects
 
 ### Model types
 
-- `chat`: text generation. Accepts vision attachments on vision-capable models. Audio attachments are transcribed via Whisper. Video attachments are 8 client-extracted keyframes.
+- `chat`: text generation. Accepts vision attachments on vision-capable models. Audio attachments are transcribed via Whisper. Video attachments are 8 client-extracted keyframes. Text-file attachments (v0.24.0) are inlined into the prompt as a fenced block (any chat model).
 - `image`: text-to-image generation. The system prompt field becomes the negative prompt. FLUX.2 models additionally accept up to 4 reference images (v0.16.0). Output is a JPEG/PNG in R2; `openai/gpt-image-1.5` outputs a transparent RGBA PNG when `OPENAI_API_KEY` is set (v0.22.1), opaque otherwise.
 - `tts`: text-to-speech. Output is audio (MP3 or model-default container) in R2.
 - `stt`: speech-to-text transcription. Input audio, output text.
@@ -258,6 +258,8 @@ The `[[workflows]]` binding in `wrangler.toml` declares this. Two operational no
 **Audio.** Transcribed via `@cf/openai/whisper-large-v3-turbo` before the model call. Transcript text is prepended to the user message. Raw audio is dropped (not stored). 20 MB cap.
 
 **Video.** Client-side keyframe extraction via HTML5 video + canvas. Eight evenly-spaced frames are pulled at upload time and sent as image content blocks to a vision-capable chat model. The original video file is never uploaded to the worker. This is sampled-frames understanding, not true temporal video reasoning. For raw video understanding, use TwelveLabs Pegasus 1.2 on Bedrock (full file upload, 18MB cap). 100 MB cap on regular video uploads is a browser-side sanity limit.
+
+**Text files (v0.24.0).** Attach any text-based file (yaml, json, csv, source code, logs, markdown, etc.) to a chat turn and its contents are inlined into the prompt as a fenced block for the model to analyze, on any chat model (no vision requirement). The frontend decodes the file to UTF-8 text; the worker rejects bytes that don't decode to usable text (binary formats) and truncates very large files at 200k chars to protect the context window. 2 MB browser-side upload cap. This is distinct from RAG document upload (sidebar): inline attachment puts the whole file in this one turn's context, whereas RAG embeds the file for retrieval across turns.
 
 ## Storage and cost
 

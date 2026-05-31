@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.24.0
+
+Chat attachments now accept text-based files (yaml, json, csv, source code, logs, etc.), inlined into the prompt for analysis. Backend + frontend.
+
+### What changed
+
+The chat paperclip / drag-drop previously accepted only image, audio, and video; anything else threw `Unsupported file type`. Now any text-based file can be attached to a chat turn and its contents are folded into the prompt as a fenced block, the same mechanism used for audio transcripts. Works on any chat model (no vision capability required).
+
+This is a separate path from RAG document upload (the sidebar, made type-agnostic in v0.23.0):
+
+- **Inline chat attachment** (this change): the whole file goes into *this one turn's* context. Best for "explain this config", "find the bug in this script", "summarize this log".
+- **RAG document upload** (sidebar): the file is chunked and embedded for *retrieval across turns*. Best for large or many documents you query repeatedly.
+
+### Guards
+
+- Binary input is rejected with the same `looksBinary` heuristic the RAG uploader uses (decided on the decoded bytes, not the extension), so a `.docx`/image/archive returns a clear 400 instead of inlining garbage.
+- Files past 200k chars (`MAX_DOC_ATTACHMENT_CHARS`) are truncated with a marker so one attachment can't blow the context window. Browser-side upload cap is 2 MB.
+
+### Code
+
+- `src/types.ts`: new `InputDocumentAttachment` (`{ type: "document", text, mime?, filename? }`) added to the `InputAttachment` union.
+- `src/index.ts`: new `PersistedDocumentAttachment` (metadata only, no R2/full-text storage); `MAX_DOC_ATTACHMENT_CHARS`; shared `buildDocumentAttachment` helper; `document` branch added to both the non-streaming and streaming chat attachment loops.
+- `public/app.js`: `handleFiles` treats non-media files on chat as text documents; `MAX_DOC_ATTACHMENT_BYTES`; preview + stored-history renderers for the `document` type; chat file picker (set dynamically in `updateAffordance`) no longer filters by accept and the hints mention text files.
+- `README.md`: new "Text files" entry under Multimodal handling.
+- `package.json`: 0.23.0 -> 0.24.0.
+
+No schema, no migration, no new dependency, no new binding. Typecheck clean; tests 164/164.
+
 ## v0.23.0
 
 RAG document upload now accepts any file type, not just `.txt`/`.md`/`.pdf`/`.xlsx`/`.xls`. Backend + frontend.

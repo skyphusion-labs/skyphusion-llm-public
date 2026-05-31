@@ -38,8 +38,19 @@ export interface InputVideoFullAttachment {
   mime?: string;
   filename?: string;
 }
+// v0.24.0: a text-based file attached to a chat turn for inline analysis
+// (yaml, json, csv, source code, logs, etc.). The frontend decodes the file
+// to UTF-8 text and sends it here; the worker inlines it into the prompt.
+// Binary files are rejected at the worker boundary (looksBinary).
+export interface InputDocumentAttachment {
+  type: "document";
+  text: string;        // UTF-8 file contents, decoded client-side
+  mime?: string;
+  filename?: string;
+}
 export type InputAttachment =
   | InputImageAttachment
   | InputAudioAttachment
   | InputVideoFramesAttachment
-  | InputVideoFullAttachment;
+  | InputVideoFullAttachment
+  | InputDocumentAttachment;

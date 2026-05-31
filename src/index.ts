@@ -68,6 +68,30 @@ import type {
 
 const WHISPER_MODEL = "@cf/openai/whisper-large-v3-turbo";
 
+// v0.24.0: cap on inline text-file (document) attachments folded into a chat
+// prompt. Large files past this are truncated with a marker so a single
+// attachment can't blow the model's context window.
+const MAX_DOC_ATTACHMENT_CHARS = 200_000;
+
+// v0.24.0: shared handling for an inline document (text-file) attachment on a
+// chat turn. The contents are folded into the prompt as a fenced block, the
+// same mechanism as audio transcription. Binary input is rejected via the
+// same looksBinary heuristic the RAG uploader uses. Returns either an error
+// string for the 400 path or the prompt block + persisted metadata record.
+function buildDocumentAttachment(att: { text?: string; mime?: string; filename?: string }):
+  | { error: string }
+  | { extra: string; persisted: PersistedDocumentAttachment } {
+  const raw = att.text ?? "";
+  if (looksBinary(raw)) {
+    return { error: `${att.filename || "Attached file"} looks like binary data that can't be read as text. Attach a text-based file (txt, md, yaml, json, csv, source code, etc.).` };
+  }
+  const truncated = raw.length > MAX_DOC_ATTACHMENT_CHARS;
+  const text = truncated ? raw.slice(0, MAX_DOC_ATTACHMENT_CHARS) : raw;
+  const fn = att.filename ? ` ${att.filename}` : "";
+  const extra = `[Attached file${fn}]\n\`\`\`\n${text}\n\`\`\`${truncated ? "\n[file truncated to fit context]" : ""}`;
+  return { extra, persisted: { type: "document", mime: att.mime, filename: att.filename, chars: text.length } };
+}
+
 // ---------- Types ----------
 
 interface ChatRequest {
@@ -135,11 +159,21 @@ interface PersistedVideoFullAttachment {
   mime?: string;
   filename?: string;
 }
+// v0.24.0: inline text-file attachment. The contents are folded into the
+// prompt (not stored in R2); we persist only metadata so history can show
+// that a file was attached without bloating D1 with the full text.
+interface PersistedDocumentAttachment {
+  type: "document";
+  mime?: string;
+  filename?: string;
+  chars: number;
+}
 type PersistedAttachment =
   | PersistedImageAttachment
   | PersistedAudioAttachment
   | PersistedVideoFramesAttachment
-  | PersistedVideoFullAttachment;
+  | PersistedVideoFullAttachment
+  | PersistedDocumentAttachment;
 
 interface OutputArtifact {
   key: string;
@@ -536,6 +570,11 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
       const fn = att.filename ? ` "${att.filename}"` : "";
       extraText.push(`[Full video${fn} attached for video-aware model]`);
       persistedAtt.push({ type: "video_full", key, mime: parsed.mime, filename: att.filename });
+    } else if (att.type === "document") {
+      const r = buildDocumentAttachment(att);
+      if ("error" in r) return json({ error: r.error }, { status: 400 });
+      extraText.push(r.extra);
+      persistedAtt.push(r.persisted);
     }
   }
 
@@ -1347,6 +1386,11 @@ async function runChatStream(request: Request, env: Env, model: ModelEntry, body
       // so the user picks a different model rather than getting silent
       // truncation. (Pegasus is the only video-aware model and it's non-streaming.)
       return json({ error: "Anthropic streaming does not accept raw video attachments. Use a non-streaming model that supports video, or attach extracted frames instead." }, { status: 400 });
+    } else if (att.type === "document") {
+      const r = buildDocumentAttachment(att);
+      if ("error" in r) return json({ error: r.error }, { status: 400 });
+      extraText.push(r.extra);
+      persistedAtt.push(r.persisted);
     }
   }
 

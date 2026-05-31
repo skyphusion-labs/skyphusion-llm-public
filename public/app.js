@@ -172,6 +172,9 @@ const layout            = document.querySelector(".layout");
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const MAX_AUDIO_BYTES = 20 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
+// v0.24.0: inline text-file attachment cap. Read as text and folded into the
+// prompt; the worker truncates very large files past its own char cap.
+const MAX_DOC_ATTACHMENT_BYTES = 2 * 1024 * 1024;
 const IMAGE_MAX_DIM   = 1280;
 const VIDEO_FRAMES    = 8;
 const VIDEO_FRAME_MAX_DIM = 1024;
@@ -390,14 +393,17 @@ function updateAffordance() {
     userInput.placeholder = "type here, enter to send, shift+enter for newline";
     attachRow.style.display = "flex";
     const vision = (m.capabilities || []).includes("vision");
+    // v0.24.0: chat accepts any file. Text-based files (yaml, json, csv, code,
+    // logs, etc.) are inlined into the prompt for analysis; media handling
+    // depends on the model's vision capability. Empty accept = no picker filter.
     if (vision) {
-      fileInput.accept = "image/*,audio/*,video/*";
-      attachHint.textContent = "image, audio (auto-transcribed), or video (sampled to frames)";
+      fileInput.accept = "";
+      attachHint.textContent = "image, audio (auto-transcribed), video (sampled to frames), or a text file (inlined)";
       attachHint.classList.remove("warn");
     } else {
-      fileInput.accept = "audio/*";
-      attachHint.textContent = "audio only (pick a vision-capable chat model for image/video)";
-      attachHint.classList.add("warn");
+      fileInput.accept = "";
+      attachHint.textContent = "audio (auto-transcribed) or a text file (inlined); pick a vision-capable model for image/video";
+      attachHint.classList.remove("warn");
     }
     // RAG: show the toggle only when chat is selected AND the user has
     // uploaded at least one document. Without docs there's nothing to retrieve.
@@ -558,6 +564,15 @@ async function handleFiles(files) {
           const { frames, duration } = await extractVideoFrames(file, VIDEO_FRAMES, VIDEO_FRAME_MAX_DIM);
           state.pendingAttachments.push({ type: "video_frames", filename: file.name, duration, frames });
         }
+      } else if (m.type === "chat") {
+        // v0.24.0: any other file on a chat turn is treated as a text document
+        // and inlined into the prompt for analysis (yaml, json, csv, code,
+        // logs, etc.). The worker rejects it if the bytes aren't usable text.
+        if (file.size > MAX_DOC_ATTACHMENT_BYTES) {
+          throw new Error(`File too large (${fmtBytes(file.size)} > ${fmtBytes(MAX_DOC_ATTACHMENT_BYTES)})`);
+        }
+        const text = await file.text();
+        state.pendingAttachments.push({ type: "document", mime: file.type || "text/plain", filename: file.name, text });
       } else {
         throw new Error(`Unsupported file type: ${file.type || "(unknown)"}`);
       }
@@ -624,6 +639,17 @@ function renderPendingPreview(att, idx) {
         ${remove}
       </div>`;
   }
+  if (att.type === "document") {
+    return `
+      <div class="attachment">
+        <div class="audio-icon">\u{1F4C4}</div>
+        <div>
+          <div class="name">${escapeHtml(att.filename || "file")}</div>
+          <div class="size">${(att.text || "").length} chars \u00b7 inline text</div>
+        </div>
+        ${remove}
+      </div>`;
+  }
   return "";
 }
 
@@ -670,6 +696,16 @@ function renderStoredAttachment(att) {
         <div>
           <div class="name">${escapeHtml(att.filename || "video")}</div>
           <div class="size">full video \u00b7 ${escapeHtml(att.mime || "video")}</div>
+        </div>
+      </div>`;
+  }
+  if (att.type === "document") {
+    return `
+      <div class="attachment">
+        <div class="audio-icon">\u{1F4C4}</div>
+        <div>
+          <div class="name">${escapeHtml(att.filename || "file")}</div>
+          <div class="size">${att.chars ?? 0} chars \u00b7 inline text</div>
         </div>
       </div>`;
   }

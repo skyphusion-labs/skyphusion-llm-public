@@ -38,11 +38,17 @@ import type { SlotId } from "./storyboard-validate";
 import { assembleBundle, type TrainingImage } from "./bundle-assembler";
 import {
   cancelRenderJob,
+  deriveProjectFromBundleKey,
   isValidJobId,
   pollRenderJob,
   submitRenderJob,
   type RenderSubmitArgs,
 } from "./runpod-submit";
+import {
+  insertRender,
+  listRendersForUser,
+  updateRenderFromView,
+} from "./renders-db";
 import { callWorkersAIStream } from "./providers/workers-ai";
 import { callOpenAIStream } from "./providers/openai";
 import { callGemini, callGeminiStream } from "./providers/google";
@@ -326,6 +332,10 @@ export default {
     // v0.32.0: submit a render job to the vivijure-serverless RunPod endpoint.
     if (url.pathname === "/api/storyboard/render" && request.method === "POST") {
       return handleRenderSubmit(request, env);
+    }
+    // v0.34.0: list this user's render history (D1-backed; ownership via user_email).
+    if (url.pathname === "/api/storyboard/renders" && request.method === "GET") {
+      return handleRendersList(request, env);
     }
     // v0.32.0: poll one render job by its RunPod-issued id.
     // v0.33.1: DELETE cancels the same job via RunPod's POST /cancel.
@@ -837,6 +847,27 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
       { status: 502 },
     );
   }
+
+  // v0.34.0: persist the new render row. Best-effort: a DB failure does
+  // NOT fail the submit response (the job is already running on RunPod
+  // either way; losing the history row only affects the list endpoint).
+  try {
+    await insertRender(env, {
+      userEmail,
+      jobId: result.view.jobId,
+      project:
+        typeof body.project === "string" && body.project.trim().length > 0
+          ? body.project
+          : deriveProjectFromBundleKey(body.bundleKey),
+      bundleKey: body.bundleKey,
+      qualityTier: args.qualityTier ?? "final",
+      renderOverrides: args.renderOverrides,
+      status: result.view.status,
+    });
+  } catch (err) {
+    console.error("renders insert failed:", err);
+  }
+
   return json({
     ok: true,
     jobId: result.view.jobId,
@@ -873,6 +904,15 @@ async function handleRenderPoll(
       { status: 502 },
     );
   }
+
+  // v0.34.0: persist the latest snapshot. No-op when there is no row
+  // (e.g. polling a pre-v0.34.0 job, or someone else's job).
+  try {
+    await updateRenderFromView(env, result.view);
+  } catch (err) {
+    console.error("renders update failed:", err);
+  }
+
   return json({
     ok: true,
     jobId: result.view.jobId,
@@ -921,6 +961,14 @@ async function handleRenderCancel(
       { status: 502 },
     );
   }
+
+  // v0.34.0: persist the post-cancel snapshot.
+  try {
+    await updateRenderFromView(env, result.view);
+  } catch (err) {
+    console.error("renders update failed:", err);
+  }
+
   return json({
     ok: true,
     jobId: result.view.jobId,
@@ -928,6 +976,31 @@ async function handleRenderCancel(
     statusRaw: result.view.statusRaw,
     user: userEmail,
   });
+}
+
+// ---------- GET /api/storyboard/renders (v0.34.0) ----------
+//
+// List this user's render history, newest first. Ownership is via
+// user_email from cf-access-authenticated-user-email; rows owned by
+// other authenticated users never appear. The optional ?limit=N query
+// parameter caps the result count (clamped to [1, 200]; default 50).
+
+async function handleRendersList(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const url = new URL(request.url);
+  const limitParam = url.searchParams.get("limit");
+  const limit = limitParam ? Number(limitParam) : 50;
+
+  try {
+    const renders = await listRendersForUser(env, userEmail, limit);
+    return json({ renders, user: userEmail });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return json(
+      { error: `renders list failed: ${message}` },
+      { status: 500 },
+    );
+  }
 }
 
 // ---------- Chat (text generation, multimodal in) ----------

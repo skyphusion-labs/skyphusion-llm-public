@@ -235,3 +235,34 @@ ALTER TABLE chunks ADD COLUMN channel       TEXT;
 ALTER TABLE chunks ADD COLUMN authors       TEXT;   -- comma-joined distinct authors
 ALTER TABLE chunks ADD COLUMN sent_at_start TEXT;   -- ISO8601 earliest message
 ALTER TABLE chunks ADD COLUMN sent_at_end   TEXT;   -- ISO8601 latest message
+
+-- Storyboard render history (v0.34.0). One row per RunPod job submitted
+-- via POST /api/storyboard/render; updated by poll + cancel handlers.
+-- Ownership is via user_email; the GET /api/storyboard/renders list
+-- endpoint filters by it. Poll / cancel proxy to RunPod regardless of
+-- DB state (jobs submitted before v0.34.0 still pollable directly), but
+-- the row UPDATE is a no-op when the row does not exist.
+CREATE TABLE IF NOT EXISTS renders (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_email        TEXT NOT NULL,
+  job_id            TEXT NOT NULL UNIQUE,
+  project           TEXT NOT NULL,
+  bundle_key        TEXT NOT NULL,
+  quality_tier      TEXT NOT NULL,
+  render_overrides  TEXT,
+  status            TEXT NOT NULL,
+  output_key        TEXT,
+  output_json       TEXT,
+  error             TEXT,
+  execution_time_ms INTEGER,
+  delay_time_ms     INTEGER,
+  submitted_at      INTEGER NOT NULL,
+  updated_at        INTEGER NOT NULL,
+  completed_at      INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS renders_by_user
+  ON renders(user_email, submitted_at DESC);
+
+CREATE INDEX IF NOT EXISTS renders_by_user_status
+  ON renders(user_email, status);

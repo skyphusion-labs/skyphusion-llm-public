@@ -1,5 +1,75 @@
 # Changelog
 
+## v0.34.0
+
+D1-backed render history. Every `POST /api/storyboard/render` now writes a row to a new `renders` table keyed by the RunPod job_id; poll and cancel update the row with the latest status, output, error, and timing. `GET /api/storyboard/renders` returns the authenticated user's renders newest first, ownership-enforced via `user_email = cf-access-authenticated-user-email`. Renders survive a tab close, a worker restart, and the planner UI losing its in-memory `renderState.jobId`. No new binding, no new runtime dep; uses the existing `env.DB` binding.
+
+### Why
+
+The existing `/api/storyboard/render` flow was stateless: submit returned a `jobId`, the UI held it in memory, and a tab close lost the reference. The user could still poll via curl with the saved jobId, but for the planner UI to be usable by someone who is not you, history needed to survive sessions. This commit lands the persistence layer; v0.34.1 will wire the sidebar list into `/planner.html`.
+
+### Schema migration
+
+Apply with:
+
+```bash
+wrangler d1 execute skyphusion-llm-public --remote --file=migrate-v0.34.0.sql
+```
+
+The migration is idempotent (`CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`), safe to re-run.
+
+Schema:
+
+```sql
+CREATE TABLE IF NOT EXISTS renders (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_email        TEXT NOT NULL,
+  job_id            TEXT NOT NULL UNIQUE,
+  project           TEXT NOT NULL,
+  bundle_key        TEXT NOT NULL,
+  quality_tier      TEXT NOT NULL,
+  render_overrides  TEXT,           -- JSON-encoded
+  status            TEXT NOT NULL,
+  output_key        TEXT,           -- silent MP4 R2 key on COMPLETED
+  output_json       TEXT,           -- last poll's output envelope
+  error             TEXT,
+  execution_time_ms INTEGER,
+  delay_time_ms     INTEGER,
+  submitted_at      INTEGER NOT NULL,
+  updated_at        INTEGER NOT NULL,
+  completed_at      INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS renders_by_user
+  ON renders(user_email, submitted_at DESC);
+
+CREATE INDEX IF NOT EXISTS renders_by_user_status
+  ON renders(user_email, status);
+```
+
+`UNIQUE(job_id)` lets `insertRender` use `ON CONFLICT(job_id) DO NOTHING` so a retried submit is idempotent without a transaction wrapper. Both indexes serve the list endpoint (the second is a head start for a future "in-flight only" filter).
+
+### Endpoints
+
+- **`POST /api/storyboard/render`** (existing) — now also persists a new row on success. DB failure does NOT fail the response; the job is already submitted to RunPod and the history miss is a strictly less-bad outcome than a 500 that the user reads as "submit failed".
+- **`GET /api/storyboard/render/<jobId>`** (existing) — now also `UPDATE`s the row with each fresh status snapshot. The UPDATE is a no-op when no row exists, so polling jobs submitted before v0.34.0 still works (back-compat).
+- **`DELETE /api/storyboard/render/<jobId>`** (existing) — same UPDATE pattern as poll.
+- **`GET /api/storyboard/renders`** (new) — returns `{ renders: RenderRow[], user }`. Optional `?limit=N` query parameter, clamped to `[1, 200]`, default 50. Rows are sorted by `submitted_at DESC`. `render_overrides` and `output` are parsed back from their JSON-encoded TEXT columns into JS objects (or `null` if the stored string was malformed or empty).
+
+### Ownership
+
+The list endpoint filters by `user_email` so a user only sees their own renders. Poll and cancel do NOT check ownership (they only proxy to RunPod), so a user who happens to know another user's jobId can poll it; that is fine because the jobId is not predictable, the Cloudflare Access gate already authenticates every request, and the UI never exposes other users' jobIds. If you want strict ownership on poll later, the row's `user_email` is the lookup key.
+
+### Code
+
+- `migrate-v0.34.0.sql`: new. The delta-only migration (`CREATE TABLE IF NOT EXISTS renders` + the two indexes).
+- `schema.sql`: same definitions appended at the end so fresh DBs come up with the table.
+- `src/renders-db.ts`: new. `NewRenderRow` / `RenderRow` types, `insertRender`, `updateRenderFromView` (driven from the `RunpodJobView` shape `runpod-submit.ts` already produces), `listRendersForUser`. Pure DB layer, no fetch.
+- `src/index.ts`: imports `deriveProjectFromBundleKey` from `runpod-submit` (already exported, used in `insertRender`'s project field) and the three new helpers from `renders-db`. `handleRenderSubmit` calls `insertRender` after a successful submit; `handleRenderPoll` and `handleRenderCancel` call `updateRenderFromView` after a successful upstream call. New `GET /api/storyboard/renders` route + `handleRendersList` handler.
+- `package.json`: 0.33.1 -> 0.34.0.
+
+D1 paths are not unit-tested under the plain-Node vitest pool (no D1 emulator). Coverage of the pure pieces (normalization, JSON round-trip) is exercised through the route handlers and manual smoke. Typecheck clean; tests 335/335.
+
 ## v0.33.1
 
 `DELETE /api/storyboard/render/<jobId>` cancels a render job by proxying RunPod's `POST /v2/<endpointId>/cancel/<jobId>`. The planner UI's render panel now surfaces a "cancel job" button while the job is in `IN_QUEUE` or `IN_PROGRESS`, hiding it once a terminal status arrives. The chat UI sidebar gets a one-line cross-link to `/planner.html` for discoverability. PATCH bump (follow-throughs on the v0.32.0 / v0.33.0 render flow; no new module).

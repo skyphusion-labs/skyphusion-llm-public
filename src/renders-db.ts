@@ -26,6 +26,15 @@ export interface NewRenderRow {
   status: string;
 }
 
+// One uploaded SDXL keyframe (v0.39.0). The GPU side writes these to R2
+// at COMPLETED and returns the list in its job-output envelope; we mirror
+// them on the renders row so the UI can render thumbnails without re-
+// pulling the output blob.
+export interface KeyframeRef {
+  shot_id: string;
+  key: string;
+}
+
 // Shape returned to clients by /api/storyboard/renders. snake_case mirrors
 // the DB column names so the UI does not double-normalize. output_json is
 // parsed back to a JS object (or null when the row has none).
@@ -47,6 +56,7 @@ export interface RenderRow {
   updated_at: number;
   completed_at: number | null;
   label: string | null;
+  keyframes: KeyframeRef[] | null;
 }
 
 function nowSeconds(): number {
@@ -95,13 +105,20 @@ export async function updateRenderFromView(env: Env, view: RunpodJobView): Promi
 
   // Pull output_key out of the GPU side's COMPLETED envelope when present.
   let outputKey: string | null = null;
+  let keyframesJson: string | null = null;
   if (
     view.output &&
     typeof view.output === "object" &&
-    "output_key" in view.output
+    !Array.isArray(view.output)
   ) {
-    const v = (view.output as Record<string, unknown>).output_key;
-    if (typeof v === "string" && v.length > 0) outputKey = v;
+    const o = view.output as Record<string, unknown>;
+    if (typeof o.output_key === "string" && o.output_key.length > 0) {
+      outputKey = o.output_key;
+    }
+    // v0.39.0: extract the keyframes list (GPU 0.4.0+) so we can render
+    // thumbnails in the history row without re-parsing output_json.
+    const refs = normalizeKeyframes(o.keyframes);
+    if (refs.length > 0) keyframesJson = JSON.stringify(refs);
   }
 
   const outputJson = view.output !== undefined ? JSON.stringify(view.output) : null;
@@ -115,7 +132,8 @@ export async function updateRenderFromView(env: Env, view: RunpodJobView): Promi
       execution_time_ms = ?,
       delay_time_ms = ?,
       updated_at = ?,
-      completed_at = COALESCE(?, completed_at)
+      completed_at = COALESCE(?, completed_at),
+      keyframes_json = COALESCE(?, keyframes_json)
     WHERE job_id = ?`,
   )
     .bind(
@@ -127,9 +145,28 @@ export async function updateRenderFromView(env: Env, view: RunpodJobView): Promi
       view.delayTimeMs ?? null,
       now,
       completed,
+      keyframesJson,
       view.jobId,
     )
     .run();
+}
+
+// Best-effort coerce `output.keyframes` from a job envelope into a
+// well-formed KeyframeRef[]. Anything that does not look like an
+// object with string `shot_id` + `key` is dropped silently; that
+// way a GPU side that adds future fields to each entry does not
+// crash the UPDATE.
+export function normalizeKeyframes(raw: unknown): KeyframeRef[] {
+  if (!Array.isArray(raw)) return [];
+  const out: KeyframeRef[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const e = entry as Record<string, unknown>;
+    if (typeof e.shot_id !== "string" || e.shot_id.length === 0) continue;
+    if (typeof e.key !== "string" || e.key.length === 0) continue;
+    out.push({ shot_id: e.shot_id, key: e.key });
+  }
+  return out;
 }
 
 // Fetch one row by D1 PK, scoped to the caller's user_email. Returns null
@@ -145,7 +182,7 @@ export async function getRenderByIdForUser(
       id, user_email, job_id, project, bundle_key, quality_tier,
       render_overrides, status, output_key, output_json AS output,
       error, execution_time_ms, delay_time_ms,
-      submitted_at, updated_at, completed_at, label
+      submitted_at, updated_at, completed_at, label, keyframes_json
     FROM renders
     WHERE id = ? AND user_email = ?`,
   )
@@ -220,7 +257,7 @@ export async function listRendersForUser(
       id, user_email, job_id, project, bundle_key, quality_tier,
       render_overrides, status, output_key, output_json AS output,
       error, execution_time_ms, delay_time_ms,
-      submitted_at, updated_at, completed_at, label
+      submitted_at, updated_at, completed_at, label, keyframes_json
     FROM renders
     WHERE user_email = ?
     ORDER BY submitted_at DESC
@@ -259,6 +296,18 @@ function normalizeRow(r: Record<string, unknown>): RenderRow {
     }
   }
 
+  let keyframes: KeyframeRef[] | null = null;
+  const kfRaw = r.keyframes_json;
+  if (typeof kfRaw === "string" && kfRaw.length > 0) {
+    try {
+      const parsed = JSON.parse(kfRaw);
+      const refs = normalizeKeyframes(parsed);
+      if (refs.length > 0) keyframes = refs;
+    } catch {
+      keyframes = null;
+    }
+  }
+
   return {
     id: Number(r.id),
     user_email: String(r.user_email),
@@ -287,5 +336,6 @@ function normalizeRow(r: Record<string, unknown>): RenderRow {
         : Number(r.completed_at),
     label:
       typeof r.label === "string" && r.label.length > 0 ? r.label : null,
+    keyframes,
   };
 }

@@ -2360,12 +2360,13 @@ textarea:focus {
   font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
 }
 
-/* Collapsed state: hide the label input + sub line + actions. The meta
-   bar stays visible and clickable; chevron + inline label preview tell
-   the user what they would see if they expanded. */
+/* Collapsed state: hide the label input + sub line + actions + keyframes.
+   The meta bar stays visible and clickable; chevron + inline label
+   preview tell the user what they would see if they expanded. */
 .planner-history-item-collapsed .planner-history-label-input,
 .planner-history-item-collapsed .planner-history-sub,
-.planner-history-item-collapsed .planner-history-actions {
+.planner-history-item-collapsed .planner-history-actions,
+.planner-history-item-collapsed .planner-history-keyframes {
   display: none;
 }
 
@@ -2373,6 +2374,56 @@ textarea:focus {
    below takes over). The :not selector is the inverse of -collapsed. */
 .planner-history-item:not(.planner-history-item-collapsed) .planner-history-label-preview {
   display: none;
+}
+
+/* v0.39.0: SDXL keyframe thumbnail strip. Horizontal scroller so a long
+   storyboard stays one row tall; thumbnails are fixed-size with cover
+   crop so a mixed-aspect set still aligns. Each thumb opens the full
+   PNG via /api/artifact in a new tab (right-click for "Save image as"
+   to grab one). */
+.planner-history-keyframes {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  padding-bottom: 4px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.planner-history-keyframe {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-decoration: none;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--bg-elev2);
+  transition: border-color 0.15s, transform 0.15s;
+}
+
+.planner-history-keyframe:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.planner-history-keyframe img {
+  width: 96px;
+  height: 54px;
+  object-fit: cover;
+  display: block;
+}
+
+.planner-history-keyframe-cap {
+  font-size: 10px;
+  color: var(--fg-dim);
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+  padding: 2px 4px;
+  line-height: 1.2;
+  text-align: center;
+  width: 100%;
+  background: var(--bg-elev);
 }
 
 .planner-history-tier {

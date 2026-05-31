@@ -861,6 +861,9 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
     project: typeof body.project === "string" ? body.project : undefined,
     qualityTier: body.qualityTier as RenderSubmitArgs["qualityTier"] | undefined,
     renderOverrides: body.renderOverrides as Record<string, unknown> | undefined,
+    // v0.39.0: stamp the GPU side's R2 uploads with the user_email so the
+    // existing /api/artifact ownership check works for renders too.
+    userEmail,
   };
 
   const result = await submitRenderJob(env, args);

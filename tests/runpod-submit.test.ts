@@ -98,6 +98,27 @@ describe("buildSubmitPayload", () => {
     const out = buildSubmitPayload({ bundleKey: "bundles/cherry.tar.gz" });
     expect(Object.keys(out)).toEqual(["input"]);
   });
+
+  it("passes user_email through when set (v0.39.0)", () => {
+    const out = buildSubmitPayload({
+      bundleKey: "bundles/cherry.tar.gz",
+      userEmail: "alice@example.com",
+    });
+    expect(out.input.user_email).toBe("alice@example.com");
+  });
+
+  it("omits user_email when not set (v0.39.0)", () => {
+    const out = buildSubmitPayload({ bundleKey: "bundles/cherry.tar.gz" });
+    expect("user_email" in out.input).toBe(false);
+  });
+
+  it("omits user_email when set to empty string (v0.39.0)", () => {
+    const out = buildSubmitPayload({
+      bundleKey: "bundles/cherry.tar.gz",
+      userEmail: "",
+    });
+    expect("user_email" in out.input).toBe(false);
+  });
 });
 
 describe("URL builders", () => {

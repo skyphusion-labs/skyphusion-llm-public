@@ -1,5 +1,43 @@
 # Changelog
 
+## v0.39.0
+
+SDXL keyframe thumbnails on completed history rows. The GPU side (vivijure-serverless 0.4.0+) uploads each scene's keyframe PNG to R2 at COMPLETED, returns the list in its job-output envelope, and the Worker mirrors them on the renders row as a JSON column. When the user expands a row that has keyframes, the planner shows a horizontal thumbnail strip below the action buttons, one thumb per shot, each opening the full PNG via /api/artifact in a new tab.
+
+### Why
+
+The render history at v0.38.x identifies each row by project + label + tier + status, but with no visual cue. Two renders of "cherry" look identical in the list even when they produced very different storyboards. Thumbnails let the user scan the list by content, not by metadata. This is also the first step toward the studio-mode preview + regen + lock workflow (planned v0.41-v0.42), where the user needs to see keyframes before deciding which shots to redo.
+
+### Cross-repo coordination
+
+The GPU side (vivijure-serverless) needed two changes to unlock this on the Worker:
+
+- Accept `user_email` in the job input and stamp it as `x-amz-meta-user_email` on every R2 upload it produces (silent MP4, state.tar.gz, and now keyframes). The Worker's `/api/artifact` route authorizes by reading that header, so pre-0.4.0 jobs (which omitted the metadata) produced artifacts the route returns 403 on. With 0.4.0 + this Worker change, every artifact a render produces is fetchable by the submitter via the existing ownership-checked route, including the silent MP4 download that v0.34.0 first wired.
+- After `assemble.py` finishes, walk the manifest's scene list, upload `clips/<sid>_keyframe.png` to `renders/<project>/<jobId>/keyframes/<sid>.png` for each scene that has one on disk, and return `keyframes: [{shot_id, key}, ...]` in the output envelope. Job-id-scoped so re-renders of the same project never overwrite an earlier job's thumbs. Best-effort: keyframe upload failures log via `progress_update` but never fail the otherwise-complete render.
+
+### Worker (this repo)
+
+- `schema.sql`: add `keyframes_json TEXT` to `renders`.
+- `migrate-v0.39.0.sql`: `ALTER TABLE renders ADD COLUMN keyframes_json TEXT;`. Same idempotency caveat as `migrate-v0.36.0.sql` (re-run surfaces "duplicate column" as a non-fatal warning).
+- `src/renders-db.ts`: new `KeyframeRef` type. `RenderRow` gains a parsed `keyframes` field. `normalizeKeyframes(raw)` exported pure helper validates each entry's `shot_id` + `key`, drops anything malformed, tolerates extra fields. `updateRenderFromView` pulls the `keyframes` array out of the GPU envelope and writes it through `COALESCE(?, keyframes_json)` so a re-poll that returns the same envelope re-writes the same content (idempotent), but a poll that loses the field (older GPU side) does not blank it out. SELECT lists, the row normalizer, and the row-by-id getter all include `keyframes_json` and decode it back.
+- `src/runpod-submit.ts`: `RenderSubmitArgs.userEmail` + `RenderJobInput.user_email`. `buildSubmitPayload` propagates it through. Empty / undefined drops the field entirely so a pre-0.39.0 GPU receives the same shape it did before.
+- `src/index.ts`: `handleRenderSubmit` passes `userEmail` (already pulled from `cf-access-authenticated-user-email`) into the submit args.
+- `public/planner.js`: `buildHistoryRow` appends a `.planner-history-keyframes` strip when `r.keyframes` is a non-empty array. Each thumb is an anchor wrapping an `<img loading="lazy">` plus a monospace caption with the shot id; clicking opens the full PNG. CSS gates the strip the same way the sub line and action row are gated by `-collapsed`.
+- `public/styles.css`: `.planner-history-keyframes` horizontal scroller, `.planner-history-keyframe` thumb chip with hover accent, fixed 96x54 image (16:9 cover crop so mixed aspects align).
+- `tests/renders-db.test.ts`: new file. `normalizeKeyframes` covered for the wire-shape contract: canonical entries, missing fields, wrong-type fields, extra fields, null/non-object entries, non-array input.
+- `tests/runpod-submit.test.ts`: three new cases for `buildSubmitPayload.userEmail`.
+
+### Apply
+
+```
+wrangler d1 execute skyphusion-llm --remote --file=migrate-v0.39.0.sql
+npm run deploy
+```
+
+Then build + push vivijure-serverless 0.4.0 to the RunPod endpoint. Pre-0.4.0 endpoints still work; their renders just produce no thumbnails (the field stays NULL on the row, the UI omits the strip).
+
+Tests 345/345 (335 prior + 10 new). Typecheck clean.
+
 ## v0.38.1
 
 History rows collapse / expand. Every row starts collapsed for a scannable list; clicking the meta bar toggles expand. The collapsed bar shows project + tier + status + (if set) an inline italic label preview; the expanded view reveals the editable label input, the timestamps line, and the action buttons (view, download, re-render, delete). Frontend-only.

@@ -24,6 +24,12 @@ export interface RenderSubmitArgs {
   bundleKey: string;
   qualityTier?: "draft" | "standard" | "final";
   renderOverrides?: Record<string, unknown>;
+  // v0.39.0: stamped on every R2 upload the GPU side produces (MP4,
+  // state.tar.gz, keyframes) as x-amz-meta-user_email, so the existing
+  // /api/artifact route can authorize the user back to their own
+  // artifacts. Pre-0.39.0 jobs (no user_email) still render, but their
+  // artifacts are not fetchable through the ownership-checked route.
+  userEmail?: string;
 }
 
 // What the vivijure-serverless rp_handler.py reads off the job input. Field
@@ -34,6 +40,7 @@ export interface RenderJobInput {
   bundle_key: string;
   quality_tier: "draft" | "standard" | "final";
   render_overrides?: Record<string, unknown>;
+  user_email?: string;
 }
 
 // RunPod queue-based job status. The platform uses these literal strings
@@ -87,6 +94,9 @@ export function buildSubmitPayload(args: RenderSubmitArgs): { input: RenderJobIn
   };
   if (args.renderOverrides && Object.keys(args.renderOverrides).length > 0) {
     input.render_overrides = args.renderOverrides;
+  }
+  if (typeof args.userEmail === "string" && args.userEmail.length > 0) {
+    input.user_email = args.userEmail;
   }
   return { input };
 }

@@ -1587,6 +1587,38 @@ function buildHistoryRow(r) {
   actions.appendChild(del);
 
   li.appendChild(actions);
+
+  // v0.39.0: SDXL keyframe thumbnails. Hidden when the row is collapsed
+  // (CSS gates .planner-history-keyframes the same way it gates sub /
+  // actions). Each thumb is an <img loading="lazy"> served by the
+  // existing /api/artifact ownership-checked route; the GPU side stamps
+  // each keyframe upload with the submitter's user_email so the route
+  // authorizes the user back to their own thumbs.
+  if (Array.isArray(r.keyframes) && r.keyframes.length > 0) {
+    const strip = document.createElement("div");
+    strip.className = "planner-history-keyframes";
+    for (const kf of r.keyframes) {
+      if (!kf || typeof kf.key !== "string" || typeof kf.shot_id !== "string") continue;
+      const a = document.createElement("a");
+      a.href = "/api/artifact/" + kf.key;
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.className = "planner-history-keyframe";
+      a.title = kf.shot_id;
+      const img = document.createElement("img");
+      img.src = "/api/artifact/" + kf.key;
+      img.alt = kf.shot_id;
+      img.loading = "lazy";
+      a.appendChild(img);
+      const cap = document.createElement("span");
+      cap.className = "planner-history-keyframe-cap";
+      cap.textContent = kf.shot_id;
+      a.appendChild(cap);
+      strip.appendChild(a);
+    }
+    if (strip.children.length > 0) li.appendChild(strip);
+  }
+
   return li;
 }
 

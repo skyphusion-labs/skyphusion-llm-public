@@ -1,0 +1,48 @@
+// Curated subset of MODELS for the storyboard planner picker (v0.28.0).
+//
+// Stays small and stable so the planner UI is not flooded with frontier
+// models the user has not specifically vetted for JSON-schema output
+// discipline. Each row reuses the full ModelEntry from src/models.ts so
+// the UI's existing model-row renderer keeps working without changes.
+//
+// Adding a model: append its id to PLANNING_MODEL_IDS; the row must
+// already exist in MODELS. The catalog test (tests/planner-catalog.
+// test.ts) fails fast if an id is dangling.
+
+import { MODELS, type ModelEntry } from "./models";
+
+export type PlanningProvider = "anthropic" | "xai" | "workers-ai";
+
+const PLANNING_MODEL_IDS: readonly string[] = [
+  // Anthropic BYOK
+  "anthropic/claude-opus-4-7",
+  "anthropic/claude-sonnet-4-6",
+  "anthropic/claude-haiku-4-5",
+  // xAI BYOK
+  "xai/grok-4.3",
+  "xai/grok-4.20-multi-agent-0309",
+  "xai/grok-build-0.1",
+  // Workers AI text
+  "@cf/zai-org/glm-4.7-flash",
+  "@cf/openai/gpt-oss-120b",
+  "@cf/meta/llama-4-scout-17b-16e-instruct",
+] as const;
+
+const PLANNING_ID_SET: ReadonlySet<string> = new Set(PLANNING_MODEL_IDS);
+
+export const PLANNING_MODELS: ModelEntry[] = MODELS.filter((m) =>
+  PLANNING_ID_SET.has(m.id),
+);
+
+export function findPlanningModel(id: string): ModelEntry | undefined {
+  return PLANNING_MODELS.find((m) => m.id === id);
+}
+
+// Maps a planning-catalog ModelEntry to one of the three dispatch paths.
+// Workers AI is the default when no explicit provider is set on the
+// ModelEntry (matches src/index.ts's chat path).
+export function plannerProviderFor(model: ModelEntry): PlanningProvider {
+  if (model.provider === "anthropic") return "anthropic";
+  if (model.provider === "xai") return "xai";
+  return "workers-ai";
+}

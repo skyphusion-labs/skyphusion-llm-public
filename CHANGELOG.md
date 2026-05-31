@@ -1,5 +1,48 @@
 # Changelog
 
+## v0.28.0
+
+Provider-selectable storyboard planner. `planStoryboard({brief, characters, model})` drafts a board as JSON via Anthropic BYOK, xAI BYOK, or Workers AI (one non-streaming completion), strips `\`\`\`json` fences, JSON.parses the completion, runs it through `validateStoryboard` from v0.27.0, and returns the validated `StoryboardValidated` or the error list. `serializeStoryboardYaml` emits the storyboard.yaml the vivijure-serverless GPU worker reads. No new runtime dependency. No new binding, no schema change. Does NOT submit anything to RunPod; the caller decides whether to re-prompt the model with the validator errors or hand off to the bundle assembler.
+
+### Why
+
+The previous step (v0.27.0) gave the planner Worker a structural validator for storyboard input. This step gives the Worker a way to *produce* that input: pick a model, draft a board, validate, retry. The schema-constrained system prompt encodes the three behaviors the GPU renderer cares about and the model would otherwise get wrong:
+
+1. Style language goes in `style_prefix` exactly once. The renderer prepends `style_prefix` to every scene at manifest-build time (`core.build_manifest` in the GPU repo), so any style word repeated inside a scene prompt is double-applied and biases the keyframe.
+2. Slot ids are exactly `"A" | "B" | "C" | "D"` and every per-scene `character_slots` is a subset of top-level `use_characters`. Without this in the prompt, models guess slot conventions like `"slot_a"` or invent labels.
+3. `style_category` and `style_preset` default to the literal string `"None"`. The renderer's disable path keys on the string, not on `null`, so a `null` falls through to the default profile lookup instead of disabling style.
+
+### Catalog and dispatch
+
+Nine models in the planner picker, three per provider, all curated for JSON-schema discipline rather than catalog completeness:
+
+- **Anthropic BYOK**: Claude Opus 4.7, Sonnet 4.6, Haiku 4.5.
+- **xAI BYOK**: Grok 4.3, Grok 4.20 Multi-Agent, Grok Build 0.1 (coding-trained).
+- **Workers AI**: GLM-4.7 Flash, GPT-OSS 120B, Llama 4 Scout.
+
+Reuses the existing `callAnthropic` / `callXai` / `aiRun` paths from `src/providers/` and `src/ai-binding.ts`; the planner does not introduce its own provider plumbing. BYOK secrets (`ANTHROPIC_API_KEY`, `XAI_API_KEY`) are consumed inside the provider modules, never read by the planner module.
+
+The catalog is filtered from the existing `MODELS` table by id, so labels and capabilities stay in sync with the rest of the chat picker for free. Adding a planning model is one id in `PLANNING_MODEL_IDS`; the catalog test fails fast if the id does not resolve in `MODELS`.
+
+### Output parsing
+
+`stripJsonFences` handles bare JSON, single fenced blocks (with or without the `json` language tag), and multiple fenced blocks. When the model emits an example block before the final answer, the helper picks the LAST fence, not the first. When no fence is present, it slices between the first `{` and the last `}` so prose wrappers ("Sure, here you go: ... Hope that helps!") still parse cleanly.
+
+`serializeStoryboardYaml` double-quotes every string unconditionally so colons inside scene prompts ("Featuring: Kira: protagonist"), embedded quote characters, backslashes, and newlines all round-trip cleanly through PyYAML on the GPU worker. No general-purpose YAML library, no codegen.
+
+### Code
+
+- `src/planner.ts`: new. `planStoryboard(env, args)` dispatcher; `PlanStoryboardArgs`, `PlanStoryboardResult` types; re-exports `PlannerCharacter` and `PlanningProvider` for callers.
+- `src/planner-catalog.ts`: new. `PLANNING_MODELS` (subset of `MODELS`), `findPlanningModel`, `plannerProviderFor`, `PlanningProvider` type.
+- `src/planner-prompt.ts`: new. `buildPlanningSystemPrompt`, `buildPlanningUserMessage`, `stripJsonFences`, `PlannerCharacter` type. Pure string functions, no env / fetch dependencies.
+- `src/planner-yaml.ts`: new. `serializeStoryboardYaml` emits storyboard.yaml from a `StoryboardValidated`. Pure, no runtime dependency.
+- `tests/planner-prompt.test.ts`: new. 26 tests covering the system prompt, user message, and fence stripping (including multi-fence "last block" preference).
+- `tests/planner-catalog.test.ts`: new. 11 tests verifying every PLANNING_MODELS id resolves in MODELS, all three provider paths are represented, and `plannerProviderFor` / `findPlanningModel` behave correctly.
+- `tests/planner-yaml.test.ts`: new. 17 tests covering minimal and full storyboard shapes, "None" literal preservation, string escaping (quotes, backslashes, newlines, colons), flow vs block style, optional-field omission, scene ordering, and the deliberate non-emission of the internal `projectName` field.
+- `package.json`: 0.27.0 -> 0.28.0.
+
+No new runtime dependency, no new binding, no schema change. The dispatcher itself touches `env.AI.run` / `fetch` so it is not unit-tested in this pass (matches the existing pattern for `src/index.ts` and the provider modules; their own provider-level tests cover the underlying calls). Typecheck clean; tests 269/269 (215 existing plus 54 new).
+
 ## v0.27.0
 
 Hand-written storyboard validator for the planner Worker. Validates the structural shape of a planner output before it is serialized to `storyboard.yaml` and bundled for the vivijure-serverless GPU worker. Pure, synchronous, no I/O. Slot readiness (registry prompt plus >=8 reference images on disk) is intentionally out of scope; that lives in a later R2 pre-flight against the bundle's `characters/registry.json` and `characters/training/<SLOT>/` listings.

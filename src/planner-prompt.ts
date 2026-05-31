@@ -1,0 +1,147 @@
+// Pure string helpers for the storyboard planner (v0.28.0).
+//
+// Holds the system + user prompt builders and the JSON fence stripper.
+// Extracted from planner.ts so the prompt text and the output cleanup are
+// unit-testable without dragging Env, fetch, or env.AI into the test
+// (same pattern as parsers/, longrun-params.ts, output-extract.ts).
+
+import type { SlotId } from "./storyboard-validate";
+
+// Character bible entry the planner UI passes in. `bible` is the condensed
+// appearance description that the cast-prep stage saved (typically ~220
+// chars after character_bible.max_chars_per_character).
+export interface PlannerCharacter {
+  slot: SlotId;
+  name: string;
+  bible: string;
+}
+
+// System prompt sent to the model. Constrains output to a JSON object
+// matching StoryboardInput. Declares the slot id enum, the style_prefix
+// once-only rule (style_prefix is prepended to every scene at manifest-
+// build time, so repeating style words inside a scene prompt double-
+// applies them), and the literal-"None" convention for style_category /
+// style_preset (the renderer disables on the string, not on null).
+export function buildPlanningSystemPrompt(): string {
+  return `You are the storyboard planner for a music-video / short-film AI pipeline.
+Your output is consumed directly by a renderer that turns each scene into
+a Wan I2V clip with an SDXL keyframe. Return ONE JSON object that exactly
+matches the schema below. No prose. No markdown. No YAML. Do not wrap the
+JSON in code fences.
+
+SCHEMA:
+{
+  "title": string,
+  "full_prompt": string,
+  "duration_seconds": number,
+  "clip_seconds": number,
+  "style_prefix": string,
+  "style_category": string,
+  "style_preset": string,
+  "use_characters": ["A" | "B" | "C" | "D", ...],
+  "cast_rules": string,
+  "scenes": [
+    {
+      "prompt": string,
+      "character_slots": ["A" | "B" | "C" | "D", ...],
+      "act": string,
+      "start": number,
+      "end": number,
+      "target_seconds": number
+    },
+    ...
+  ]
+}
+
+FIELDS:
+- title: short film title; spaces become underscores in the on-disk slug.
+- full_prompt: one or two sentence film-level summary (optional).
+- duration_seconds: total film length target in seconds (positive number).
+- clip_seconds: per-shot target length in seconds (positive number).
+- style_prefix: ALL style language goes here, EXACTLY ONCE. Palette, lens,
+  era, lighting register, film stock, color grade, key visual vocabulary.
+  The renderer prepends this string verbatim to every scene prompt at
+  manifest-build time, so any style word repeated inside a scene prompt
+  is double-applied and biases the keyframe.
+- style_category, style_preset: lookups the renderer disables on the
+  literal string "None". When you do not want a category or preset
+  applied, emit the string "None", never null and never the empty string.
+- use_characters: slot ids loaded for this render. Slot ids are exactly
+  the literal strings "A", "B", "C", "D". Nothing else is valid. Set this
+  to the slots you plan to feature; omit slots that will not appear.
+- cast_rules: optional plain-text rules for cast cohesion (pairings,
+  outfit constraints, prop continuity).
+- scenes: REQUIRED, at least one entry, one per shot.
+- scenes[].prompt: SHOT CONTENT ONLY. Subject action, framing, moment,
+  emotional beat. Do NOT include style language; that lives in
+  style_prefix above. Do NOT repeat the film title or full_prompt.
+- scenes[].character_slots: subset of use_characters. Omit the field
+  entirely for an empty-frame shot rather than send an unloaded slot.
+- scenes[].act: optional act tag, one of "opening", "rising", "turn",
+  "climax", "resolution".
+- scenes[].start, end, target_seconds: optional per-shot timing in
+  seconds. start may be 0; end must be strictly greater than start;
+  target_seconds must be positive.
+
+HARD RULES:
+1. style_prefix is the ONLY place style language belongs. Repeating style
+   words inside scenes[].prompt double-applies them because style_prefix
+   is prepended to every scene at manifest-build time.
+2. Every entry in a scene's character_slots must appear in the top-level
+   use_characters array. Never lock a scene to a slot you have not loaded.
+3. Slot ids are exactly "A", "B", "C", "D". No lowercase, no other letters.
+4. style_category and style_preset default to the literal string "None"
+   when you do not want a lookup. Never null. Never empty string.
+5. Numeric fields are plain JSON numbers, never strings. No units ("s",
+   "sec", "min"); seconds is implicit.
+6. Plan 3 to 12 scenes for a vignette / single-track music video unless
+   the brief specifies otherwise.
+
+Return ONLY the JSON object. Nothing before it. Nothing after it.`;
+}
+
+// User-side message that carries the brief plus the cast bible. The model
+// uses the cast to populate use_characters and per-scene character_slots.
+// Characters are sorted by slot id so the same input always renders the
+// same prompt, which keeps planner cache hits stable.
+export function buildPlanningUserMessage(
+  brief: string,
+  characters: PlannerCharacter[],
+): string {
+  const sorted = [...characters].sort((a, b) => a.slot.localeCompare(b.slot));
+  const castLines =
+    sorted.length === 0
+      ? ["(none)"]
+      : sorted.map((c) => `${c.slot}) ${c.name}: ${c.bible}`);
+  return [
+    "BRIEF:",
+    brief.trim(),
+    "",
+    "CAST LOADED FOR THIS RENDER:",
+    ...castLines,
+    "",
+    "Plan the storyboard and return the JSON now.",
+  ].join("\n");
+}
+
+// Pulls a JSON object out of a model completion. Handles:
+//   - bare JSON;
+//   - one or more ```json (or bare ```) code fences (prefers the LAST fence,
+//     because models often give an example block before the final answer);
+//   - prose before or after the JSON / fence.
+// Returns the input unchanged when no JSON-looking content is found, so
+// JSON.parse downstream surfaces a clear error.
+export function stripJsonFences(raw: string): string {
+  let s = raw.trim();
+  const fences = [...s.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
+  if (fences.length > 0) {
+    s = fences[fences.length - 1][1];
+  } else {
+    const firstBrace = s.indexOf("{");
+    const lastBrace = s.lastIndexOf("}");
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      s = s.slice(firstBrace, lastBrace + 1);
+    }
+  }
+  return s.trim();
+}

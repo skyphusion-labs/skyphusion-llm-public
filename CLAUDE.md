@@ -79,3 +79,9 @@ Tests live in `tests/` and run under plain Vitest in a Node environment (`vitest
 ## Identity & commits
 - Handle/username is `skyphusion` across all services. Default to it when a username is needed.
 - One scoped commit per release. Subject = scoped change, body = the why, footer = files touched.
+
+## Release versioning
+- SemVer-style `0.MINOR.PATCH` (currently pre-1.0). **PATCH** for fixes, follow-throughs, and backend-only tweaks; **MINOR** for new features (a new model, modality, or capability). Bump `package.json` `version` in the same commit.
+- Commit subjects that ship a release end the subject with the version in parens, e.g. `feat(image): transparent PNG ... (v0.22.1)`.
+- Every release gets a new top-of-file entry in `CHANGELOG.md`: `## vX.Y.Z` heading, a one-line summary, prose explaining the why, and a `### Code` section listing every file touched (including the `package.json` X -> Y bump) ending with typecheck/test status. New bindings or schema changes are documented as copy-paste blocks in the entry so existing deployers can apply them by hand.
+- In-code version references: when a line of code or a comment is tied to a release, tag it `(vX.Y.Z)` so the catalog/config history stays traceable (this is the existing convention throughout `src/`).

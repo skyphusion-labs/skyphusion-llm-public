@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.35.3
+
+`renderOverrides` JSON textarea in the render stage on `/planner.html`. Collapsible `<details>` wrapper labeled "render overrides (advanced, optional)"; empty by default. Submit parses as JSON object on the way out, errors stay in the panel without leaving the stage. Re-render from history pre-fills the textarea from the row's stored `render_overrides` and opens the details so the user sees we are carrying overrides forward. Frontend-only.
+
+### Why
+
+The submit route accepted `renderOverrides` (`{[k]: unknown}` merged into rp_handler.py's render payload at the GPU side) since v0.32.0, but the planner UI had no way to set them. Power users curl'd them in; everyone else got the bundle's defaults. Now you can tweak per-shot Wan or SDXL params (steps, frames, seed, style_prefix) without leaving the page, and "re-render" on a row that used overrides reproduces them automatically.
+
+### Behavior
+
+- Textarea is a `<textarea>` inside a `<details>`, collapsed by default so the render stage stays clean for the common no-overrides path. Click the summary to expand.
+- On submit: empty textarea -> request body has no `renderOverrides` field, same as before. Non-empty -> parse with `JSON.parse`; reject non-object / array values. Bad JSON sets the status pill to `renderOverrides invalid JSON: <reason>` and focuses the textarea so the user sees where to fix.
+- `rerunBundle(row)` (the v0.35.1 history re-render action): if `row.render_overrides` exists and has at least one key, pre-fill the textarea with `JSON.stringify(row.render_overrides, null, 2)` and force the `<details>` open. Otherwise clear and collapse.
+- `resetRenderStage()` (called on re-plan): clear the textarea and collapse the details. Prevents stale overrides from carrying silently into the next submit when the user starts a fresh plan.
+- The bundle's `storyboard.yaml` is NOT touched. Overrides only modify the render-time payload sent to RunPod; the bundle on R2 stays as authored.
+
+### Common keys
+
+The UI's placeholder + hint surface the common ones (mirrors what rp_handler.py merges into the vivijure-serverless render payload):
+
+- `wan_inference_steps` (int): override the diffusion-step count per Wan I2V pass. Lower = faster + less refined.
+- `wan_num_frames` (int): override the per-clip frame count.
+- `seed` (int): pin the seed for reproducible renders.
+- `style_prefix` (string): override the storyboard's style_prefix without re-bundling.
+
+Anything not in this list still flows through; the worker merges by key, so any payload field the storyboard / config defines is reachable via overrides.
+
+### Code
+
+- `public/planner.html`: new `<details class="planner-overrides-details">` block between the quality tier picker and the render button. Contains a labeled textarea and an inline hint listing the common keys.
+- `public/planner.js`: `submitRender` parses the textarea before any other mutation (a malformed JSON does not progress the UI to a half-submitted state); `rerunBundle` pre-fills + auto-opens when the row has overrides; `resetRenderStage` clears + collapses.
+- `public/styles.css`: `.planner-overrides-details` / `.planner-overrides-summary` / `.planner-overrides-hint` styles. Reuses existing CSS tokens; matches the rest of the planner panel's spacing.
+- `package.json`: 0.35.2 -> 0.35.3.
+
+No backend change. Tests / typecheck unchanged. Tests 335/335.
+
 ## v0.35.2
 
 History list on `/planner.html` auto-refreshes every 30 seconds while at least one row is in a non-terminal status. Goes idle (no more polling) once every visible row has reached `COMPLETED` / `FAILED` / `CANCELLED` / `TIMED_OUT`. Pauses when the tab is backgrounded and resumes with an immediate refresh on return. Frontend-only addition.

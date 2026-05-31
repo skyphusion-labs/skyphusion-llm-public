@@ -2082,6 +2082,60 @@ textarea:focus {
 
 /* v0.33.1: cancel-job button on the render panel + sidebar cross-link */
 
+/* v0.35.3: render overrides JSON textarea (advanced, collapsible) */
+
+.planner-overrides-details {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 0;
+}
+
+.planner-overrides-summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--fg-dim);
+  outline: none;
+  user-select: none;
+}
+
+.planner-overrides-summary:hover {
+  color: var(--accent);
+}
+
+.planner-overrides-details[open] .planner-overrides-summary {
+  margin-bottom: 8px;
+}
+
+#planner-render-overrides {
+  width: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px;
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+  font-size: 12px;
+  resize: vertical;
+}
+
+.planner-overrides-hint {
+  font-size: 12px;
+  color: var(--fg-dim);
+  margin: 8px 0 0;
+  line-height: 1.5;
+}
+
+.planner-overrides-hint code {
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+  background: var(--bg);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--fg);
+}
+
 .planner-render-cancel {
   background: var(--bg-elev2);
   color: var(--warn);

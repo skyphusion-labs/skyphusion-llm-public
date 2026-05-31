@@ -631,6 +631,24 @@ async function submitRender() {
     setRenderStatus("no bundleKey; run 'bundle' first", "error");
     return;
   }
+  // v0.35.3: parse the renderOverrides textarea before any other state
+  // mutation so a malformed JSON does not leave the UI mid-flow. Empty
+  // textarea means "no overrides" and is the common path.
+  let renderOverrides;
+  const overridesText = $("#planner-render-overrides").value.trim();
+  if (overridesText) {
+    try {
+      const parsed = JSON.parse(overridesText);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("must be a JSON object, e.g. {\"key\": value}");
+      }
+      renderOverrides = parsed;
+    } catch (err) {
+      setRenderStatus("renderOverrides invalid JSON: " + err.message, "error");
+      $("#planner-render-overrides").focus();
+      return;
+    }
+  }
   // Stop any prior poll loop before starting a new render.
   if (renderState.pollTimer) {
     clearTimeout(renderState.pollTimer);
@@ -640,16 +658,19 @@ async function submitRender() {
   setRenderStatus("submitting to RunPod...", "loading");
   $("#planner-render-btn").disabled = true;
 
+  const reqBody = {
+    bundleKey: bundleState.bundleKey,
+    qualityTier,
+  };
+  if (renderOverrides) reqBody.renderOverrides = renderOverrides;
+
   let resp = null;
   let data = null;
   try {
     resp = await fetch("/api/storyboard/render", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        bundleKey: bundleState.bundleKey,
-        qualityTier,
-      }),
+      body: JSON.stringify(reqBody),
     });
     data = await resp.json();
   } catch (err) {
@@ -971,6 +992,13 @@ function resetRenderStage() {
   renderState.streamFallbackHit = false;
   $("#planner-render").hidden = true;
   $("#planner-render-result").hidden = true;
+  // v0.35.3: clear the renderOverrides textarea on re-plan so a stale
+  // value from a prior re-render does not silently carry forward into
+  // the next submit.
+  const overridesTextarea = $("#planner-render-overrides");
+  if (overridesTextarea) overridesTextarea.value = "";
+  const overridesDetails = $(".planner-overrides-details");
+  if (overridesDetails) overridesDetails.open = false;
   setRenderStatus("", "");
 }
 
@@ -1145,6 +1173,27 @@ function rerunBundle(row) {
   const tierSelect = $("#planner-quality-tier");
   if (tierSelect && row.quality_tier) {
     tierSelect.value = row.quality_tier;
+  }
+
+  // v0.35.3: pre-fill the renderOverrides textarea from the row so a
+  // re-render reproduces the previous run end to end. If overrides were
+  // present, open the <details> wrapper so the user sees we are carrying
+  // them forward (else they would think "no overrides" by default).
+  const overridesTextarea = $("#planner-render-overrides");
+  const overridesDetails = $(".planner-overrides-details");
+  if (overridesTextarea) {
+    if (
+      row.render_overrides
+      && typeof row.render_overrides === "object"
+      && !Array.isArray(row.render_overrides)
+      && Object.keys(row.render_overrides).length > 0
+    ) {
+      overridesTextarea.value = JSON.stringify(row.render_overrides, null, 2);
+      if (overridesDetails) overridesDetails.open = true;
+    } else {
+      overridesTextarea.value = "";
+      if (overridesDetails) overridesDetails.open = false;
+    }
   }
 
   setRenderStatus(

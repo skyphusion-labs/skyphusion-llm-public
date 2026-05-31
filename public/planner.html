@@ -129,6 +129,20 @@
           <option value="final" selected>final (97 frames, 22 steps; production quality)</option>
         </select>
       </label>
+      <!-- v0.35.3: optional per-shot Wan / SDXL parameter overrides as JSON. -->
+      <details class="planner-overrides-details">
+        <summary class="planner-overrides-summary">render overrides (advanced, optional)</summary>
+        <textarea id="planner-render-overrides" rows="4" placeholder='{"wan_inference_steps": 12, "seed": 424242}' spellcheck="false"></textarea>
+        <p class="planner-overrides-hint">
+          optional JSON object merged into the render payload sent to the GPU
+          worker. fields override the bundle's storyboard / config defaults
+          for this render only (the bundle's storyboard.yaml is untouched).
+          common keys: <code>wan_inference_steps</code> (int),
+          <code>wan_num_frames</code> (int), <code>seed</code> (int),
+          <code>style_prefix</code> (string). leave empty for the bundle's
+          defaults.
+        </p>
+      </details>
       <div class="planner-actions">
         <button id="planner-render-btn" type="button" class="planner-primary">render</button>
         <span id="planner-render-meta" class="planner-status"></span>

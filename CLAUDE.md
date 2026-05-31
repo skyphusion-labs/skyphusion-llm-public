@@ -87,6 +87,31 @@ Also: `[observability] enabled = true` (dashboard log tailing). `compatibility_d
 | `TAVILY_API_KEY` | Optional | v0.17.0; web-search retrieval. Falls back to Wikipedia-only when unset. |
 | `CF_AIG_TOKEN` | Optional | Only if Authenticated Gateway is enabled. |
 
+## Routes reference
+
+All matched in the single `fetch` handler in `src/index.ts` (top-of-file comment lists the core set). Anything not matched falls through to `ASSETS` (static `public/`). Every `/api/*` route is scoped to the caller's `Cf-Access-Authenticated-User-Email`.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/health` | Liveness probe; no binding access, always 200. |
+| GET | `/health/deep` | Deep check: D1, R2, Vectorize, AI Gateway config (50–200ms). |
+| GET | `/api/models` | List models with `type` + capability flags; returns caller email. |
+| POST | `/api/chat` | Run a model; dispatches by `model.type`. Persists a row. |
+| POST | `/api/chat/stream` | SSE variant, only for catalog entries flagged `streaming: true`. |
+| GET | `/api/history` | List caller's chats, newest first. |
+| GET / DELETE | `/api/history/:id` | One row (with attachments + output) / delete row + its R2 objects. |
+| GET | `/api/artifact/*` | Stream an R2 object, gated by `customMetadata.user_email`. |
+| GET | `/api/job/:id` | Poll an async video/music job status. |
+| GET | `/api/conversations` | List caller's conversations (grouped by `conversation_id`). |
+| GET / DELETE | `/api/conversations/:id` | Full transcript / cascade-delete turns + R2 artifacts. |
+| PATCH | `/api/conversations/:id/project` | Move conversation to a project or clear it (v0.20.2). |
+| GET / POST | `/api/documents` | List RAG docs (`?project_id=N` filter) / upload+chunk+embed. |
+| GET / DELETE | `/api/documents/:id` | Metadata + chunk preview / cascade-delete doc, chunks, vectors, R2. |
+| GET / POST | `/api/projects` | List projects with doc counts / create project. |
+| GET / PATCH / DELETE | `/api/projects/:id` | Get / update name+desc+system_prompt / delete (docs kept). |
+| POST / DELETE | `/api/projects/:pid/documents/:did` | Attach / detach a document. |
+| POST | `/api/projects/:id/import-discord` | Import a DiscordChatExporter JSON export. |
+
 ## Conventions (from CONTRIBUTING.md — enforced)
 
 - **No em-dashes (U+2014) or en-dashes (U+2013) anywhere in source.** Use commas, semicolons, or parentheses.

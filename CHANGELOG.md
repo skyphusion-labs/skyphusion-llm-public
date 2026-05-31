@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.27.0
+
+Hand-written storyboard validator for the planner Worker. Validates the structural shape of a planner output before it is serialized to `storyboard.yaml` and bundled for the vivijure-serverless GPU worker. Pure, synchronous, no I/O. Slot readiness (registry prompt plus >=8 reference images on disk) is intentionally out of scope; that lives in a later R2 pre-flight against the bundle's `characters/registry.json` and `characters/training/<SLOT>/` listings.
+
+### Why
+
+The GPU render pipeline silently degrades when a planner output is structurally invalid. A missing scene prompt produces a no-op shot at manifest build time. A `character_slots` entry that references a slot not in `use_characters` ships an unloaded slot to the worker, which then bypasses identity lock for that scene because the LoRA prefs do not carry that slot. Missing `style_category` or `style_preset` reach the renderer as `null` when the renderer's disable path keys on the literal string `"None"`, so a `null` falls through to the default profile lookup instead of disabling style. Catching all three at planner exit, before the bundle hits R2, gives the planner a single deterministic place to surface fixable schema errors with line-precise messages, instead of waiting for the GPU job to render garbage and reading the diagnostic from the worker log half an hour later.
+
+The validator's structural rules came straight from reading the consumers in the GPU repo (`vivijure-serverless/build/vivijure-src`): `orchestrator.build_render_payload` for the top-level keys actually consumed, `core.build_manifest` for the per-scene keys, `orchestrator.slots_ready_for_training` for the readiness rule that is deliberately not enforced here, and `characters.SLOTS = ["A","B","C","D"]` for the slot-id enum. `normalizeProjectName` mirrors `studio_service.norm_project` exactly so the slug the planner emits matches what the worker writes on disk.
+
+### What it enforces
+
+- `title` is a non-empty string; normalized to a safe project slug via `normalizeProjectName` (collapse whitespace runs to `_`, fall back to `"project"` for empty input).
+- `scenes` is a non-empty array; every entry has a non-empty `prompt`.
+- `use_characters`, if present, is an array of slot ids in `["A","B","C","D"]`; duplicates rejected.
+- Every per-scene `character_slots` is a subset of top-level `use_characters`. The error names the offending slot and the loaded set.
+- `style_category` / `style_preset`: `undefined` / `null` / `""` / whitespace-only collapse to the literal string `"None"`. Non-empty strings preserved.
+- `duration_seconds`, `clip_seconds`, scene `target_seconds`, scene `end` must be positive finite numbers if provided; scene `start` must be non-negative finite (zero is a legal film-time origin); `end > start` when both present; `NaN` / `Infinity` rejected throughout.
+- All errors accumulate in one pass; the validator does not bail on the first failure.
+
+### Code
+
+- `src/storyboard-validate.ts`: new. `SlotId` / `SLOT_IDS` enum, `StoryboardScene` / `StoryboardInput` / `StoryboardValidated` / `ValidationResult` types, `validateStoryboard(input: unknown)` and `normalizeProjectName(title)` exported. Minimal-dep convention (no zod, no ajv) per `src/env.ts` and `src/longrun-params.ts`. Returns `{ok:true,value} | {ok:false,errors:string[]}` with human-readable messages naming the offending field, index, and slot.
+- `tests/storyboard-validate.test.ts`: new. 43 vitest tests grouped by surface (happy path, title, scenes, use_characters, character_slots subset rule, None-normalization, duration_seconds / clip_seconds, scene timing, non-object inputs, error accumulation, invariants). Locks in the SLOT_IDS sync with `characters.SLOTS` in the GPU repo.
+- `package.json`: 0.26.0 -> 0.27.0.
+
+No new runtime dependency, no new binding, no schema change. Typecheck clean; tests 215/215 (172 existing plus 43 new).
+
 ## v0.26.0
 
 ZIP import now runs durably in the `LongRunWorkflow` instead of synchronously, so large archives import without approaching the Worker per-invocation subrequest limit (the caveat noted in v0.25.0). Backend + frontend. No new binding, no schema change.

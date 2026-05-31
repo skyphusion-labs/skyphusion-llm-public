@@ -1,5 +1,55 @@
 # Changelog
 
+## v0.31.0
+
+Storyboard bundle assembler. `POST /api/storyboard/bundle` takes a validated storyboard plus per-slot character refs (R2 keys or inline data URLs) and produces the `.tar.gz` the vivijure-serverless GPU worker pulls via `r2_io.download_and_extract`. Bundle is staged to R2 at `bundles/<projectName>.tar.gz`. `POST /api/storyboard/character-ref` uploads one image (PNG/JPEG/WEBP), returns the R2 key. No new binding, no schema change, no new runtime dep (POSIX ustar tar is hand-written, gzip via Workers-native `CompressionStream`).
+
+### Why
+
+v0.29.x produced a validated storyboard JSON; v0.30.0 surfaced it through the UI. To actually feed it to the GPU worker, skyphusion needs to assemble the project bundle the worker's `r2_io.download_and_extract` expects: `storyboard.yaml` + `characters/registry.json` + the canonical per-slot portrait at `characters/char_<SLOT>_<safe-name>.png` + the LoRA / IP-Adapter training set at `characters/refs/<SLOT>/ref_NN.<ext>`. The GPU side's `characters.list_character_references` globs that refs directory for the readiness check that gates LoRA training, so getting the layout right is load-bearing for identity.
+
+The path of least dependency is to assemble the tar on the Worker, gzip it via the Workers-native `CompressionStream("gzip")`, and `R2.put` the result. No external tar lib, no codegen, no extra runtime dep. The POSIX ustar format is small enough (one fixed 512-byte header per file plus padded content plus two trailing empty blocks) that a hand-written emitter is cleaner than pulling in a dependency.
+
+### Bundle layout
+
+Mirrors what `characters.py` / `orchestrator.py` in the GPU repo expects:
+
+```
+storyboard.yaml                            (top-level)
+characters/registry.json                   (per-slot {name, prompt, image})
+characters/char_<SLOT>_<safe-name>.png     (canonical portrait, registry.image points here)
+characters/refs/<SLOT>/ref_NN.<ext>        (training + IP-Adapter refs; list_character_references
+                                            globs this dir for the >=8 readiness check that
+                                            lora_train fires on)
+start_image.png                            (optional top-level film start; auto-bootstrapped
+                                            by the GPU worker if absent)
+```
+
+`safeCharFilename` mirrors `characters.slot_image_path`'s convention byte-for-byte: `name.strip().replace(" ", "_")[:40]`. Each training ref's extension is sniffed from the file's magic bytes (PNG, JPEG, WEBP), falling back to `.png` on an unrecognized signature.
+
+### Endpoints
+
+- **`POST /api/storyboard/character-ref`** — body is raw binary (PNG/JPEG/WEBP per Content-Type), max 16 MB. Returns `{ key, mime, size, user }`. Stages to R2 at `in/<uuid>.<ext>` via the existing `r2Put` helper so the staged object is visible to the same artifact-cleanup paths that already exist. 400 on wrong / missing MIME, 400 on empty body, 413 on > 16 MB.
+- **`POST /api/storyboard/bundle`** — body is `{ storyboard, characterRefs, startImage? }`. `characterRefs` is a sparse `{ "A": CharacterRef, "B": ..., ... }` keyed by slot id. Each `CharacterRef` has `{ name, prompt, trainingImages: TrainingImage[], portrait?: TrainingImage }`. Each `TrainingImage` is `{ key }` (R2 reference) or `{ dataUrl }` (inline base64) plus an optional `filename` override. Returns `{ ok: true, bundleKey, sizeBytes, fileCount, user }` on success or `{ ok: false, errors, user }` (200) on input-resolution failures, 400 on malformed request body, 500 on assembler exceptions.
+
+### What the assembler enforces
+
+- Defensive re-validation of `storyboard` through `validateStoryboard`, so a tampered or skipped-validation body cannot ship a structurally invalid board to the GPU worker. Failures come back as `storyboard: <validator error>` so they are distinguishable from ref-resolution errors.
+- Every slot in `storyboard.use_characters` must have a matching `characterRefs[slot]` entry with a non-empty `name` and at least one training image. Missing slots fail loudly rather than ship a half-cast bundle the GPU side would silently skip identity on.
+- Each `TrainingImage` resolves through R2 (when `key`) or base64 (when `dataUrl`); errors name the offending slot, training image index, and the underlying cause (R2 miss, bad data URL).
+- Portrait defaults to `trainingImages[0]` when omitted, matching the GPU side's project-bootstrap behavior.
+
+### Code
+
+- `src/tar-emit.ts`: new. Pure POSIX ustar emitter, ~150 lines, no dep. Filename limit 100 bytes (the bundle's paths max out around 30); regular files only. Throws on empty / too-long names.
+- `src/bundle-assembler.ts`: new. `assembleBundle(env, args)` dispatcher plus exported pure helpers `safeCharFilename`, `detectImageExt`, `decodeDataUrl`. The dispatcher resolves images, builds the file list, calls `emitTar`, gzips via `CompressionStream("gzip")`, and `R2.put`s the bundle.
+- `tests/tar-emit.test.ts`: new. 14 tests, including a round-trip through a minimal in-test ustar parser. Verifies magic bytes, version, typeflag, checksum, 512-byte padding, end-of-archive marker, multi-file order, binary content fidelity, filename length limits, mode/mtime preservation.
+- `tests/bundle-assembler.test.ts`: new. 27 tests covering the pure helpers (safeCharFilename byte-for-byte vs the Python convention, image format sniffing, data URL decoding) and the dispatcher pipeline using an in-memory R2 stub. Bundles unpack via `node:zlib.gunzipSync` plus the in-test tar parser to verify the file layout matches the GPU worker contract.
+- `src/index.ts`: two new routes (`POST /api/storyboard/character-ref` and `POST /api/storyboard/bundle`) registered after `/api/storyboard/plan`; two new handlers `handleCharacterRefUpload` and `handleStoryboardBundle` in a v0.31.0 section between `/api/storyboard/plan` and "Chat (text generation, multimodal in)".
+- `package.json`: 0.30.0 -> 0.31.0.
+
+Tests: 310/310 (269 existing plus 14 tar-emit plus 27 bundle-assembler). Typecheck clean.
+
 ## v0.30.0
 
 Storyboard planner UI at `/planner.html`. Hydrates the model picker from `GET /api/storyboard/models`, takes a brief plus up to four character entries (slots A through D), POSTs to `/api/storyboard/plan`, and renders the validated JSON + bundle-ready YAML on success or the validator errors plus the raw model output on failure. One-click "re-prompt with errors" button appends the error list to the brief and re-submits. Frontend-only addition; no backend change, no new binding, no new runtime dep.

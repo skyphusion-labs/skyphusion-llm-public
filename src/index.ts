@@ -35,6 +35,7 @@ import { planStoryboard, type PlannerCharacter } from "./planner";
 import { findPlanningModel, PLANNING_MODELS } from "./planner-catalog";
 import { serializeStoryboardYaml } from "./planner-yaml";
 import type { SlotId } from "./storyboard-validate";
+import { assembleBundle, type TrainingImage } from "./bundle-assembler";
 import { callWorkersAIStream } from "./providers/workers-ai";
 import { callOpenAIStream } from "./providers/openai";
 import { callGemini, callGeminiStream } from "./providers/google";
@@ -298,6 +299,22 @@ export default {
     // validates against the storyboard-validate schema, returns JSON + YAML.
     if (url.pathname === "/api/storyboard/plan" && request.method === "POST") {
       return handleStoryboardPlan(request, env);
+    }
+    // v0.31.0: stage one character reference image. Returns the R2 key so
+    // multiple images can be referenced from /api/storyboard/bundle without
+    // base64-inflating the bundle request body.
+    if (
+      url.pathname === "/api/storyboard/character-ref" &&
+      request.method === "POST"
+    ) {
+      return handleCharacterRefUpload(request, env);
+    }
+    // v0.31.0: assemble a bundle. Takes a validated storyboard + per-slot
+    // character refs (either R2 keys from /api/storyboard/character-ref or
+    // inline data URLs), produces the .tar.gz the GPU worker pulls, stages
+    // it to R2 at bundles/<projectName>.tar.gz, returns the key + size.
+    if (url.pathname === "/api/storyboard/bundle" && request.method === "POST") {
+      return handleStoryboardBundle(request, env);
     }
     if (url.pathname === "/api/history" && request.method === "GET") {
       return handleHistoryList(request, env);
@@ -589,6 +606,124 @@ async function handleStoryboardPlan(request: Request, env: Env): Promise<Respons
     provider: result.provider,
     model: result.model,
     logId: result.logId,
+    user: userEmail,
+  });
+}
+
+// ---------- /api/storyboard/character-ref (v0.31.0) ----------
+//
+// Upload one character reference image (PNG/JPEG/WEBP), get back an R2
+// key you can pass to POST /api/storyboard/bundle. Body is the raw binary;
+// the Content-Type header determines the stored MIME and the inner filename
+// extension. Reuses the existing r2Put helper so the staged object shows up
+// in R2 under `in/<uuid>.<ext>` with the user's email on customMetadata, and
+// is deletable via the same artifact-cleanup paths that already exist.
+
+async function handleCharacterRefUpload(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const mime = (request.headers.get("content-type") || "").toLowerCase();
+  if (!/^image\/(png|jpe?g|webp)$/i.test(mime)) {
+    return json(
+      {
+        error:
+          "content-type must be image/png, image/jpeg, or image/webp (got " +
+          (mime || "<missing>") +
+          ")",
+      },
+      { status: 400 },
+    );
+  }
+  const buf = await request.arrayBuffer();
+  if (buf.byteLength === 0) {
+    return json({ error: "empty request body" }, { status: 400 });
+  }
+  // 16 MB cap per ref: more than enough headroom for a typical SDXL-sized
+  // PNG portrait (~3 to 6 MB), under the Worker memory ceiling for a
+  // bundle that aggregates many of these.
+  if (buf.byteLength > 16 * 1024 * 1024) {
+    return json(
+      { error: "image too large (16 MB max per ref)" },
+      { status: 413 },
+    );
+  }
+  const bytes = new Uint8Array(buf);
+  const key = await r2Put(env, "in", mime, bytes, userEmail);
+  return json({ key, mime, size: bytes.length, user: userEmail });
+}
+
+// ---------- /api/storyboard/bundle (v0.31.0) ----------
+//
+// Assemble the .tar.gz the vivijure-serverless GPU worker pulls. Body is
+// JSON: { storyboard, characterRefs, startImage? }. Each character ref
+// supplies its training image set as either R2 keys (preferred for size)
+// or inline data URLs (browser convenience). The assembler writes the
+// resulting bundle to R2 at bundles/<projectName>.tar.gz and returns the
+// key + size + file count.
+
+interface StoryboardBundleRequest {
+  storyboard?: unknown;
+  characterRefs?: unknown;
+  startImage?: unknown;
+}
+
+async function handleStoryboardBundle(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+
+  let body: StoryboardBundleRequest;
+  try {
+    body = await request.json<StoryboardBundleRequest>();
+  } catch {
+    return json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  if (!body.storyboard || typeof body.storyboard !== "object") {
+    return json(
+      { error: "storyboard is required (object; pass the validated value from /api/storyboard/plan)" },
+      { status: 400 },
+    );
+  }
+  if (
+    !body.characterRefs ||
+    typeof body.characterRefs !== "object" ||
+    Array.isArray(body.characterRefs)
+  ) {
+    return json(
+      { error: "characterRefs is required (object, slot -> CharacterRef)" },
+      { status: 400 },
+    );
+  }
+
+  let result;
+  try {
+    result = await assembleBundle(env, {
+      storyboard: body.storyboard as Parameters<typeof assembleBundle>[1]["storyboard"],
+      characterRefs:
+        body.characterRefs as Parameters<typeof assembleBundle>[1]["characterRefs"],
+      startImage: body.startImage as TrainingImage | undefined,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return json(
+      { error: `bundle assembly threw: ${message}` },
+      { status: 500 },
+    );
+  }
+
+  if (!result.ok) {
+    // Validation / input-resolution failures stay 200 with ok:false so the
+    // UI can show the errors next to the form and let the user fix them
+    // without treating the API call itself as broken (matches the
+    // /api/storyboard/plan response-semantics matrix).
+    return json(
+      { ok: false, errors: result.errors, user: userEmail },
+      { status: 200 },
+    );
+  }
+  return json({
+    ok: true,
+    bundleKey: result.bundleKey,
+    sizeBytes: result.sizeBytes,
+    fileCount: result.fileCount,
     user: userEmail,
   });
 }

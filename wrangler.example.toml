@@ -23,6 +23,19 @@ database_id = "PLACEHOLDER_RUN_wrangler_d1_create_THEN_PASTE_HERE"
 binding = "R2"
 bucket_name = "skyphusion-llm-public"
 
+# v0.39.1: separate bucket for storyboard / render artifacts. The
+# vivijure-serverless GPU worker writes bundles, renders, and project
+# state tarballs to whatever bucket its own R2_BUCKET env var names;
+# this binding lets the Worker read them back through /api/artifact
+# and the /api/storyboard/* routes. Keeps the chat-side artifacts on
+# `R2` untouched. Point both bindings at the same bucket if you do
+# not want the split.
+# Create with:
+#   npx wrangler r2 bucket create skyphusion-llm-renders
+[[r2_buckets]]
+binding = "R2_RENDERS"
+bucket_name = "skyphusion-llm-renders"
+
 # Vectorize index for RAG document embeddings. 768 dimensions matches
 # @cf/baai/bge-base-en-v1.5; cosine similarity.
 # Create with:

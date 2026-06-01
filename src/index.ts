@@ -22,6 +22,7 @@ import type { ProviderStreamEvent } from "./parsers/types";
 import type { ModelType, Provider, ModelEntry } from "./models";
 import { MODELS } from "./models";
 import type { Env } from "./env";
+import { isRendersKey } from "./r2-routing";
 import { parseDataUrl, base64ToBytes, bytesToBase64, extFromMime } from "./utils";
 import { aiRun, aiLogId } from "./ai-binding";
 import { extractOutput, extractUsage, detectProviderFailure, extractProxiedImageUrl } from "./output-extract";
@@ -224,6 +225,37 @@ async function r2Put(env: Env, prefix: "in" | "out", mime: string, bytes: Uint8A
     customMetadata: { user_email: userEmail },
   });
   return key;
+}
+
+// v0.39.1: storyboard-side put. The vivijure-serverless GPU worker
+// reads + writes a separate bucket (env.R2_RENDERS) for bundles, render
+// outputs, and project state. Character refs staged from the planner UI
+// must land in that bucket so the bundle assembler can resolve them by
+// key without a cross-bucket copy. Keys use the `character-refs/`
+// prefix so `pickArtifactBucket` (and a future operator looking at the
+// bucket directly) can tell at a glance what they are.
+async function r2RendersPut(
+  env: Env,
+  mime: string,
+  bytes: Uint8Array,
+  userEmail: string,
+): Promise<string> {
+  const key = `character-refs/${crypto.randomUUID()}.${extFromMime(mime)}`;
+  await env.R2_RENDERS.put(key, bytes, {
+    httpMetadata: { contentType: mime },
+    customMetadata: { user_email: userEmail },
+  });
+  return key;
+}
+
+// v0.39.1: which R2 bucket holds a given artifact key. Storyboard /
+// render keys (bundles, renders, projects, staged character refs) live
+// in R2_RENDERS; everything else (chat input + output artifacts, ZIP
+// exports, etc.) stays on R2. The pure prefix matcher lives in
+// src/r2-routing.ts so it can be unit-tested without importing this
+// file (and its cloudflare:workers dependency) under the node pool.
+function pickArtifactBucket(env: Env, key: string): R2Bucket {
+  return isRendersKey(key) ? env.R2_RENDERS : env.R2;
 }
 
 // Streaming variant: pipes a ReadableStream directly into R2 without
@@ -698,7 +730,13 @@ async function handleCharacterRefUpload(request: Request, env: Env): Promise<Res
     );
   }
   const bytes = new Uint8Array(buf);
-  const key = await r2Put(env, "in", mime, bytes, userEmail);
+  // v0.39.1: write to the renders bucket (where the bundle assembler
+  // reads from) under a `character-refs/` prefix instead of the chat-
+  // shared `in/` prefix in env.R2. A pre-0.39.1 client may have a key
+  // returned from the old code path; that key references env.R2 and
+  // will not resolve through env.R2_RENDERS. Re-upload via this route
+  // produces a fresh `character-refs/<uuid>` key.
+  const key = await r2RendersPut(env, mime, bytes, userEmail);
   return json({ key, mime, size: bytes.length, user: userEmail });
 }
 
@@ -1235,7 +1273,10 @@ async function handleRenderRowDelete(
           + " reference this output_key; artifact left on R2";
       } else {
         try {
-          await env.R2.delete(row.output_key);
+          // v0.39.1: row.output_key is always a `renders/<...>.mp4` key,
+          // which lives in R2_RENDERS. Pre-0.39.1 this called env.R2 and
+          // the delete silently no-op'd against the wrong bucket.
+          await env.R2_RENDERS.delete(row.output_key);
           artifactDeleted = true;
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -4594,7 +4635,11 @@ async function handleDiscordImport(request: Request, env: Env, projectId: number
 
 async function handleArtifact(request: Request, env: Env, key: string): Promise<Response> {
   const userEmail = getUserEmail(request);
-  const obj = await env.R2.get(key);
+  // v0.39.1: route storyboard / render keys to env.R2_RENDERS; everything
+  // else (chat input + output artifacts) stays on env.R2. See
+  // pickArtifactBucket / isRendersKey above.
+  const bucket = pickArtifactBucket(env, key);
+  const obj = await bucket.get(key);
   if (!obj) return new Response("Not Found", { status: 404 });
 
   // Authorization: only the user who created the artifact may fetch it.

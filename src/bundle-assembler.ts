@@ -130,7 +130,10 @@ async function resolveImage(
     return { bytes, ext: detectImageExt(bytes) };
   }
   if (img.key) {
-    const obj = await env.R2.get(img.key);
+    // v0.39.1: staged character refs live in R2_RENDERS (the bucket the
+    // GPU worker also reads + writes); this used to read env.R2 and miss
+    // refs uploaded via the new /api/storyboard/character-ref path.
+    const obj = await env.R2_RENDERS.get(img.key);
     if (!obj) return { error: `${label}: R2 object not found at key "${img.key}"` };
     const bytes = new Uint8Array(await obj.arrayBuffer());
     return { bytes, ext: detectImageExt(bytes) };
@@ -289,7 +292,10 @@ export async function assembleBundle(
   const tarBytes = emitTar(files);
   const gz = await gzipBytes(tarBytes);
   const bundleKey = `bundles/${storyboard.projectName}.tar.gz`;
-  await env.R2.put(bundleKey, gz, {
+  // v0.39.1: bundles land in R2_RENDERS so the GPU worker (which reads
+  // from its own R2_BUCKET) sees them. Pre-0.39.1 wrote to env.R2 and
+  // the GPU could only pull bundles after a manual copy between buckets.
+  await env.R2_RENDERS.put(bundleKey, gz, {
     httpMetadata: { contentType: "application/gzip" },
     customMetadata: { source: "skyphusion-planner" },
   });

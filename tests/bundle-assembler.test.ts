@@ -78,38 +78,41 @@ function ref(name: string, prompt: string, n = 8): CharacterRef {
 }
 
 // In-memory R2 stub. Implements the subset of R2Bucket the assembler uses.
+// v0.39.1: assembler now reads staged refs from env.R2_RENDERS and writes
+// bundles to env.R2_RENDERS too. Stub only that binding; env.R2 stays
+// undefined so a regression that re-introduces an env.R2 call here would
+// blow up immediately with a clear error.
 function makeStubEnv() {
   const refs = new Map<string, Uint8Array>();
   const bundles = new Map<string, { bytes: Uint8Array; mime: string }>();
-  const env = {
-    R2: {
-      get: async (key: string) => {
-        const bytes = refs.get(key);
-        if (!bytes) return null;
-        return {
-          arrayBuffer: async () => {
-            const buf = new ArrayBuffer(bytes.length);
-            new Uint8Array(buf).set(bytes);
-            return buf;
-          },
-        };
-      },
-      put: async (
-        key: string,
-        value: Uint8Array | ArrayBuffer | string,
-        opts?: { httpMetadata?: { contentType?: string } },
-      ) => {
-        const bytes =
-          value instanceof Uint8Array
-            ? value
-            : value instanceof ArrayBuffer
-              ? new Uint8Array(value)
-              : new TextEncoder().encode(value as string);
-        bundles.set(key, { bytes, mime: opts?.httpMetadata?.contentType ?? "" });
-        return { key };
-      },
+  const bucket = {
+    get: async (key: string) => {
+      const bytes = refs.get(key);
+      if (!bytes) return null;
+      return {
+        arrayBuffer: async () => {
+          const buf = new ArrayBuffer(bytes.length);
+          new Uint8Array(buf).set(bytes);
+          return buf;
+        },
+      };
     },
-  } as unknown as Env;
+    put: async (
+      key: string,
+      value: Uint8Array | ArrayBuffer | string,
+      opts?: { httpMetadata?: { contentType?: string } },
+    ) => {
+      const bytes =
+        value instanceof Uint8Array
+          ? value
+          : value instanceof ArrayBuffer
+            ? new Uint8Array(value)
+            : new TextEncoder().encode(value as string);
+      bundles.set(key, { bytes, mime: opts?.httpMetadata?.contentType ?? "" });
+      return { key };
+    },
+  };
+  const env = { R2_RENDERS: bucket } as unknown as Env;
   return { env, refs, bundles };
 }
 

@@ -1,5 +1,46 @@
 # Changelog
 
+## v0.39.1
+
+Separate R2 binding for storyboard / render artifacts (`R2_RENDERS`). Fixes the 404 on `/api/artifact/renders/...` and `/api/artifact/bundles/...` URLs: the GPU side writes to its own R2 bucket (default `vivijure` per the vivijure-serverless docs), the Worker was only bound to the chat-side bucket (`skyphusion-llm`), so even when D1 had the right key the lookup hit the wrong bucket and returned 404.
+
+### Why
+
+v0.39.0 wired the keyframes column and the planner UI, but the Worker still served every `/api/artifact` GET through the chat bucket. The render history list showed thumbnails the browser then 404'd on, the silent MP4 download link was dead, and the bundle assembler had also been writing bundles into the chat bucket where the GPU could not reach them (the user worked around it by manual bundle staging into `vivijure` and submitting via the "use bundle key..." path; that workaround should no longer be needed).
+
+The chat side of R2 stays on the existing binding so nothing in `/api/chat` / attachments / generated images / ZIP exports changes.
+
+### Routing rule
+
+Pure prefix matcher, lives in `src/r2-routing.ts`:
+
+| Prefix | Bucket | What it is |
+|---|---|---|
+| `renders/` | `R2_RENDERS` | silent MP4 + SDXL keyframes the GPU writes |
+| `bundles/` | `R2_RENDERS` | assembled project bundles the Worker stages, the GPU pulls |
+| `projects/` | `R2_RENDERS` | per-project state tarball the GPU writes at COMPLETED |
+| `character-refs/` | `R2_RENDERS` | character ref images staged from the planner UI |
+| anything else | `R2` | chat input + output artifacts (`in/`, `out/`, `zip/`, ...) |
+
+### Behavior changes
+
+- **`POST /api/storyboard/character-ref`** now writes to `R2_RENDERS` under a `character-refs/<uuid>.<ext>` prefix instead of the chat-shared `in/<uuid>` prefix. A client that staged refs against v0.39.0 will need to re-upload them; the old keys reference the wrong bucket and return 404 from the bundle assembler. (No production data depends on this; the rename is for visual / operational clarity in the R2 dashboard.)
+- **`POST /api/storyboard/bundle`** writes the bundle to `R2_RENDERS`. The GPU side already reads from this bucket (`R2_BUCKET=vivijure` matches `bucket_name = "vivijure"`); no GPU-side change needed.
+- **`DELETE /api/storyboard/renders/<id>?artifact=true`** now deletes the silent MP4 from `R2_RENDERS` instead of the chat bucket (where the object never existed; the delete was a silent no-op).
+- **`GET /api/artifact/<key>`** routes by prefix. Storyboard keys go to `R2_RENDERS`; chat keys stay on `R2`. Ownership check (`customMetadata.user_email === userEmail`) is unchanged; a renders bucket object uploaded by a pre-0.4.0 GPU worker (no `user_email` stamped) will 403 even after this fix. Either re-render with vivijure-serverless 0.4.0+ (which stamps the metadata) or set the customMetadata manually.
+
+### Files
+
+- `wrangler.toml`, `wrangler.example.toml`: second `[[r2_buckets]]` for `R2_RENDERS`. The real config points it at `vivijure`; the example points at `skyphusion-llm-renders` (a fresh bucket name to avoid collisions in a new deployment).
+- `src/env.ts`: `R2_RENDERS: R2Bucket` added.
+- `src/r2-routing.ts` (new): `isRendersKey(key)` pure helper.
+- `src/index.ts`: `r2RendersPut` helper for character-ref uploads; `pickArtifactBucket(env, key)` selector; `handleArtifact` / `handleCharacterRefUpload` / `handleRenderRowDelete` updated.
+- `src/bundle-assembler.ts`: `resolveImage`'s `env.R2.get` and the final `env.R2.put` of the bundle both moved to `env.R2_RENDERS`.
+- `tests/renders-bucket.test.ts` (new): 4 cases covering prefix anchoring, empty input, partial matches.
+- `tests/bundle-assembler.test.ts`: stub env now exposes `R2_RENDERS` instead of `R2` so a regression that re-introduces an `env.R2` call surfaces immediately.
+
+Tests 349/349 (345 prior + 4 new). Typecheck clean. Migration: only redeploy, no D1 change, no R2 data migration; existing renders rows in D1 keep working because their keys were always storyboard-prefixed and now resolve to the right bucket. Pre-existing chat artifacts in `R2` keep working because the matcher leaves their prefixes alone.
+
 ## v0.39.0
 
 SDXL keyframe thumbnails on completed history rows. The GPU side (vivijure-serverless 0.4.0+) uploads each scene's keyframe PNG to R2 at COMPLETED, returns the list in its job-output envelope, and the Worker mirrors them on the renders row as a JSON column. When the user expands a row that has keyframes, the planner shows a horizontal thumbnail strip below the action buttons, one thumb per shot, each opening the full PNG via /api/artifact in a new tab.

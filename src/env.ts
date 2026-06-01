@@ -16,6 +16,13 @@ export interface Env {
   AI: Ai;
   DB: D1Database;
   R2: R2Bucket;
+  // v0.39.1: separate bucket for storyboard / render artifacts (bundles,
+  // silent MP4s, SDXL keyframes, project state tarballs, staged character
+  // refs). The vivijure-serverless GPU worker reads + writes this bucket
+  // via its own R2_BUCKET env var; the Worker uses this binding so chat-
+  // side R2 (`R2`) stays untouched. Point both bindings at the same
+  // bucket in wrangler.toml if you don't want the split.
+  R2_RENDERS: R2Bucket;
   VEC: VectorizeIndex;
   ASSETS: Fetcher;
   GATEWAY_ID: string;

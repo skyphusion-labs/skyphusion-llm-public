@@ -236,6 +236,10 @@
       <p class="planner-stage-hint">runs validator + scene shape checks + cast readiness + bundle / audio existence. errors gate the bundle button; warnings pass through.</p>
       <div class="planner-preflight-toolbar">
         <button id="planner-preflight-run" type="button" class="planner-secondary">run preflight</button>
+        <label class="planner-preflight-auto-label">
+          <input id="planner-preflight-auto" type="checkbox" checked />
+          auto-run on edit
+        </label>
         <span id="planner-preflight-counts" class="planner-status"></span>
       </div>
       <ul id="planner-preflight-issues" class="planner-preflight-issues"></ul>

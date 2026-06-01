@@ -175,6 +175,9 @@ function collectPlanFormState() {
   return {
     modelId: modelEl ? modelEl.value : "",
     brief: $("#planner-brief").value,
+    // v0.56.0: persist the auto-preflight toggle so a user who turned
+    // it off keeps it off across sessions.
+    preflightAutoEnabled,
     cast: SLOT_IDS.map((slot) => {
       const row = document.querySelector('.planner-cast-row[data-slot="' + slot + '"]');
       if (!row) return { slot, checked: false, name: "", bible: "" };
@@ -353,6 +356,13 @@ function restoreHistoryFilters(saved) {
 
 function restorePlanForm(saved) {
   if (typeof saved.brief === "string") $("#planner-brief").value = saved.brief;
+  // v0.56.0: restore the auto-preflight toggle. Default-on for users
+  // who pre-date the toggle (no field in their stash).
+  if (typeof saved.preflightAutoEnabled === "boolean") {
+    preflightAutoEnabled = saved.preflightAutoEnabled;
+    const el = $("#planner-preflight-auto");
+    if (el) el.checked = preflightAutoEnabled;
+  }
   if (Array.isArray(saved.cast)) {
     for (const entry of saved.cast) {
       const row = document.querySelector('.planner-cast-row[data-slot="' + entry.slot + '"]');
@@ -584,6 +594,9 @@ function bindSlotToCast(slot, castId) {
   bible.readOnly = true;
   row.classList.add("planner-cast-row-bound");
   persistSoon();
+  // v0.56.0: binding changes affect preflight (a slot's readiness
+  // check resolves through the cast catalog).
+  schedulePreflight();
 }
 
 function unbindSlot(slot) {
@@ -599,6 +612,7 @@ function unbindSlot(slot) {
   bible.disabled = !checkInput.checked;
   row.classList.remove("planner-cast-row-bound");
   persistSoon();
+  schedulePreflight();
 }
 
 // Apply restored bindings after the cast catalog is available. Called
@@ -739,6 +753,15 @@ function collectCast() {
 
 let preflightLastResult = null;
 let preflightRunning = false;
+// v0.56.0: debounce + in-flight rerun queue. schedulePreflight is
+// called from every edit hook (scene editor, refine success, snap,
+// audio bed change). The debounce coalesces rapid edits; the
+// rerunQueued flag handles "user kept editing while preflight was
+// in flight" by re-firing on the current run's completion.
+let preflightDebounceTimer = null;
+let preflightRerunQueued = false;
+const PREFLIGHT_DEBOUNCE_MS = 600;
+let preflightAutoEnabled = true;
 
 function setPreflightStatus(text, kind) {
   const el = $("#planner-preflight-status");
@@ -795,9 +818,30 @@ function preflightBlocksBundle() {
   return !!(preflightLastResult && preflightLastResult.counts && preflightLastResult.counts.error > 0);
 }
 
+function schedulePreflight() {
+  if (!preflightAutoEnabled) return;
+  if (!planState.storyboard) return;
+  if (preflightDebounceTimer) clearTimeout(preflightDebounceTimer);
+  preflightDebounceTimer = setTimeout(() => {
+    preflightDebounceTimer = null;
+    // If a run is in flight, queue a re-run; the current one will
+    // pick up the queued flag on completion and fire again.
+    if (preflightRunning) {
+      preflightRerunQueued = true;
+      return;
+    }
+    runPreflight();
+  }, PREFLIGHT_DEBOUNCE_MS);
+}
+
 async function runPreflight() {
   if (!planState.storyboard) return;
-  if (preflightRunning) return;
+  if (preflightRunning) {
+    // Caller is bypassing the debounce; mark rerun and bail so the
+    // current invocation finishes cleanly.
+    preflightRerunQueued = true;
+    return;
+  }
   preflightRunning = true;
   $("#planner-preflight-run").disabled = true;
   setPreflightStatus("running...", "loading");
@@ -841,6 +885,12 @@ async function runPreflight() {
   } finally {
     preflightRunning = false;
     $("#planner-preflight-run").disabled = false;
+    // v0.56.0: if more edits arrived while we were running, fire
+    // one more pass so the panel reflects the latest state.
+    if (preflightRerunQueued) {
+      preflightRerunQueued = false;
+      schedulePreflight();
+    }
   }
 }
 
@@ -1252,6 +1302,9 @@ async function sendRefine() {
     renderRefineTurns();
     setRefineStatus("ok", "success");
     persistSoon();
+    // v0.56.0: refinement rewrites the storyboard; rerun preflight so
+    // the panel reflects the new shape without the user clicking.
+    schedulePreflight();
   } else {
     setRefineStatus("unexpected response shape", "error");
   }
@@ -1342,6 +1395,8 @@ function clearAudio() {
   planState.audioSourceLabel = null;
   renderAudioCurrent();
   persistSoon();
+  // v0.56.0: audio key state affects preflight's audio HEAD warning.
+  schedulePreflight();
 }
 
 async function uploadAudioFile(file) {
@@ -1359,6 +1414,7 @@ async function uploadAudioFile(file) {
     planState.audioSourceLabel = "uploaded " + file.name;
     renderAudioCurrent();
     persistSoon();
+    schedulePreflight();
   } catch (err) {
     window.alert("audio upload failed: " + err.message);
   }
@@ -1428,6 +1484,8 @@ async function pollMusicJob() {
       setMusicGenStatus("done.", "success");
       $("#planner-music-gen").disabled = false;
       persistSoon();
+      // v0.56.0: audio bed change triggers preflight HEAD re-check.
+      schedulePreflight();
       return;
     }
     if (data.status === "failed") {
@@ -1557,6 +1615,9 @@ function onSceneChanged() {
   refreshSceneDirtyBadge();
   scheduleYamlRefresh();
   persistSoon();
+  // v0.56.0: auto-preflight on edit. Debounced; in-flight runs get
+  // a re-queue so the panel stays current as the user keeps editing.
+  schedulePreflight();
 }
 
 function deleteScene(idx) {
@@ -4237,6 +4298,15 @@ document.addEventListener("DOMContentLoaded", () => {
   // v0.54.0: preflight run button.
   const preflightBtn = $("#planner-preflight-run");
   if (preflightBtn) preflightBtn.addEventListener("click", runPreflight);
+  // v0.56.0: auto-preflight toggle. Persists via the form stash.
+  const preflightAuto = $("#planner-preflight-auto");
+  if (preflightAuto) preflightAuto.addEventListener("change", () => {
+    preflightAutoEnabled = !!preflightAuto.checked;
+    persistSoon();
+    // Turn-on triggers an immediate run so the panel catches up to any
+    // edits the user made while auto was off.
+    if (preflightAutoEnabled) schedulePreflight();
+  });
   const bpmEl = $("#planner-bpm");
   if (bpmEl) bpmEl.addEventListener("change", () => {
     const v = Number(bpmEl.value);

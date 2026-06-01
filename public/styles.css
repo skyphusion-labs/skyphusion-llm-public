@@ -3758,3 +3758,16 @@ textarea:focus {
 .planner-preflight-msg {
   color: var(--fg);
 }
+
+/* v0.56.0: auto-preflight toggle label. */
+
+.planner-preflight-auto-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+
+.planner-preflight-auto-label input[type="checkbox"] { margin: 0; }

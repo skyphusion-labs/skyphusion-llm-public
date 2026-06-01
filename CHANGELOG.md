@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.56.0
+
+Auto-preflight on edit. The v0.54.0 preflight panel runs on a successful plan + on the manual "run preflight" button. v0.56.0 wires it into every edit path that affects the storyboard, cast bindings, or audio bed so the panel stays current without the user clicking.
+
+### Edit paths that auto-trigger preflight
+
+- Every scene-editor edit (prompt, target_seconds, act, character_slots, delete) via `onSceneChanged`
+- Scene snap-to-beats (`snapAllScenes`)
+- Refinement chat success (a refine rewrites the storyboard)
+- Cast binding changes (`bindSlotToCast` / `unbindSlot` — a binding affects the cast readiness check)
+- Audio bed set / clear / MiniMax completion (audio key affects the audio HEAD warning)
+
+### Debounce + in-flight rerun queue
+
+`schedulePreflight()` debounces at 600ms so rapid edits coalesce into one run. If a run is already in flight when a new fire arrives, a `preflightRerunQueued` flag is set; when the current run completes, it schedules another. This avoids both the "ten edits → ten preflights" spam case AND the "edited during preflight → stale panel" case.
+
+### Toggle + persistence
+
+A new "auto-run on edit" checkbox sits next to the "run preflight" button in the toolbar. Default-on. Persists via the existing planForm stash; turning off keeps the manual run path working. Turning it back on triggers an immediate run so the panel catches up to whatever edits the user made while auto was off.
+
+### No backend / schema change
+
+Pure frontend. Deploy is just `npm run deploy`; no D1 migration.
+
+### Tests
+
+No new vitest tests — the debounce + rerun logic is DOM-glue + setTimeout, which the existing Node-only test pool doesn't model. The existing 444 tests still pass; manual smoke covered.
+
+### What is NOT in this PR
+
+- "Preflight pending..." indicator while debounce is waiting. The current status line transitions clear → running → ok, but during the debounce window it shows whatever the previous run reported, which can lag the actual storyboard state by up to 600ms.
+- Per-edit-type preflight invalidation (e.g., a prompt edit only needs the prompt-length warning re-checked, not the cast readiness). The current implementation re-runs the full check; small enough to not matter at typical storyboard sizes.
+
 ## v0.55.0
 
 Pin render history rows to storyboard projects. Adds an optional `project_id` column to `renders` (FK to `storyboard_projects.id`), threads it through the submit handlers + `insertRender`, and teaches the planner's history list to filter by the active project. Finalize child rows inherit the parent preview row's `project_id` so a v0.42.0 preview + finalize pair stay grouped under the same project filter.

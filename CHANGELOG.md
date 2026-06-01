@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.63.0
+
+UX hot-fix: the render-result panel at the top of the planner sticks around after a render reaches a terminal state (COMPLETED / FAILED / CANCELLED / TIMED_OUT), and because the in-flight `jobId` is persisted to localStorage, it survives a page reload too. So a render that died days ago can still show "job 9f295c7b... status: FAILED" on top of the page after several successful renders have happened since. The history list below already shows all rows; the top panel duplicating a stale failed row is just visual noise.
+
+### Frontend
+
+- `public/planner.html`: new `#planner-render-dismiss` button next to "cancel job" in the render-result panel actions row. Hidden by default.
+- `public/planner.js`: `setJobStatusBadge` shows the dismiss button only when the status is terminal (and the cancel button only when it is in-flight, mirroring the existing rule). `dismissRenderResult()` closes any open SSE stream / poll timer / tick timer, clears `renderState.jobId` + `currentProject` + `currentLabel` + `startedAt`, hides the result / log / output / error / progress sub-panels, and calls `savePersistedState()` so the next reload starts clean.
+
+In-flight jobs are not dismissable - the user has to click "cancel job" first - so a click on dismiss can never accidentally orphan a running RunPod job.
+
+464/464 still passing.
+
 ## v0.62.0
 
 Second hot-fix surfaced during the end-to-end smoke test: MiniMax music-2.6 returns AI Gateway error 7003 ("User Input Error") when the `lyrics` field is empty or missing, even for instrumental requests. The planner's music-gen UI submits with no `system_prompt`, so every "generate music" click was failing seconds after submit.

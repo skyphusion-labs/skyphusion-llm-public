@@ -423,6 +423,12 @@
         </div>
         <div class="planner-actions">
           <button id="planner-render-cancel" type="button" class="planner-render-cancel" hidden>cancel job</button>
+          <!-- v0.63.0: dismiss button visible only after the render reaches a
+               terminal state (COMPLETED / FAILED / CANCELLED / TIMED_OUT).
+               Clears the result panel + renderState + the persisted snapshot
+               so a stale failed render does not stick around the next time
+               the planner page loads. -->
+          <button id="planner-render-dismiss" type="button" class="planner-render-cancel" hidden title="hide this result and clear it from the saved state">dismiss</button>
         </div>
         <div id="planner-render-log-wrap" class="planner-render-log-wrap" hidden>
           <h4>render log</h4>

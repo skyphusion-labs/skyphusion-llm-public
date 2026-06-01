@@ -2943,6 +2943,46 @@ function setJobStatusBadge(status) {
   } else {
     cancelBtn.hidden = true;
   }
+  // v0.63.0: dismiss button mirrors cancel - shown only when the job is
+  // in a terminal state, so the user can hide a stale FAILED / CANCELLED
+  // banner that would otherwise stick around until the next render.
+  const dismissBtn = $("#planner-render-dismiss");
+  if (dismissBtn) {
+    const terminal =
+      status === "COMPLETED"
+      || status === "FAILED"
+      || status === "CANCELLED"
+      || status === "TIMED_OUT";
+    dismissBtn.hidden = !terminal;
+  }
+}
+
+// v0.63.0: hide the render-result panel and clear the persisted snapshot
+// so the same stale row does not reappear on the next page load. Only
+// callable from the dismiss button, which the UI gates on a terminal
+// status; in-flight jobs are not dismissable (use "cancel job" first).
+function dismissRenderResult() {
+  closeStream();
+  if (renderState.pollTimer) {
+    clearTimeout(renderState.pollTimer);
+    renderState.pollTimer = null;
+  }
+  if (renderState.tickTimer !== null) {
+    clearInterval(renderState.tickTimer);
+    renderState.tickTimer = null;
+  }
+  renderState.jobId = null;
+  renderState.streamFallbackHit = false;
+  renderState.currentProject = null;
+  renderState.currentLabel = null;
+  renderState.startedAt = null;
+  $("#planner-render-result").hidden = true;
+  $("#planner-render-log-wrap").hidden = true;
+  $("#planner-render-output").hidden = true;
+  $("#planner-render-error").hidden = true;
+  $("#planner-render-progress").hidden = true;
+  setRenderStatus("", "");
+  savePersistedState();
 }
 
 async function cancelRender() {
@@ -4509,6 +4549,8 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#planner-bundle-btn").addEventListener("click", bundleNow);
   $("#planner-render-btn").addEventListener("click", submitRender);
   $("#planner-render-cancel").addEventListener("click", cancelRender);
+  const dismissBtn = $("#planner-render-dismiss");
+  if (dismissBtn) dismissBtn.addEventListener("click", dismissRenderResult);
   $("#planner-notify-toggle").addEventListener("click", requestNotificationPermission);
   $("#planner-history-refresh").addEventListener("click", loadHistory);
   $("#planner-history-custom").addEventListener("click", promptCustomBundle);

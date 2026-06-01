@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.47.0
+
+In-page portrait generation + automated 10-image LoRA training-set generation on /cast. The v0.46.0 backend supported "save a chat-side image as portrait" via `{from_chat_artifact: key}`, but the user had to go to /, generate via chat, then come back. v0.47.0 wires both flows directly into /cast so the inner loop stays on one page.
+
+### Portrait generation
+
+Inside the portrait pane, a disclosure ("generate a portrait via chat") shows a model picker (every entry from `/api/models` with `type=="image"`, fetched on first open) plus a prompt textarea (auto-falls back to the bible if empty). The Generate button POSTs to `/api/chat` with the picked model + prompt; the returned `output_artifact.key` shows up in a preview. Accept saves it as the portrait via the existing `from_chat_artifact` path; discard throws it away (the chat row stays in the chat history regardless).
+
+### Training-set generation (10 images)
+
+A second disclosure ("generate a 10-image training set") becomes active once the character has a saved portrait. The button fetches the portrait bytes from `/api/artifact/`, downscales it to 512px on the longest edge in a `<canvas>` (FLUX 2's input cap), and fires 10 sequential `/api/chat` calls against `@cf/black-forest-labs/flux-2-dev` (the only multi-reference model in the catalog). Each call passes the portrait as `input_image_0` plus a prompt of `<pose template>. <bible>`. As each returns, the artifact is auto-saved as a training ref via `POST /api/cast/:id/refs` with `{from_chat_artifact: key}`.
+
+The 10 prompts are fixed templates covering neutral / smile / left-profile / right-profile / look-up / serious-low-angle / laughing / medium-action / contemplative-overhead / surprised, each with consistent lighting + "clean background" guidance to keep the LoRA training data uniform. Sequential (not parallel) to avoid upstream rate-limit hits at 10 simultaneous generations.
+
+The progress UI shows a 2-column grid (1/10..10/10) with each row flipping pending → running → done / fail. Total wall-time is roughly 2-4 minutes depending on model. Failures don't halt the batch; the user gets a count of saved vs failed at the end and the partially-populated ref set on the character.
+
+### Backend
+
+`POST /api/cast/:id/refs` gains the same JSON branch the portrait route already had: `{from_chat_artifact: key}` copies an env.R2 chat-side artifact into env.R2_RENDERS under `cast/<id>/refs/<uuid>.<ext>` and appends to `ref_keys_json`. Without this, the training-set generator would have to download each generated image to the browser and re-upload it as binary.
+
+No schema changes; v0.46.0 migration is sufficient.
+
+### Tests
+
+5 new vitest unit tests for `composeTrainingPrompt` (the pure helper that joins pose template + bible with the 600-char cap). 385/385 passing.
+
+### Why scope ended here
+
+Per the cast-manager direction memo, the right thing is fewer-but-deeper iterations. v0.47.0 keeps the planner unchanged (still uses its inline cast slots, doesn't read from this table yet). The planner rewiring + cast picker on the planning page is the next slice; queuing the 10-image batch as a real background job (so the user can navigate away cleanly) is a follow-up if the sequential-blocking UX proves rough.
+
 ## v0.46.0
 
 Persisted cast manager. New `/cast` page (cast.html + cast.js) plus an `/api/cast` REST surface lets a character (name, bible text, portrait, multi-image training-ref set) be drawn once and reused across every storyboard. Replaces the inline-only cast-slot model the planner had, where characters were transient form fields that vanished after each render submit.

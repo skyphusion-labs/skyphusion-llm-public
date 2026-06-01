@@ -3215,3 +3215,103 @@ textarea:focus {
 }
 
 .planner-header-nav { display: flex; gap: 16px; align-items: baseline; }
+
+/* v0.47.0: portrait + training-set generation blocks on /cast. */
+
+.cast-gen-block {
+  margin-top: 16px;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.cast-gen-block > summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--accent);
+  text-transform: lowercase;
+  user-select: none;
+}
+
+.cast-gen-block[open] > summary { margin-bottom: 12px; }
+
+.cast-gen-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 8px 0;
+}
+
+.cast-gen-grid select {
+  background: var(--bg-elev);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.cast-gen-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.cast-gen-status {
+  font-size: 12px;
+  color: var(--fg-dim);
+  font-style: italic;
+}
+
+.cast-gen-status.is-error { color: var(--error); font-style: normal; }
+
+.cast-gen-preview {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.cast-gen-preview img {
+  max-width: 256px;
+  max-height: 256px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.cast-gen-preview-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.cast-training-progress {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  font-size: 12px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+.cast-training-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+}
+
+.cast-training-row-pending { opacity: 0.6; }
+
+.cast-training-row-running { border-color: var(--accent); color: var(--accent); }
+
+.cast-training-row-done { color: var(--fg-dim); }
+
+.cast-training-row-fail { color: var(--error); border-color: var(--error); }

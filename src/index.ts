@@ -1892,7 +1892,43 @@ async function handleCastRefAdd(
   if (!Number.isInteger(id) || id <= 0) return json({ error: "invalid id" }, { status: 400 });
   const cur = await getCastById(env, id, userEmail);
   if (!cur) return json({ error: "cast not found" }, { status: 404 });
+
   const contentType = (request.headers.get("content-type") || "").toLowerCase();
+
+  // v0.47.0: JSON branch. Same shape as the portrait route's JSON branch:
+  // {from_chat_artifact: "out/<uuid>.png"} copies a chat-side image-gen
+  // artifact (env.R2) into env.R2_RENDERS under cast/<id>/refs/... and
+  // adds it to the ref set. This is the path the "generate training set"
+  // UI uses, so each of the 10 generated images becomes a ref without
+  // re-uploading bytes from the browser.
+  if (contentType.startsWith("application/json")) {
+    let body: { from_chat_artifact?: unknown };
+    try { body = await request.json(); } catch { return json({ error: "Invalid JSON" }, { status: 400 }); }
+    const srcKey = typeof body.from_chat_artifact === "string" ? body.from_chat_artifact : "";
+    if (!srcKey) return json({ error: "from_chat_artifact required" }, { status: 400 });
+    const obj = await env.R2.get(srcKey);
+    if (!obj) return json({ error: `source artifact not found: ${srcKey}` }, { status: 404 });
+    if (obj.customMetadata?.user_email !== userEmail) {
+      return json({ error: "source artifact not owned by this user" }, { status: 403 });
+    }
+    const mime = obj.httpMetadata?.contentType || "image/png";
+    if (!CAST_IMAGE_MIME_RE.test(mime)) {
+      return json({ error: `source mime ${mime} not allowed (png/jpeg/webp only)` }, { status: 400 });
+    }
+    const bytes = new Uint8Array(await obj.arrayBuffer());
+    if (bytes.length > CAST_MAX_BYTES) {
+      return json({ error: "source image too large (16 MB max)" }, { status: 413 });
+    }
+    const key = `cast/${id}/refs/${crypto.randomUUID()}.${extFromMime(mime)}`;
+    await env.R2_RENDERS.put(key, bytes, {
+      httpMetadata: { contentType: mime },
+      customMetadata: { user_email: userEmail },
+    });
+    const row = await castAddRef(env, id, userEmail, { key, mime });
+    return json({ cast: row });
+  }
+
+  // Binary upload (original path).
   if (!CAST_IMAGE_MIME_RE.test(contentType)) {
     return json(
       { error: `content-type must be image/png, image/jpeg, or image/webp (got ${contentType || "<missing>"})` },

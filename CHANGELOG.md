@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.49.0
+
+Per-scene editor between plan output and bundle. After the planner returns a validated storyboard, the user can now tweak individual scenes (prompt text, target seconds, per-shot character slots, act label) and delete unwanted shots before the bundle assembles. Edits flow into the bundle automatically since the bundle POST already uses `planState.storyboard`; the YAML preview pane refreshes via a new `/api/storyboard/yaml` route so the user sees the canonical wire format after each edit.
+
+### Frontend (`#planner-scenes`)
+
+A new section sits between `#planner-output` (the plan-result panes) and `#planner-bundle` (the upload + bundle step). Hidden until a plan resolves. For each scene in `planState.storyboard.scenes`:
+
+- shot id (read-only header) + optional act label
+- prompt textarea (mono font, 3 rows by default; this is the main edit target)
+- target seconds number input
+- act text input (empty = remove the field)
+- character_slots checkboxes, one per slot in `storyboard.use_characters` (empty = narration shot, the validator allows that)
+- delete button (confirm, then splice the scene out)
+
+Edits mutate `planState.storyboard.scenes[i]` in place; the bundle POST at submit time consumes the edited shape. A dirty badge appears in the toolbar when edits diverge from the original plan output; a "discard all edits" button restores `planState.originalStoryboard` (snapshotted on each fresh plan). Both `originalStoryboard` and the dirty state survive a tab close via the existing localStorage stash.
+
+### Backend (`POST /api/storyboard/yaml`)
+
+Pure compute route. Body `{storyboard: <json>}`; runs `validateStoryboard` then `serializeStoryboardYaml` and returns `{ok: true, yaml, storyboard}` on success. On validator failure: 400 with `{ok: false, errors: [...]}`. No D1, no R2; the frontend calls it on a 500ms debounce after each scene edit so the YAML pane stays in sync, and on a validator error it shows the message under the scene editor so the user sees why their edit broke the schema.
+
+### Tests
+
+3 new vitest tests for the storyboard yaml route helpers: validates + emits a minimal multi-scene storyboard, rejects a scene with a blanked prompt, rejects a scene referencing a slot not in `use_characters`. 393/393 passing.
+
+### What is NOT in this PR
+
+- Adding a new scene (requires a "where to insert" UX; tracked).
+- Reordering scenes (drag-and-drop is involved).
+- Per-shot regen WITH a new prompt at render-history time (current regen-shot route uses the saved storyboard prompt; surfacing a prompt override is a small backend tweak + UI for a follow-up).
+- Persistent project storyboards (the planner is still single-storyboard-per-session; a proper /projects/<slug>/storyboard surface is the bigger lift).
+
 ## v0.48.0
 
 Planner reads from the persisted cast. The /cast page (v0.46.0+) was a standalone surface up to v0.47.1: users could create characters, generate portraits, and build LoRA training sets there, but the planner still required typing the name + bible inline and re-uploading training images for every storyboard. v0.48.0 wires the two together: each plan-stage cast slot grows a "from cast" dropdown, and a picked cast member auto-fills name + bible and pre-populates the bundle stage's per-slot training-image set with the cast's portrait + ref keys.

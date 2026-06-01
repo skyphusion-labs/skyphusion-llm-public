@@ -3360,3 +3360,123 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 }
+
+/* v0.49.0: per-scene editor. */
+
+.planner-scenes-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin: 8px 0;
+}
+
+.planner-scenes-dirty {
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  text-transform: lowercase;
+}
+
+.planner-scenes-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.planner-scene-row {
+  padding: 12px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.planner-scene-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.planner-scene-head strong {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 13px;
+  color: var(--accent);
+}
+
+.planner-scene-act {
+  font-size: 11px;
+  color: var(--fg-dim);
+  text-transform: lowercase;
+}
+
+.planner-scene-delete {
+  margin-left: auto;
+  background: transparent;
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  text-transform: lowercase;
+}
+
+.planner-scene-delete:hover { color: var(--error); border-color: var(--error); }
+
+.planner-scene-row .planner-field textarea {
+  background: var(--bg);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 13px;
+}
+
+.planner-scene-row .planner-field input[type="text"],
+.planner-scene-row .planner-field input[type="number"] {
+  background: var(--bg);
+}
+
+.planner-scene-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+.planner-scene-slots {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.planner-scene-slot-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+
+.planner-scene-slot-check input[type="checkbox"]:checked + * { color: var(--fg); }
+
+.planner-secondary {
+  background: transparent;
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  text-transform: lowercase;
+}
+
+.planner-secondary:disabled { opacity: 0.4; cursor: default; }
+
+.planner-secondary:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }

@@ -101,6 +101,23 @@
       </div>
     </section>
 
+    <!-- v0.49.0: per-scene editor. Lives between plan output and bundle.
+         Mutates planState.storyboard.scenes in-place; debounce-refreshes
+         the YAML preview via POST /api/storyboard/yaml. Hidden until a
+         successful plan resolves. -->
+    <section id="planner-scenes" class="planner-stage" hidden>
+      <header class="planner-stage-header">
+        <h2 class="planner-stage-title">1b. scene editor</h2>
+        <span id="planner-scenes-status" class="planner-status"></span>
+      </header>
+      <p class="planner-stage-hint">edit prompts, durations, and per-scene cast assignments before bundling. changes flow into the bundle automatically; the YAML pane refreshes after each edit.</p>
+      <div class="planner-scenes-toolbar">
+        <button id="planner-scenes-discard" type="button" class="planner-secondary" disabled>discard all edits</button>
+        <span id="planner-scenes-dirty-badge" class="planner-scenes-dirty" hidden>edited</span>
+      </div>
+      <ol id="planner-scenes-list" class="planner-scenes-list"></ol>
+    </section>
+
     <!-- v0.33.0: bundle stage. Revealed after a successful plan. -->
     <section id="planner-bundle" class="planner-stage" hidden>
       <header class="planner-stage-header">

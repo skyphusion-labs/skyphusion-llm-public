@@ -41,6 +41,10 @@ const planState = {
   // showing the file-picker).
   castCatalog: [],
   castBindings: {},
+  // v0.49.0: snapshot of the storyboard as it came off the /api/storyboard/plan
+  // response, kept so the scene editor's "discard all edits" can roll back.
+  // null until a plan resolves.
+  originalStoryboard: null,
 };
 
 const bundleState = {
@@ -173,6 +177,9 @@ function collectPlanResultState() {
     storyboard: planState.storyboard,
     cast: planState.cast,
     yaml: $("#planner-yaml").textContent,
+    // v0.49.0: persist the pre-edit snapshot so "discard all edits" can
+    // roll back across a tab close.
+    originalStoryboard: planState.originalStoryboard,
   };
 }
 
@@ -339,6 +346,12 @@ function restorePlanResultPanel(saved) {
   if (!saved.storyboard) return;
   planState.storyboard = saved.storyboard;
   planState.cast = saved.cast || [];
+  // v0.49.0: restore the discard-edits snapshot. Older stashes that
+  // predate this field fall back to the current storyboard, which means
+  // "discard" becomes a no-op until the next plan; harmless.
+  planState.originalStoryboard = saved.originalStoryboard
+    ? JSON.parse(JSON.stringify(saved.originalStoryboard))
+    : JSON.parse(JSON.stringify(saved.storyboard));
 
   $("#planner-output").hidden = false;
   $("#planner-output-meta").textContent = "(restored from previous session)";
@@ -349,6 +362,7 @@ function restorePlanResultPanel(saved) {
   $("#planner-raw").hidden = true;
   $("#planner-json").textContent = JSON.stringify(saved.storyboard, null, 2);
   $("#planner-yaml").textContent = saved.yaml || "";
+  renderSceneEditor(saved.storyboard);
 }
 
 function restoreBundleStagePanel(savedBundle, savedPlanResult) {
@@ -661,6 +675,247 @@ function collectCast() {
   return characters;
 }
 
+// ---------- Scene editor (v0.49.0) ----------
+//
+// Mutates planState.storyboard.scenes[i] in place; the bundle stage
+// already POSTs planState.storyboard to /api/storyboard/bundle, so
+// edits flow through with no extra wiring. The YAML preview refreshes
+// via a debounced POST to /api/storyboard/yaml after each change.
+// Validation errors from that route surface inline so the user sees
+// why their edit broke the schema (e.g. blank prompt, missing slot).
+
+const SCENE_YAML_REFRESH_MS = 500;
+
+let sceneYamlRefreshTimer = null;
+let sceneYamlInflight = false;
+
+// Pure helper: produce a deep-clone of an array of scene objects.
+// Vitest covers this via the cast-db test file (the planner-side
+// scene editor depends on it for the discard-edits flow).
+function cloneScenes(scenes) {
+  return JSON.parse(JSON.stringify(scenes || []));
+}
+
+function setSceneStatus(text, kind) {
+  const el = $("#planner-scenes-status");
+  if (!el) return;
+  el.textContent = text || "";
+  el.className = "planner-status" + (kind ? " planner-" + kind : "");
+}
+
+function scenesAreDirty() {
+  if (!planState.storyboard || !planState.originalStoryboard) return false;
+  return (
+    JSON.stringify(planState.storyboard.scenes)
+    !== JSON.stringify(planState.originalStoryboard.scenes)
+  );
+}
+
+function refreshSceneDirtyBadge() {
+  const dirty = scenesAreDirty();
+  $("#planner-scenes-dirty-badge").hidden = !dirty;
+  $("#planner-scenes-discard").disabled = !dirty;
+}
+
+async function refreshYamlPreview() {
+  if (!planState.storyboard) return;
+  if (sceneYamlInflight) return;
+  sceneYamlInflight = true;
+  setSceneStatus("refreshing yaml preview...", "loading");
+  try {
+    const resp = await fetch("/api/storyboard/yaml", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ storyboard: planState.storyboard }),
+    });
+    const data = await resp.json();
+    if (resp.ok && data.ok && typeof data.yaml === "string") {
+      $("#planner-yaml").textContent = data.yaml;
+      $("#planner-json").textContent = JSON.stringify(planState.storyboard, null, 2);
+      setSceneStatus("yaml in sync", "success");
+    } else {
+      const errs = Array.isArray(data.errors) ? data.errors.join(" · ") : (data.error || "validation failed");
+      setSceneStatus("edit breaks the schema: " + errs, "error");
+    }
+  } catch (err) {
+    setSceneStatus("yaml refresh failed: " + err.message, "error");
+  } finally {
+    sceneYamlInflight = false;
+  }
+}
+
+function scheduleYamlRefresh() {
+  if (sceneYamlRefreshTimer) clearTimeout(sceneYamlRefreshTimer);
+  sceneYamlRefreshTimer = setTimeout(refreshYamlPreview, SCENE_YAML_REFRESH_MS);
+}
+
+function onSceneChanged() {
+  refreshSceneDirtyBadge();
+  scheduleYamlRefresh();
+  persistSoon();
+}
+
+function deleteScene(idx) {
+  if (!planState.storyboard) return;
+  const scenes = planState.storyboard.scenes || [];
+  if (idx < 0 || idx >= scenes.length) return;
+  const scene = scenes[idx];
+  const label = scene.id ? scene.id : "scene " + (idx + 1);
+  if (!window.confirm("delete " + label + "? this cannot be undone (but discard all edits will restore it).")) return;
+  scenes.splice(idx, 1);
+  renderSceneEditor(planState.storyboard);
+  onSceneChanged();
+}
+
+function discardSceneEdits() {
+  if (!planState.originalStoryboard) return;
+  if (!window.confirm("discard all scene edits and restore the original plan output?")) return;
+  planState.storyboard.scenes = cloneScenes(planState.originalStoryboard.scenes);
+  renderSceneEditor(planState.storyboard);
+  onSceneChanged();
+}
+
+function buildSceneRow(scene, idx, useChars) {
+  const li = document.createElement("li");
+  li.className = "planner-scene-row";
+  li.dataset.idx = String(idx);
+
+  const head = document.createElement("div");
+  head.className = "planner-scene-head";
+  const idLabel = document.createElement("strong");
+  idLabel.textContent = scene.id || "scene " + (idx + 1);
+  head.appendChild(idLabel);
+  if (scene.act) {
+    const act = document.createElement("span");
+    act.className = "planner-scene-act";
+    act.textContent = "act: " + scene.act;
+    head.appendChild(act);
+  }
+  const delBtn = document.createElement("button");
+  delBtn.type = "button";
+  delBtn.className = "planner-scene-delete";
+  delBtn.textContent = "delete";
+  delBtn.title = "remove this scene from the storyboard";
+  delBtn.addEventListener("click", () => deleteScene(idx));
+  head.appendChild(delBtn);
+  li.appendChild(head);
+
+  const promptField = document.createElement("label");
+  promptField.className = "planner-field";
+  const promptLabel = document.createElement("span");
+  promptLabel.textContent = "prompt";
+  promptField.appendChild(promptLabel);
+  const promptInput = document.createElement("textarea");
+  promptInput.rows = 3;
+  promptInput.value = scene.prompt || "";
+  promptInput.addEventListener("input", () => {
+    scene.prompt = promptInput.value;
+    onSceneChanged();
+  });
+  promptField.appendChild(promptInput);
+  li.appendChild(promptField);
+
+  const meta = document.createElement("div");
+  meta.className = "planner-scene-meta";
+
+  const secField = document.createElement("label");
+  secField.className = "planner-field";
+  const secLabel = document.createElement("span");
+  secLabel.textContent = "target seconds";
+  secField.appendChild(secLabel);
+  const secInput = document.createElement("input");
+  secInput.type = "number";
+  secInput.min = "0";
+  secInput.step = "0.5";
+  secInput.value = scene.target_seconds != null ? String(scene.target_seconds) : "";
+  secInput.addEventListener("input", () => {
+    const v = secInput.value.trim();
+    if (v === "") {
+      delete scene.target_seconds;
+    } else {
+      const n = Number(v);
+      if (Number.isFinite(n) && n >= 0) scene.target_seconds = n;
+    }
+    onSceneChanged();
+  });
+  secField.appendChild(secInput);
+  meta.appendChild(secField);
+
+  const actField = document.createElement("label");
+  actField.className = "planner-field";
+  const actLabel = document.createElement("span");
+  actLabel.textContent = "act";
+  actField.appendChild(actLabel);
+  const actInput = document.createElement("input");
+  actInput.type = "text";
+  actInput.value = scene.act || "";
+  actInput.placeholder = "(optional)";
+  actInput.addEventListener("input", () => {
+    const v = actInput.value.trim();
+    if (v === "") delete scene.act;
+    else scene.act = v;
+    onSceneChanged();
+  });
+  actField.appendChild(actInput);
+  meta.appendChild(actField);
+
+  li.appendChild(meta);
+
+  // character_slots: render a checkbox per loaded slot. Editing toggles
+  // the scene's character_slots array; empty list means "narration shot",
+  // and the validator allows that.
+  if (Array.isArray(useChars) && useChars.length > 0) {
+    const slotsField = document.createElement("div");
+    slotsField.className = "planner-field";
+    const slotsLabel = document.createElement("span");
+    slotsLabel.textContent = "character_slots (in this shot)";
+    slotsField.appendChild(slotsLabel);
+    const slotsRow = document.createElement("div");
+    slotsRow.className = "planner-scene-slots";
+    const sceneSlots = new Set(Array.isArray(scene.character_slots) ? scene.character_slots : []);
+    for (const slot of useChars) {
+      const lbl = document.createElement("label");
+      lbl.className = "planner-scene-slot-check";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = sceneSlots.has(slot);
+      cb.addEventListener("change", () => {
+        if (cb.checked) sceneSlots.add(slot);
+        else sceneSlots.delete(slot);
+        const list = Array.from(sceneSlots);
+        if (list.length === 0) delete scene.character_slots;
+        else scene.character_slots = list;
+        onSceneChanged();
+      });
+      lbl.appendChild(cb);
+      lbl.appendChild(document.createTextNode(" " + slot));
+      slotsRow.appendChild(lbl);
+    }
+    slotsField.appendChild(slotsRow);
+    li.appendChild(slotsField);
+  }
+
+  return li;
+}
+
+function renderSceneEditor(storyboard) {
+  const section = $("#planner-scenes");
+  const list = $("#planner-scenes-list");
+  if (!section || !list) return;
+  list.innerHTML = "";
+  if (!storyboard || !Array.isArray(storyboard.scenes) || storyboard.scenes.length === 0) {
+    section.hidden = true;
+    return;
+  }
+  const useChars = Array.isArray(storyboard.use_characters) ? storyboard.use_characters : [];
+  storyboard.scenes.forEach((scene, idx) => {
+    list.appendChild(buildSceneRow(scene, idx, useChars));
+  });
+  section.hidden = false;
+  refreshSceneDirtyBadge();
+  setSceneStatus("", "");
+}
+
 // ---------- Model picker hydration ----------
 
 async function loadModels() {
@@ -795,6 +1050,10 @@ function renderPlanResult(httpStatus, data, model, characters) {
     const sceneCount =
       data.storyboard && data.storyboard.scenes ? data.storyboard.scenes.length : 0;
     setStatus("planned successfully (" + sceneCount + " scenes)", "success");
+    // v0.49.0: snapshot the freshly-planned storyboard so a "discard
+    // edits" button can roll back any subsequent scene-editor mutations.
+    planState.originalStoryboard = JSON.parse(JSON.stringify(data.storyboard));
+    renderSceneEditor(data.storyboard);
     showBundleStage(data.storyboard, characters);
     savePersistedState();
     return;
@@ -3070,6 +3329,11 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   loadHistory();
   initNotifications();
+  // v0.49.0: scene editor discard button. The button itself is in
+  // the markup at all times; toggled disabled based on dirty state by
+  // refreshSceneDirtyBadge after every edit.
+  const discardBtn = $("#planner-scenes-discard");
+  if (discardBtn) discardBtn.addEventListener("click", discardSceneEdits);
   // v0.38.0: persist on brief / model picker change so the planner's
   // long-form input survives a tab close. Cast field listeners are
   // wired in renderCast().

@@ -143,3 +143,56 @@ describe("reconcileCastBindings", () => {
     expect(dropped).toEqual([]);
   });
 });
+
+// v0.49.0: storyboard yaml route round-trip. Exercises the full pipeline
+// validateStoryboard -> serializeStoryboardYaml that the route handler
+// wraps; not the route handler itself (which needs no test beyond
+// "wraps two pure functions").
+import { validateStoryboard } from "../src/storyboard-validate";
+import { serializeStoryboardYaml } from "../src/planner-yaml";
+
+describe("storyboard yaml route helpers", () => {
+  const minimalStoryboard = {
+    title: "test film",
+    use_characters: ["A"],
+    scenes: [
+      { id: "shot_01", prompt: "wide establishing shot", character_slots: ["A"], target_seconds: 5 },
+      { id: "shot_02", prompt: "close-up reaction", character_slots: ["A"], target_seconds: 3 },
+    ],
+  };
+
+  it("validates a minimal storyboard + emits yaml that re-parses to the same shape", () => {
+    const result = validateStoryboard(minimalStoryboard);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const yaml = serializeStoryboardYaml(result.value);
+    expect(yaml).toContain('title: "test film"');
+    expect(yaml).toContain('use_characters: [A]');
+    expect(yaml).toContain('prompt: "wide establishing shot"');
+    expect(yaml).toContain('prompt: "close-up reaction"');
+  });
+
+  it("rejects a storyboard whose edit blanked a required prompt", () => {
+    const broken = {
+      ...minimalStoryboard,
+      scenes: [
+        { id: "shot_01", prompt: "", character_slots: ["A"], target_seconds: 5 },
+      ],
+    };
+    const result = validateStoryboard(broken);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.some((e) => /prompt/i.test(e))).toBe(true);
+  });
+
+  it("rejects a scene referencing a slot not in use_characters", () => {
+    const broken = {
+      ...minimalStoryboard,
+      scenes: [
+        { id: "shot_01", prompt: "ok", character_slots: ["B"], target_seconds: 5 },
+      ],
+    };
+    const result = validateStoryboard(broken);
+    expect(result.ok).toBe(false);
+  });
+});

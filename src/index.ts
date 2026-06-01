@@ -41,6 +41,7 @@ import { planStoryboard, type PlannerCharacter } from "./planner";
 import { findPlanningModel, PLANNING_MODELS } from "./planner-catalog";
 import { serializeStoryboardYaml } from "./planner-yaml";
 import type { SlotId } from "./storyboard-validate";
+import { validateStoryboard } from "./storyboard-validate";
 import { assembleBundle, type TrainingImage } from "./bundle-assembler";
 import {
   cancelRenderJob,
@@ -357,6 +358,14 @@ export default {
     // validates against the storyboard-validate schema, returns JSON + YAML.
     if (url.pathname === "/api/storyboard/plan" && request.method === "POST") {
       return handleStoryboardPlan(request, env);
+    }
+    // v0.49.0: re-emit YAML from a (possibly hand-edited) storyboard JSON.
+    // The planner's scene editor mutates planState.storyboard.scenes[i] in
+    // the browser; this route lets the YAML preview stay in sync by
+    // re-running the validator + serializer that the plan route already
+    // uses. Pure compute, no D1 or R2 access.
+    if (url.pathname === "/api/storyboard/yaml" && request.method === "POST") {
+      return handleStoryboardYaml(request);
     }
     // v0.31.0: stage one character reference image. Returns the R2 key so
     // multiple images can be referenced from /api/storyboard/bundle without
@@ -758,6 +767,33 @@ async function handleStoryboardPlan(request: Request, env: Env): Promise<Respons
 // extension. Reuses the existing r2Put helper so the staged object shows up
 // in R2 under `in/<uuid>.<ext>` with the user's email on customMetadata, and
 // is deletable via the same artifact-cleanup paths that already exist.
+
+// ---------- /api/storyboard/yaml (v0.49.0) ----------
+//
+// Pure compute. Re-emits storyboard.yaml from an arbitrary storyboard
+// JSON (typically the user's planState.storyboard after the scene
+// editor on /planner.html has mutated it). Runs the same validator the
+// /plan route uses, so an edit that drifts the storyboard out of
+// schema surfaces here as a 400 with the same error list shape; the
+// frontend renders it next to the editor.
+
+async function handleStoryboardYaml(request: Request): Promise<Response> {
+  let body: { storyboard?: unknown };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  if (!body || typeof body !== "object" || body.storyboard === undefined) {
+    return json({ error: "storyboard required" }, { status: 400 });
+  }
+  const result = validateStoryboard(body.storyboard);
+  if (!result.ok) {
+    return json({ ok: false, errors: result.errors }, { status: 400 });
+  }
+  const yaml = serializeStoryboardYaml(result.value);
+  return json({ ok: true, yaml, storyboard: result.value });
+}
 
 async function handleCharacterRefUpload(request: Request, env: Env): Promise<Response> {
   const userEmail = getUserEmail(request);

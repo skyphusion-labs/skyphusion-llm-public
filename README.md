@@ -127,6 +127,14 @@ npx wrangler r2 bucket create skyphusion-llm-public
 
 No further config needed; the binding is already in `wrangler.example.toml` (and therefore in your `wrangler.toml` after bootstrap).
 
+Recommended: add an object-lifecycle rule that expires the `tmp/` prefix, where ZIP import (v0.26.0) stages archives and extracted files. The import workflow deletes these on the normal path; this rule sweeps any objects leaked by a workflow that errors before cleanup. 1 day is the finest R2 granularity and is plenty (live staged objects last seconds to minutes):
+
+```
+npx wrangler r2 bucket lifecycle add skyphusion-llm-public tmp-staging-cleanup tmp/ --expire-days 1 --force
+```
+
+Lifecycle rules are per-bucket account config, not declared in `wrangler.toml`, so this is a one-time setup step per deployment.
+
 ### 4. Create the Vectorize index
 
 For RAG over PDFs and spreadsheets:
@@ -253,6 +261,7 @@ The `[[workflows]]` binding in `wrangler.toml` declares this (one binding serves
 
 - Workflows are not supported in `wrangler dev --remote`. Local dev mode is fine; deploy to test the Unified Billing video and music paths and ZIP import.
 - To inspect a stuck job: `npx wrangler workflows instances describe skyphusion-longrun <job_id>` shows the per-step status, retry count, and any error messages.
+- ZIP import stages archives under the `tmp/` prefix and deletes them in its `cleanup` step. Add an R2 lifecycle rule to sweep any leaks from a failed workflow: `npx wrangler r2 bucket lifecycle add <your-bucket> tmp-staging-cleanup tmp/ --expire-days 1 --force` (see [step 3 of the Quickstart](#3-create-the-r2-bucket)).
 
 ## Multimodal handling
 

@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.60.0
+
+One-click retry on FAILED / CANCELLED / TIMED_OUT history rows. Eliminates the "render died at 18 minutes, do I have to start over" frustration: the new button re-POSTs with the failed row's stored args (project, bundle_key, quality_tier, render_overrides, mode) and the GPU side (vivijure-serverless) resumes incrementally off the persistent network volume.
+
+### Why this is cheap
+
+The serverless worker already does the right thing on a same-project resubmit:
+
+- `lora_already_trained` (`orchestrator.py:61`) short-circuits Stage 1 for any slot whose `.safetensors` still lives on the volume.
+- `_indices_skip_locked` (`studio_service.py:1192`) skips shots whose clips were already rendered.
+
+So a retry on the same endpoint within the volume's retention window picks up almost exactly where the failure happened. No GPU/serverless change required.
+
+### Backend
+
+- `POST /api/storyboard/renders/:id/retry` (new): ownership-scoped 404 on miss, 400 on non-terminal-failure status (COMPLETED / IN_QUEUE / IN_PROGRESS), 400 on `mode='finalized'` (finalize rows already have a retry path via clicking finalize on their parent preview). Inserts a NEW history row so the failed row stays for the audit trail. Audio bed and cast LoRA bindings are NOT inherited (neither is persisted on the row); a user who needs to change those should use the regular render button.
+
+### Frontend
+
+- `public/planner.js`: `retryFailedRender(row, btnEl)` posts the retry, confirms first (the message names the resume-from-volume behavior explicitly so the user knows the cost characteristic), refreshes history on success. The row's `view` / `re-render` / `delete` actions are unchanged; `retry` slots in between `re-render` and `delete` only when the row is in a terminal-failure status and is not a finalize child.
+
+### Tests
+
+No new unit tests. The retry handler is a small composition of pieces with their own coverage (`getRenderByIdForUser`, `submitRenderJob`, `insertRender`); the end-to-end correctness is verified by submitting a deliberately-failing render in production and clicking retry. 464/464 passing, type-check clean.
+
 ## v0.59.0
 
 Named render-override knobs migrated from the legacy FastAPI "Make" panel. The planner's "render settings" advanced block now exposes first-class controls for the four pipeline knobs the GPU side (vivijure-serverless / `studio_service.py:1080-1092`) already consumed via `render_overrides` but the Worker had no UI for: `seed_mode`, `multi_character_mode`, `identity_lock`, `face_lock_mode`. The freeform JSON textarea stays as the power-user escape hatch and still wins on key conflict.

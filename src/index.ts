@@ -516,6 +516,18 @@ export default {
     if (rf && request.method === "POST") {
       return handleFinalizeSubmit(request, env, rf[1]);
     }
+    // v0.60.0: retry a FAILED / CANCELLED / TIMED_OUT render. Resubmits
+    // a fresh job to RunPod with the same project + bundle_key +
+    // quality_tier + render_overrides + mode the failed row recorded.
+    // The GPU side (vivijure-serverless) incrementally resumes off the
+    // network volume: lora_already_trained skips trained slots,
+    // _indices_skip_locked skips already-rendered shots. Insert a NEW
+    // row so the history list shows the retry alongside the failed
+    // attempt instead of overwriting it.
+    const rr = url.pathname.match(/^\/api\/storyboard\/renders\/(\d+)\/retry$/);
+    if (rr && request.method === "POST") {
+      return handleRenderRetry(request, env, rr[1]);
+    }
     // v0.46.0: persisted cast (replaces the inline-only cast-slot model).
     // One row per character per user_email; survives across storyboards
     // so a character drawn once is reusable. Portraits + training refs
@@ -2398,6 +2410,133 @@ async function handleFinalizeSubmit(
     // handleRenderSubmit so the finalize UI can report skipped slots.
     castLoraSkipped,
     pretrainedSlots: pretrainedLoras ? Object.keys(pretrainedLoras) : [],
+  });
+}
+
+// ---------- /api/storyboard/renders/<id>/retry (v0.60.0) ----------
+//
+// Resubmit a FAILED / CANCELLED / TIMED_OUT render with the same args
+// the failed row recorded: project, bundle_key, quality_tier,
+// render_overrides, and mode. The GPU side (vivijure-serverless)
+// incrementally resumes off the network volume - lora_already_trained
+// short-circuits trained slots and _indices_skip_locked skips
+// already-rendered shots - so a retry that arrives on the same
+// endpoint within the volume's retention window is much cheaper than
+// the original submit. A fresh history row is inserted (the failed
+// row stays for the audit trail). Finalize rows (mode='finalized')
+// already have a working retry path via clicking finalize on their
+// parent preview again; this route refuses them.
+//
+// Body: ignored. Pre-v0.60.0 callers (none) and any future field
+// additions stay forward-compatible by virtue of read-by-row.
+
+async function handleRenderRetry(
+  _request: Request,
+  env: Env,
+  idStr: string,
+): Promise<Response> {
+  const userEmail = getUserEmail(_request);
+  const id = Number(idStr);
+  if (!Number.isInteger(id) || id <= 0) {
+    return json({ error: "invalid id" }, { status: 400 });
+  }
+
+  const row = await getRenderByIdForUser(env, id, userEmail);
+  if (!row) {
+    return json({ error: "render not found" }, { status: 404 });
+  }
+
+  // Only retry rows that actually failed. COMPLETED has nothing to
+  // resume; IN_QUEUE / IN_PROGRESS is already running and a duplicate
+  // submit would race on the same volume. Surface the row's current
+  // status so the UI can show a useful error.
+  if (row.status !== "FAILED" && row.status !== "CANCELLED" && row.status !== "TIMED_OUT") {
+    return json(
+      { error: `cannot retry a render with status ${row.status}` },
+      { status: 400 },
+    );
+  }
+
+  // Finalize children have their own retry path: click finalize on
+  // the parent preview. Retrying a finalize as-if-fresh would treat
+  // the row's bundle_key as a fresh-render source and skip the
+  // Wan-I2V-only behavior the original submit asked for.
+  if (row.mode === "finalized") {
+    return json(
+      {
+        error:
+          "cannot retry a finalize row directly; click 'finalize' on its parent keyframes-only preview instead",
+      },
+      { status: 400 },
+    );
+  }
+
+  if (!env.RUNPOD_API_KEY || !env.RUNPOD_ENDPOINT_ID) {
+    return json(
+      {
+        error:
+          "RUNPOD_API_KEY and RUNPOD_ENDPOINT_ID must be set on the Worker. Configure via: npx wrangler secret put RUNPOD_API_KEY, then RUNPOD_ENDPOINT_ID.",
+      },
+      { status: 503 },
+    );
+  }
+
+  // Resubmit with the original row's args. quality_tier round-trips
+  // as-is; the only narrowing is "(empty / unknown tier) -> final"
+  // which matches the buildSubmitPayload default.
+  const qualityTier =
+    row.quality_tier === "draft" || row.quality_tier === "standard" || row.quality_tier === "final"
+      ? row.quality_tier
+      : "final";
+
+  const args: RenderSubmitArgs = {
+    bundleKey: row.bundle_key,
+    project: row.project,
+    qualityTier,
+    renderOverrides: row.render_overrides ?? undefined,
+    userEmail,
+    // mode='keyframes-only' on the failed row -> the same flag on the
+    // retry so the GPU stops after SDXL. mode='full' retries do not
+    // set the flag (the GPU runs the full pipeline).
+    keyframesOnly: row.mode === "keyframes-only",
+    // v0.60.0 scope: audio bed + cast LoRA bindings are NOT inherited
+    // from the failed row (neither is persisted). A user who needs
+    // a different audio bed should use the regular render button. The
+    // common "render died at 18 minutes" case is the primary target.
+  };
+
+  const result = await submitRenderJob(env, args);
+  if (!result.ok) {
+    return json(
+      { ok: false, errors: [result.error], user: userEmail },
+      { status: 502 },
+    );
+  }
+
+  try {
+    await insertRender(env, {
+      userEmail,
+      jobId: result.view.jobId,
+      project: row.project,
+      bundleKey: row.bundle_key,
+      qualityTier,
+      renderOverrides: row.render_overrides ?? undefined,
+      status: result.view.status,
+      mode: row.mode === "keyframes-only" ? "keyframes-only" : "full",
+      projectId: row.project_id ?? null,
+    });
+  } catch (err) {
+    console.error("retry renders insert failed:", err);
+  }
+
+  return json({
+    ok: true,
+    jobId: result.view.jobId,
+    status: result.view.status,
+    statusRaw: result.view.statusRaw,
+    parentId: id,
+    project: row.project,
+    user: userEmail,
   });
 }
 

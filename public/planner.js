@@ -3304,6 +3304,24 @@ function buildHistoryRow(r) {
   rerun.addEventListener("click", () => rerunBundle(r));
   actions.appendChild(rerun);
 
+  // v0.60.0: one-click retry on terminal-failure rows. Re-POSTs the
+  // same args server-side (project, bundle_key, quality_tier,
+  // render_overrides, mode); the GPU side resumes incrementally off
+  // the network volume so this is much cheaper than the original
+  // submit. Finalize rows have their own retry path (click finalize
+  // on the parent preview) and are excluded.
+  const isFailed =
+    r.status === "FAILED" || r.status === "CANCELLED" || r.status === "TIMED_OUT";
+  if (isFailed && r.mode !== "finalized") {
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "planner-history-action";
+    retry.textContent = "retry";
+    retry.title = "resubmit this render as-is (the GPU resumes off the volume so it picks up where it died)";
+    retry.addEventListener("click", () => retryFailedRender(r, retry));
+    actions.appendChild(retry);
+  }
+
   // v0.35.4: delete the row from history (and the silent MP4 from R2 when
   // no other row references it). Confirmation prompt before any destructive
   // request leaves the page.
@@ -3957,6 +3975,51 @@ function rerunBundle(row) {
     "loading",
   );
   renderSection.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+// v0.60.0: one-click retry for a FAILED / CANCELLED / TIMED_OUT row.
+// POSTs /api/storyboard/renders/<id>/retry; the Worker re-submits with
+// the row's stored args and the GPU resumes incrementally off the
+// volume (lora_already_trained + _indices_skip_locked). On success, a
+// fresh row appears at the top of the history list; the failed row
+// stays for the audit trail.
+async function retryFailedRender(row, btnEl) {
+  const confirmMsg =
+    "retry this render?\n\n"
+    + "the GPU side resumes off its volume so any already-trained LoRAs "
+    + "and already-rendered shots are reused. on the same endpoint within "
+    + "the volume's retention window this is much cheaper than a fresh "
+    + "submit.\n\ncontinue?";
+  if (!window.confirm(confirmMsg)) return;
+
+  btnEl.disabled = true;
+  btnEl.textContent = "submitting...";
+
+  let resp = null;
+  let data = null;
+  try {
+    resp = await fetch(
+      "/api/storyboard/renders/" + encodeURIComponent(row.id) + "/retry",
+      { method: "POST" },
+    );
+    data = await resp.json();
+  } catch (err) {
+    btnEl.disabled = false;
+    btnEl.textContent = "retry";
+    window.alert("retry submit failed: " + err.message);
+    return;
+  }
+  if (!resp.ok || !data || !data.ok) {
+    btnEl.disabled = false;
+    btnEl.textContent = "retry";
+    const msg = (data && (data.error
+      || (Array.isArray(data.errors) && data.errors.join(", "))))
+      || ("HTTP " + (resp ? resp.status : "?"));
+    window.alert("retry submit failed: " + msg);
+    return;
+  }
+  btnEl.textContent = "retry submitted";
+  loadHistory();
 }
 
 // v0.35.1: paste an R2 bundle key directly to render a bundle that does

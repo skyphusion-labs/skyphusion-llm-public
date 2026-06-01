@@ -1420,6 +1420,12 @@ interface RenderSubmitRequest {
   // bucket-copied to env.R2_RENDERS under audio/<uuid>.<ext> BEFORE the
   // GPU job submits.
   audioKey?: unknown;
+  // v0.55.0: optional storyboard_projects.id to pin this render to a
+  // persisted project. The handler validates the id belongs to the
+  // caller and writes it on the renders row so the history list can
+  // filter by project. NULL / missing = transient submit (the
+  // pre-0.55 behavior).
+  projectId?: unknown;
 }
 
 async function handleRenderSubmit(request: Request, env: Env): Promise<Response> {
@@ -1458,6 +1464,19 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
   }
   if (body.audioKey !== undefined && typeof body.audioKey !== "string") {
     return json({ error: "audioKey must be a string if provided" }, { status: 400 });
+  }
+  // v0.55.0: validate projectId ownership before constructing the
+  // payload. Caller-supplied id MUST belong to this user; an attempt
+  // to pin a render to someone else's project is a 404 (same shape
+  // as other project routes' miss).
+  let projectId: number | null = null;
+  if (body.projectId !== undefined && body.projectId !== null) {
+    if (typeof body.projectId !== "number" || !Number.isInteger(body.projectId) || body.projectId <= 0) {
+      return json({ error: "projectId must be a positive integer if provided" }, { status: 400 });
+    }
+    const proj = await getProjectById(env, body.projectId, userEmail);
+    if (!proj) return json({ error: "projectId not found" }, { status: 404 });
+    projectId = proj.id;
   }
 
   if (!env.RUNPOD_API_KEY || !env.RUNPOD_ENDPOINT_ID) {
@@ -1528,6 +1547,9 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
       // render the keyframes-only badge + suppress the download MP4 link
       // even before the GPU envelope echoes a mode field back.
       mode: keyframesOnly ? "keyframes-only" : "full",
+      // v0.55.0: pin to the active project (validated above) so the
+      // history list can filter by project.
+      projectId,
     });
   } catch (err) {
     console.error("renders insert failed:", err);
@@ -1814,9 +1836,18 @@ async function handleRendersList(request: Request, env: Env): Promise<Response> 
   const url = new URL(request.url);
   const limitParam = url.searchParams.get("limit");
   const limit = limitParam ? Number(limitParam) : 50;
+  // v0.55.0: optional project_id filter. A positive integer narrows
+  // the list to rows pinned to that project; missing / 0 / non-numeric
+  // returns the full list (the pre-0.55 behavior).
+  const projectIdParam = url.searchParams.get("project_id");
+  let projectId: number | null = null;
+  if (projectIdParam) {
+    const n = Number(projectIdParam);
+    if (Number.isInteger(n) && n > 0) projectId = n;
+  }
 
   try {
-    const renders = await listRendersForUser(env, userEmail, limit);
+    const renders = await listRendersForUser(env, userEmail, limit, projectId);
     return json({ renders, user: userEmail });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -2238,6 +2269,10 @@ async function handleFinalizeSubmit(
       renderOverrides: row.render_overrides ?? undefined,
       status: result.view.status,
       mode: "full",
+      // v0.55.0: inherit the parent preview row's project so the
+      // finalize child stays grouped with its source under the same
+      // project filter. NULL parent.project_id propagates NULL here.
+      projectId: row.project_id ?? null,
     });
   } catch (err) {
     console.error("finalize renders insert failed:", err);

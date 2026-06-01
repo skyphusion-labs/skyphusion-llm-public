@@ -587,3 +587,41 @@ describe("summarize", () => {
     expect(r.counts).toEqual({ error: 0, warning: 0, info: 0 });
   });
 });
+
+// v0.55.0: project-id intake validation. Pure; the imperative DB
+// ownership lookup happens in the route handler.
+import { normalizeProjectIdInput } from "../src/renders-db";
+
+describe("normalizeProjectIdInput", () => {
+  it("accepts positive integers", () => {
+    expect(normalizeProjectIdInput(1)).toBe(1);
+    expect(normalizeProjectIdInput(42)).toBe(42);
+  });
+
+  it("accepts numeric strings (query-param form)", () => {
+    expect(normalizeProjectIdInput("7")).toBe(7);
+    expect(normalizeProjectIdInput("123")).toBe(123);
+  });
+
+  it("rejects zero / negative / fractional", () => {
+    expect(normalizeProjectIdInput(0)).toBe(null);
+    expect(normalizeProjectIdInput(-1)).toBe(null);
+    expect(normalizeProjectIdInput(1.5)).toBe(null);
+    expect(normalizeProjectIdInput("0")).toBe(null);
+    expect(normalizeProjectIdInput("-5")).toBe(null);
+  });
+
+  it("returns null for empty / null / undefined", () => {
+    expect(normalizeProjectIdInput("")).toBe(null);
+    expect(normalizeProjectIdInput(null)).toBe(null);
+    expect(normalizeProjectIdInput(undefined)).toBe(null);
+  });
+
+  it("rejects non-numeric strings + non-number types", () => {
+    expect(normalizeProjectIdInput("abc")).toBe(null);
+    expect(normalizeProjectIdInput("1abc")).toBe(null);
+    expect(normalizeProjectIdInput({})).toBe(null);
+    expect(normalizeProjectIdInput([])).toBe(null);
+    expect(normalizeProjectIdInput(true)).toBe(null);
+  });
+});

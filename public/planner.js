@@ -965,6 +965,9 @@ function gatherProjectPrefs() {
 
 async function selectProject(id) {
   planState.activeProjectId = id || null;
+  // v0.55.0: re-fetch history with the new active project so the list
+  // scopes to the selected project (or back to all rows when (none)).
+  loadHistory();
   const p = findProject(id);
   if (p) {
     setProjectStatus("loaded " + p.name, "success");
@@ -2409,6 +2412,10 @@ async function submitRender() {
   // audio_key from the job input, downloads, and muxes via
   // export_film(with_audio=True).
   if (planState.audioKey) reqBody.audioKey = planState.audioKey;
+  // v0.55.0: pin the render row to the active project so the history
+  // list can filter by project. Skipped on transient (no-project)
+  // submits, which matches the pre-0.55 behavior.
+  if (planState.activeProjectId) reqBody.projectId = planState.activeProjectId;
 
   let resp = null;
   let data = null;
@@ -2943,7 +2950,13 @@ async function loadHistory() {
   }
   isLoadingHistory = true;
   try {
-    const resp = await fetch("/api/storyboard/renders?limit=" + HISTORY_LIMIT);
+    // v0.55.0: when an active project is set, fetch only that
+    // project's renders. Switching projects re-fetches because the
+    // active id is read at call time.
+    const params = new URLSearchParams();
+    params.set("limit", String(HISTORY_LIMIT));
+    if (planState.activeProjectId) params.set("project_id", String(planState.activeProjectId));
+    const resp = await fetch("/api/storyboard/renders?" + params.toString());
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     const data = await resp.json();
     historyState.rows = data.renders || [];

@@ -28,6 +28,9 @@ export interface NewRenderRow {
   // 'keyframes-only' = preview pass producing SDXL keyframes only.
   // Stored verbatim. Defaults to 'full' when omitted.
   mode?: "full" | "keyframes-only";
+  // v0.55.0: optional FK to storyboard_projects(id). NULL on rows
+  // submitted without an active project (the transient v0.42.0 flow).
+  projectId?: number | null;
 }
 
 // One uploaded SDXL keyframe (v0.39.0). The GPU side writes these to R2
@@ -72,10 +75,29 @@ export interface RenderRow {
   // assembly over every shot regardless). NULL or empty array means
   // nothing locked.
   locked_shots: string[] | null;
+  // v0.55.0: optional FK to storyboard_projects(id). NULL when the
+  // submit was not associated with any project.
+  project_id: number | null;
 }
 
 function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
+}
+
+// v0.55.0: parse + validate a project_id intake (from the request body
+// or query string). Pure so vitest can assert the contract without env.
+// Returns null for any non-positive-integer input, which the caller
+// then treats as "no project filter" / "transient submit".
+export function normalizeProjectIdInput(raw: unknown): number | null {
+  if (raw === undefined || raw === null || raw === "") return null;
+  if (typeof raw === "number") {
+    return Number.isInteger(raw) && raw > 0 ? raw : null;
+  }
+  if (typeof raw === "string") {
+    const n = Number(raw);
+    return Number.isInteger(n) && n > 0 ? n : null;
+  }
+  return null;
 }
 
 const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
@@ -89,11 +111,15 @@ export async function insertRender(env: Env, row: NewRenderRow): Promise<void> {
   const now = nowSeconds();
   const overrides = row.renderOverrides ? JSON.stringify(row.renderOverrides) : null;
   const mode = row.mode ?? "full";
+  const projectId = typeof row.projectId === "number" && row.projectId > 0
+    ? row.projectId
+    : null;
   await env.DB.prepare(
     `INSERT INTO renders (
       user_email, job_id, project, bundle_key, quality_tier,
-      render_overrides, status, submitted_at, updated_at, mode
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      render_overrides, status, submitted_at, updated_at, mode,
+      project_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(job_id) DO NOTHING`,
   )
     .bind(
@@ -107,6 +133,7 @@ export async function insertRender(env: Env, row: NewRenderRow): Promise<void> {
       now,
       now,
       mode,
+      projectId,
     )
     .run();
 }
@@ -301,23 +328,33 @@ export async function listRendersForUser(
   env: Env,
   userEmail: string,
   limit = 50,
+  projectId: number | null = null,
 ): Promise<RenderRow[]> {
   // Clamp limit so a runaway client cannot drain the DB binding.
   const cap = Math.min(Math.max(1, Math.floor(limit)), 200);
-  const result = await env.DB.prepare(
-    `SELECT
+  // v0.55.0: optional project filter. The (user_email, project_id,
+  // submitted_at DESC) partial index serves this lookup directly.
+  const baseSelect = `SELECT
       id, user_email, job_id, project, bundle_key, quality_tier,
       render_overrides, status, output_key, output_json AS output,
       error, execution_time_ms, delay_time_ms,
       submitted_at, updated_at, completed_at, label, keyframes_json, mode,
-      locked_shots_json
-    FROM renders
-    WHERE user_email = ?
-    ORDER BY submitted_at DESC
-    LIMIT ?`,
-  )
-    .bind(userEmail, cap)
-    .all();
+      locked_shots_json, project_id
+    FROM renders`;
+  const stmt = projectId !== null && projectId > 0
+    ? env.DB.prepare(
+        `${baseSelect}
+         WHERE user_email = ? AND project_id = ?
+         ORDER BY submitted_at DESC
+         LIMIT ?`
+      ).bind(userEmail, projectId, cap)
+    : env.DB.prepare(
+        `${baseSelect}
+         WHERE user_email = ?
+         ORDER BY submitted_at DESC
+         LIMIT ?`
+      ).bind(userEmail, cap);
+  const result = await stmt.all();
   const rows = (result.results ?? []) as unknown as Array<Record<string, unknown>>;
   return rows.map(normalizeRow);
 }
@@ -415,6 +452,11 @@ function normalizeRow(r: Record<string, unknown>): RenderRow {
         return null;
       }
     })(),
+    // v0.55.0: NULL for legacy rows or transient (no-project) submits.
+    project_id:
+      r.project_id === null || r.project_id === undefined
+        ? null
+        : Number(r.project_id),
   };
 }
 

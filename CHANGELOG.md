@@ -1,5 +1,49 @@
 # Changelog
 
+## v0.55.0
+
+Pin render history rows to storyboard projects. Adds an optional `project_id` column to `renders` (FK to `storyboard_projects.id`), threads it through the submit handlers + `insertRender`, and teaches the planner's history list to filter by the active project. Finalize child rows inherit the parent preview row's `project_id` so a v0.42.0 preview + finalize pair stay grouped under the same project filter.
+
+### Schema
+
+- `renders.project_id INTEGER NULL` — added via `ALTER TABLE`. Backfill is intentionally NOT done; pre-v0.55 rows stay NULL and surface in the unfiltered list (the pre-v0.55 default). New rows pick up the active project when one is set at submit time.
+- New partial index `renders_by_user_project ON (user_email, project_id, submitted_at DESC) WHERE project_id IS NOT NULL`. Serves the project-filtered list query directly without scanning unrelated rows.
+- Migration delta at `migrations/v0.55.0-renders-project-id.sql`.
+
+### Backend
+
+- `src/renders-db.ts`: `NewRenderRow.projectId?`, `RenderRow.project_id`, normalizer parses the int back. `listRendersForUser` grows an optional `projectId` param; when set, the WHERE clause adds `AND project_id = ?` and the SELECT statement uses the new partial index. Pure helper `normalizeProjectIdInput(raw)` covers the "accept positive integer or numeric string, else null" contract.
+- `src/index.ts`:
+  - `RenderSubmitRequest.projectId?: unknown` validated as positive integer; the route looks the project up via `getProjectById` (404 on miss-or-not-owned) and passes the id into `insertRender`.
+  - `handleFinalizeSubmit` reads `row.project_id` off the parent preview and propagates it on the new child row — finalize chains stay grouped.
+  - `handleRendersList` reads `?project_id=N` query param via `normalizeProjectIdInput` and threads it to the DB helper.
+
+### Frontend
+
+- `public/planner.js`:
+  - Render-submit body now sets `projectId: planState.activeProjectId` when one is selected.
+  - `loadHistory()` builds the URL with `URLSearchParams`; appends `project_id` when an active project is set. Changing the active project re-fetches.
+  - `selectProject()` triggers `loadHistory()` so swapping projects updates the visible list immediately.
+
+### Tests
+
+5 new vitest tests for `normalizeProjectIdInput`: positive integers, numeric strings, zero/negative/fractional rejection, empty/null/undefined, non-numeric strings and non-number types. 444/444 passing, type-check clean, planner.js syntax-checks.
+
+### Deploy
+
+D1 delta first, then deploy:
+
+```bash
+npx wrangler d1 execute skyphusion-llm --remote --file=migrations/v0.55.0-renders-project-id.sql
+npm run deploy
+```
+
+### What is NOT in this PR
+
+- Backfilling pre-v0.55 rows to a project. The slug string in `renders.project` could heuristically match `storyboard_projects.slug`, but that's a destructive guess and existing renders are already accessible via the unfiltered list. Skipped.
+- "Move render to project" affordance on history rows. Useful for organizing legacy rows; a small PATCH route + UI button can ship later.
+- Counting / showing the per-project render count on the project picker. Cosmetic; UI follow-up.
+
 ## v0.54.0
 
 Pre-render preflight + project dial-in expansion. The legacy

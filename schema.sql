@@ -271,6 +271,20 @@ CREATE INDEX IF NOT EXISTS renders_by_user
 CREATE INDEX IF NOT EXISTS renders_by_user_status
   ON renders(user_email, status);
 
+-- v0.55.0: optional FK to storyboard_projects(id). Lets the planner
+-- filter render history by the project that produced it. NULL on rows
+-- submitted without an active project (the v0.42.0+ transient flow).
+-- SQLite ALTER TABLE ADD COLUMN is not idempotent in the IF NOT EXISTS
+-- sense; re-applying schema.sql on a DB that already has this column
+-- surfaces "duplicate column name" per-statement, which wrangler
+-- d1 execute treats as a non-fatal warning. The CREATE INDEX is
+-- naturally idempotent.
+ALTER TABLE renders ADD COLUMN project_id INTEGER;
+
+CREATE INDEX IF NOT EXISTS renders_by_user_project
+  ON renders(user_email, project_id, submitted_at DESC)
+  WHERE project_id IS NOT NULL;
+
 -- ---------- Persisted cast (v0.46.0) ----------
 --
 -- One row per persisted character, scoped per user_email. Survives across

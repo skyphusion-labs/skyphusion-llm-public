@@ -573,6 +573,24 @@ function findCastById(id) {
   return planState.castCatalog.find((c) => c.id === id) || null;
 }
 
+// v0.58.0: build the {slot: cast_id} map the render/finalize routes accept
+// as `castLoras`. Only includes bindings whose cast member has a trained-
+// and-ready LoRA; non-ready bindings are dropped client-side so the Worker
+// does not need to round-trip a "skipped" diagnostic back for them. The
+// Worker still re-validates server-side (ownership + ready check), so this
+// is purely a wire-bandwidth optimization for the common case.
+function buildCastLoraSubmit() {
+  const out = {};
+  for (const [slot, castId] of Object.entries(planState.castBindings || {})) {
+    const cast = findCastById(castId);
+    if (!cast) continue;
+    if (cast.lora_status !== "ready") continue;
+    if (typeof cast.lora_key !== "string" || !cast.lora_key.startsWith("loras/")) continue;
+    out[slot] = castId;
+  }
+  return out;
+}
+
 function bindSlotToCast(slot, castId) {
   const cast = findCastById(castId);
   if (!cast) return;
@@ -2477,6 +2495,14 @@ async function submitRender() {
   // list can filter by project. Skipped on transient (no-project)
   // submits, which matches the pre-0.55 behavior.
   if (planState.activeProjectId) reqBody.projectId = planState.activeProjectId;
+  // v0.58.0: forward {slot: cast_id} bindings for any cast members
+  // whose LoRA the GPU should reuse instead of training fresh. The
+  // Worker resolves these to {slot: r2_key} via getCastById (ownership-
+  // scoped, ready-status-gated) and the GPU (vivijure-serverless 0.4.14+)
+  // stages the .safetensors into the project before Stage 1 so the
+  // ready-slot pre-check short-circuits training for them.
+  const castLoraSubmit = buildCastLoraSubmit();
+  if (Object.keys(castLoraSubmit).length > 0) reqBody.castLoras = castLoraSubmit;
 
   let resp = null;
   let data = null;
@@ -3723,10 +3749,19 @@ async function finalizeRender(row, btnEl) {
     // pre-v0.52 finalizes). When set, the audio_key reaches
     // vivijure-serverless 0.4.11+ which downloads + muxes via
     // export_film(with_audio=True).
-    const finalizeBody = planState.audioKey ? { audioKey: planState.audioKey } : null;
+    // v0.58.0: also forward castLoras for the same pretrained-LoRA reuse
+    // as the render-submit body. Same ownership-scoped resolution on
+    // the Worker side.
+    const finalizeBody = {};
+    if (planState.audioKey) finalizeBody.audioKey = planState.audioKey;
+    const finalizeCastLoras = buildCastLoraSubmit();
+    if (Object.keys(finalizeCastLoras).length > 0) {
+      finalizeBody.castLoras = finalizeCastLoras;
+    }
+    const hasBody = Object.keys(finalizeBody).length > 0;
     resp = await fetch(
       "/api/storyboard/renders/" + encodeURIComponent(row.id) + "/finalize",
-      finalizeBody
+      hasBody
         ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(finalizeBody) }
         : { method: "POST" },
     );

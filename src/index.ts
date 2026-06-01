@@ -33,6 +33,10 @@ import {
 } from "./cast-db";
 import { buildLoraTrainingBundleArgs, deriveLoraDestKey } from "./lora-bundle";
 import {
+  resolveCastLoraBindings, uniqueCastIds,
+  type CastLoraBindings,
+} from "./lora-resolver";
+import {
   listProjectsForUser, getProjectById, createProject, updateProjectMeta,
   setLastStoryboard, deleteProject,
 } from "./storyboard-projects-db";
@@ -1440,6 +1444,13 @@ interface RenderSubmitRequest {
   // filter by project. NULL / missing = transient submit (the
   // pre-0.55 behavior).
   projectId?: unknown;
+  // v0.58.0: optional {slot: cast_id} map identifying which cast members
+  // already have a trained LoRA the GPU should reuse instead of training
+  // again. The route resolves these to {slot: r2_key} via getCastById
+  // (ownership-scoped) and only includes slots where lora_status is
+  // 'ready' and lora_key is set. Anything else is dropped and surfaced
+  // back in the response so the UI can warn the caller.
+  castLoras?: unknown;
 }
 
 async function handleRenderSubmit(request: Request, env: Env): Promise<Response> {
@@ -1478,6 +1489,23 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
   }
   if (body.audioKey !== undefined && typeof body.audioKey !== "string") {
     return json({ error: "audioKey must be a string if provided" }, { status: 400 });
+  }
+  // v0.58.0: validate castLoras shape. Empty object stays in (resolves to
+  // an empty pretrained_loras map and is dropped on the wire); anything
+  // non-objectish is a 400 so callers fix their submit body.
+  let castLorasInput: CastLoraBindings | undefined;
+  if (body.castLoras !== undefined) {
+    if (
+      typeof body.castLoras !== "object" ||
+      body.castLoras === null ||
+      Array.isArray(body.castLoras)
+    ) {
+      return json(
+        { error: "castLoras must be an object {slot: cast_id} if provided" },
+        { status: 400 },
+      );
+    }
+    castLorasInput = body.castLoras as CastLoraBindings;
   }
   // v0.55.0: validate projectId ownership before constructing the
   // payload. Caller-supplied id MUST belong to this user; an attempt
@@ -1520,6 +1548,28 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
     }
   }
 
+  // v0.58.0: resolve {slot: cast_id} bindings to {slot: lora_key} via
+  // getCastById (ownership-scoped so a caller cannot point at a row they
+  // do not own). Only rows whose lora_status is 'ready' and whose
+  // lora_key starts with 'loras/' make it to the wire; the rest land in
+  // `castLoraSkipped` and the GPU trains those slots fresh as Stage 1.
+  let pretrainedLoras: Record<string, string> | undefined;
+  const castLoraSkipped: Array<{ slot: string; cast_id: number; reason: string }> = [];
+  if (castLorasInput) {
+    const ids = uniqueCastIds(castLorasInput);
+    const loaded = new Map<number, Awaited<ReturnType<typeof getCastById>>>();
+    await Promise.all(
+      ids.map(async (id) => {
+        loaded.set(id, await getCastById(env, id, userEmail));
+      }),
+    );
+    const resolved = resolveCastLoraBindings(castLorasInput, loaded);
+    if (Object.keys(resolved.pretrained).length > 0) {
+      pretrainedLoras = resolved.pretrained;
+    }
+    for (const s of resolved.skipped) castLoraSkipped.push(s);
+  }
+
   const args: RenderSubmitArgs = {
     bundleKey: body.bundleKey,
     project: typeof body.project === "string" ? body.project : undefined,
@@ -1532,6 +1582,8 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
     keyframesOnly,
     // v0.52.0: audio bed for the audio-mux loop closure.
     audioKey: gpuAudioKey,
+    // v0.58.0: pretrained-LoRA passthrough (resolved above).
+    pretrainedLoras,
   };
 
   const result = await submitRenderJob(env, args);
@@ -1575,6 +1627,11 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
     status: result.view.status,
     statusRaw: result.view.statusRaw,
     user: userEmail,
+    // v0.58.0: report any cast LoRA bindings that were dropped. Empty
+    // array stays in the envelope so a v0.58.0 UI can rely on the field
+    // existing; pre-0.58 UIs ignore unknown response fields.
+    castLoraSkipped,
+    pretrainedSlots: pretrainedLoras ? Object.keys(pretrainedLoras) : [],
   });
 }
 
@@ -2183,13 +2240,29 @@ async function handleFinalizeSubmit(
   // v0.52.0 callers (including curl scripts) may pass no body at all,
   // and that must still work. The body-less path matches the v0.42.0
   // semantics; any audioKey supplied is staged for the GPU.
+  // v0.58.0: optional castLoras map for the same pretrained-LoRA reuse
+  // as the render-submit route; read out of the same body slot.
   let bodyAudioKey: string | null = null;
+  let bodyCastLoras: CastLoraBindings | undefined;
   try {
     const ct = (request.headers.get("content-type") || "").toLowerCase();
     if (ct.includes("application/json")) {
-      const parsed = (await request.json()) as { audioKey?: unknown };
+      const parsed = (await request.json()) as { audioKey?: unknown; castLoras?: unknown };
       if (typeof parsed?.audioKey === "string" && parsed.audioKey.length > 0) {
         bodyAudioKey = parsed.audioKey;
+      }
+      if (parsed?.castLoras !== undefined) {
+        if (
+          typeof parsed.castLoras !== "object" ||
+          parsed.castLoras === null ||
+          Array.isArray(parsed.castLoras)
+        ) {
+          return json(
+            { error: "castLoras must be an object {slot: cast_id} if provided" },
+            { status: 400 },
+          );
+        }
+        bodyCastLoras = parsed.castLoras as CastLoraBindings;
       }
     }
   } catch {
@@ -2244,6 +2317,26 @@ async function handleFinalizeSubmit(
     }
   }
 
+  // v0.58.0: resolve any cast LoRA bindings for finalize too. Same
+  // ownership-scoped resolution as render-submit; non-ready slots are
+  // dropped and surfaced in the response.
+  let pretrainedLoras: Record<string, string> | undefined;
+  const castLoraSkipped: Array<{ slot: string; cast_id: number; reason: string }> = [];
+  if (bodyCastLoras) {
+    const ids = uniqueCastIds(bodyCastLoras);
+    const loaded = new Map<number, Awaited<ReturnType<typeof getCastById>>>();
+    await Promise.all(
+      ids.map(async (id) => {
+        loaded.set(id, await getCastById(env, id, userEmail));
+      }),
+    );
+    const resolved = resolveCastLoraBindings(bodyCastLoras, loaded);
+    if (Object.keys(resolved.pretrained).length > 0) {
+      pretrainedLoras = resolved.pretrained;
+    }
+    for (const s of resolved.skipped) castLoraSkipped.push(s);
+  }
+
   // v0.45.0: lock-gated finalize. When the row has any locked_shots,
   // the GPU restricts the I2V pass + assembly to those shot_ids. When
   // the column is null / empty, we omit the field and the GPU runs the
@@ -2260,6 +2353,7 @@ async function handleFinalizeSubmit(
       ? row.locked_shots
       : undefined,
     audioKey: gpuAudioKey,
+    pretrainedLoras,
   });
   if (!result.ok) {
     return json(
@@ -2300,6 +2394,10 @@ async function handleFinalizeSubmit(
     parentId: id,
     project: row.project,
     user: userEmail,
+    // v0.58.0: surface the same pretrained-LoRA diagnostics as
+    // handleRenderSubmit so the finalize UI can report skipped slots.
+    castLoraSkipped,
+    pretrainedSlots: pretrainedLoras ? Object.keys(pretrainedLoras) : [],
   });
 }
 

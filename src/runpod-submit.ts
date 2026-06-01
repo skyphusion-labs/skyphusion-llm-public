@@ -45,6 +45,9 @@ export interface RenderSubmitArgs {
   // prefix); MiniMax-generated artifacts (out/<uuid>.<ext> in env.R2)
   // get cross-bucket-copied before this builder sees them.
   audioKey?: string;
+  // v0.58.0: pretrained-LoRA passthrough. Resolved by the route from a
+  // body-side {slot: cast_id} map; keys are R2 paths under loras/...
+  pretrainedLoras?: Record<string, string>;
 }
 
 // What the vivijure-serverless rp_handler.py reads off the job input. Field
@@ -57,6 +60,10 @@ export interface RenderJobInput {
   render_overrides?: Record<string, unknown>;
   user_email?: string;
   audio_key?: string;
+  // v0.58.0: {slot: r2_key} of pretrained LoRAs the worker should
+  // stage to skip Stage 1 training. Resolved server-side from cast
+  // bindings against cast_members rows the user owns.
+  pretrained_loras?: Record<string, string>;
 }
 
 // v0.41.0: per-shot SDXL keyframe regeneration. The Worker derives the
@@ -100,6 +107,8 @@ export interface FinalizeArgs {
   processShotIds?: string[];
   // v0.52.0: same audio-mux opt-in as RenderSubmitArgs.audioKey.
   audioKey?: string;
+  // v0.58.0: same pretrained-LoRA passthrough as RenderSubmitArgs.
+  pretrainedLoras?: Record<string, string>;
 }
 
 export interface FinalizeJobInput {
@@ -111,6 +120,7 @@ export interface FinalizeJobInput {
   user_email?: string;
   process_shot_ids?: string[];
   audio_key?: string;
+  pretrained_loras?: Record<string, string>;
 }
 
 // v0.57.0: standalone LoRA training. The cast manager UI on /cast
@@ -237,6 +247,9 @@ export function buildFinalizePayload(args: FinalizeArgs): { input: FinalizeJobIn
   // v0.52.0: same audio_key passthrough as buildSubmitPayload.
   if (typeof args.audioKey === "string" && args.audioKey.length > 0) {
     input.audio_key = args.audioKey;
+  }
+  if (args.pretrainedLoras && Object.keys(args.pretrainedLoras).length > 0) {
+    input.pretrained_loras = { ...args.pretrainedLoras };
   }
   return { input };
 }

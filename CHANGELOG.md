@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.58.0
+
+Phase 3 of the standalone-LoRA work: render and finalize submits now carry the bindings for cast members whose LoRA was already trained via the `/cast` flow, and the GPU side (vivijure-serverless 0.4.14+) stages the existing `.safetensors` so Stage 1 short-circuits for those slots.
+
+### Cross-repo coordination
+
+Requires **vivijure-serverless 0.4.14** on the RunPod endpoint. The `_stage_pretrained_loras` helper there reads the `pretrained_loras` field on the job input, downloads each value from R2 into `loras/<project>/`, and writes a synthetic `characters/jobs/lora_train_<SLOT>.json` so the existing ready-slot guard treats the slot as already trained. Pre-0.4.14 workers ignore the unknown field and re-train normally (silent forward-compatibility).
+
+### Backend
+
+- `src/lora-resolver.ts` (new, pure): `resolveCastLoraBindings(bindings, loadedCast)` reshapes a caller-supplied `{slot: cast_id}` map into the wire-format `{slot: r2_key}` shape, dropping bindings whose loaded `CastMember` is missing, not owned, not `ready`, or lacks a `loras/`-prefixed `lora_key`. `uniqueCastIds(bindings)` extracts the unique ids the route needs to load.
+- `src/runpod-submit.ts`: `RenderSubmitArgs.pretrainedLoras` + `RenderJobInput.pretrained_loras` + `FinalizeArgs.pretrainedLoras` + `FinalizeJobInput.pretrained_loras`, with non-empty maps wired through `buildSubmitPayload` and `buildFinalizePayload`.
+- `src/index.ts`: `handleRenderSubmit` and `handleFinalizeSubmit` now accept an optional top-level `castLoras` object on the request body, resolve it server-side (ownership-scoped via `getCastById`), and pass the result through to the submitters. The response carries `castLoraSkipped` (per-slot drop reasons) and `pretrainedSlots` (the slots actually included on the wire).
+
+### Frontend
+
+- `public/planner.js`: `buildCastLoraSubmit()` filters `planState.castBindings` against the locally cached `castCatalog` (only `lora_status === "ready"` with a `loras/`-prefixed `lora_key` makes it onto the wire); the render-submit `reqBody` and the finalize body both include `castLoras` when the filter produces any entries. The Worker still re-validates server-side so a stale client cannot point at a not-ready row.
+
+### Tests
+
+14 new vitest tests in `tests/lora-resolver.test.ts` covering the empty-input path, slot normalization (case + invalid characters), invalid cast ids, the four skip reasons (`not_found`, `not_ready`, `no_lora_key`, plus the validation reasons), mixed ready/non-ready bindings, and the two-slots-same-id case.
+
+464/464 passing, type-check clean.
+
 ## v0.57.0
 
 Standalone LoRA training for cast members. The user can now kick off a LoRA training run from `/cast` without going through a full render; the trained `.safetensors` is uploaded to R2 and the cast row tracks status across sessions. Future renders (Phase 3, a follow-up PR) will be able to skip Stage 1 by passing the pre-trained LoRA in the bundle.

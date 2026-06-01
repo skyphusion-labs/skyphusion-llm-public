@@ -1505,6 +1505,10 @@ interface RenderSubmitRequest {
   // (vivijure-serverless 0.4.31+).
   adetailerOverrides?: unknown;
   wanDiffusionOverrides?: unknown;
+  // v0.76.0: local_diffusion block + generation block
+  // (vivijure-serverless 0.4.32+).
+  localDiffusionOverrides?: unknown;
+  generationOverrides?: unknown;
 }
 
 async function handleRenderSubmit(request: Request, env: Env): Promise<Response> {
@@ -1691,6 +1695,15 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
     wanDiffusionOverrides:
       body.wanDiffusionOverrides && typeof body.wanDiffusionOverrides === "object"
         ? (body.wanDiffusionOverrides as RenderSubmitArgs["wanDiffusionOverrides"])
+        : undefined,
+    // v0.76.0: local_diffusion + generation passthrough.
+    localDiffusionOverrides:
+      body.localDiffusionOverrides && typeof body.localDiffusionOverrides === "object"
+        ? (body.localDiffusionOverrides as RenderSubmitArgs["localDiffusionOverrides"])
+        : undefined,
+    generationOverrides:
+      body.generationOverrides && typeof body.generationOverrides === "object"
+        ? (body.generationOverrides as RenderSubmitArgs["generationOverrides"])
         : undefined,
   };
 
@@ -2363,6 +2376,8 @@ async function handleFinalizeSubmit(
   let bodyFaceLockOverrides: RenderSubmitArgs["faceLockOverrides"] | undefined;
   let bodyAdetailerOverrides: RenderSubmitArgs["adetailerOverrides"] | undefined;
   let bodyWanDiffusionOverrides: RenderSubmitArgs["wanDiffusionOverrides"] | undefined;
+  let bodyLocalDiffusionOverrides: RenderSubmitArgs["localDiffusionOverrides"] | undefined;
+  let bodyGenerationOverrides: RenderSubmitArgs["generationOverrides"] | undefined;
   try {
     const ct = (request.headers.get("content-type") || "").toLowerCase();
     if (ct.includes("application/json")) {
@@ -2380,6 +2395,8 @@ async function handleFinalizeSubmit(
         faceLockOverrides?: unknown;
         adetailerOverrides?: unknown;
         wanDiffusionOverrides?: unknown;
+        localDiffusionOverrides?: unknown;
+        generationOverrides?: unknown;
       };
       if (typeof parsed?.audioKey === "string" && parsed.audioKey.length > 0) {
         bodyAudioKey = parsed.audioKey;
@@ -2460,6 +2477,20 @@ async function handleFinalizeSubmit(
         && !Array.isArray(parsed.wanDiffusionOverrides)
       ) {
         bodyWanDiffusionOverrides = parsed.wanDiffusionOverrides as RenderSubmitArgs["wanDiffusionOverrides"];
+      }
+      if (
+        parsed?.localDiffusionOverrides
+        && typeof parsed.localDiffusionOverrides === "object"
+        && !Array.isArray(parsed.localDiffusionOverrides)
+      ) {
+        bodyLocalDiffusionOverrides = parsed.localDiffusionOverrides as RenderSubmitArgs["localDiffusionOverrides"];
+      }
+      if (
+        parsed?.generationOverrides
+        && typeof parsed.generationOverrides === "object"
+        && !Array.isArray(parsed.generationOverrides)
+      ) {
+        bodyGenerationOverrides = parsed.generationOverrides as RenderSubmitArgs["generationOverrides"];
       }
       if (parsed?.castLoras !== undefined) {
         if (
@@ -2587,6 +2618,9 @@ async function handleFinalizeSubmit(
     // v0.75.0: adetailer + wan_diffusion passthrough (vivijure-serverless 0.4.31+).
     adetailerOverrides: bodyAdetailerOverrides,
     wanDiffusionOverrides: bodyWanDiffusionOverrides,
+    // v0.76.0: local_diffusion + generation passthrough (vivijure-serverless 0.4.32+).
+    localDiffusionOverrides: bodyLocalDiffusionOverrides,
+    generationOverrides: bodyGenerationOverrides,
   });
   if (!result.ok) {
     return json(

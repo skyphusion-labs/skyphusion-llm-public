@@ -603,6 +603,52 @@ function buildCastLoraSubmit() {
   return out;
 }
 
+// v0.76.0: local_diffusion overrides from the advanced disclosure.
+function buildLocalDiffusionOverrides() {
+  const $sel = (s) => $(s);
+  const out = {};
+  const resRe = /^\d{2,5}x\d{2,5}$/;
+  const mid = (($sel("#planner-ld-model-id") || {}).value || "").trim();
+  if (mid && mid.length <= 256) out.model_id = mid;
+  const res = (($sel("#planner-ld-resolution") || {}).value || "").trim();
+  if (res && resRe.test(res)) out.resolution = res;
+  const pres = (($sel("#planner-ld-portrait-resolution") || {}).value || "").trim();
+  if (pres && resRe.test(pres)) out.portrait_resolution = pres;
+  const st = parseFloat(($sel("#planner-ld-steps") || {}).value || "");
+  if (Number.isInteger(st) && st >= 1 && st <= 64) out.steps = st;
+  const gs = parseFloat(($sel("#planner-ld-guidance-scale") || {}).value || "");
+  if (Number.isFinite(gs) && gs >= 0 && gs <= 30) out.guidance_scale = gs;
+  const dn = parseFloat(($sel("#planner-ld-denoising-strength") || {}).value || "");
+  if (Number.isFinite(dn) && dn >= 0 && dn <= 1) out.denoising_strength = dn;
+  const dev = ($sel("#planner-ld-device") || {}).value;
+  if (dev === "gpu" || dev === "cpu") out.device = dev;
+  const dt = ($sel("#planner-ld-dtype") || {}).value;
+  if (dt === "float16" || dt === "float32" || dt === "bfloat16") out.dtype = dt;
+  const seq = ($sel("#planner-ld-seq-cpu-offload") || {}).value;
+  if (seq === "true") out.sequential_cpu_offload = true;
+  else if (seq === "false") out.sequential_cpu_offload = false;
+  const kfmid = (($sel("#planner-ld-keyframe-model-id") || {}).value || "").trim();
+  if (kfmid && kfmid.length <= 256) out.keyframe_model_id = kfmid;
+  const kfgs = parseFloat(($sel("#planner-ld-keyframe-guidance-scale") || {}).value || "");
+  if (Number.isFinite(kfgs) && kfgs >= 0 && kfgs <= 30) out.keyframe_guidance_scale = kfgs;
+  const kfst = parseFloat(($sel("#planner-ld-keyframe-steps") || {}).value || "");
+  if (Number.isInteger(kfst) && kfst >= 1 && kfst <= 128) out.keyframe_steps = kfst;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// v0.76.0: generation overrides from the advanced disclosure.
+function buildGenerationOverrides() {
+  const $sel = (s) => $(s);
+  const out = {};
+  const sm = ($sel("#planner-gen-seed-mode") || {}).value;
+  if (sm === "random" || sm === "locked" || sm === "sequential") out.seed_mode = sm;
+  const seed = parseFloat(($sel("#planner-gen-seed") || {}).value || "");
+  if (Number.isInteger(seed) && seed >= 0) out.seed = seed;
+  const step = parseFloat(($sel("#planner-gen-seed-per-shot-step") || {}).value || "");
+  if (Number.isInteger(step) && step >= 1 && step <= 1000) out.seed_per_shot_step = step;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 // v0.75.0: adetailer overrides from the advanced disclosure.
 function buildAdetailerOverrides() {
   const $sel = (s) => $(s);
@@ -2830,6 +2876,11 @@ async function submitRender() {
   if (adOverrides) reqBody.adetailerOverrides = adOverrides;
   const wdOverrides = buildWanDiffusionOverrides();
   if (wdOverrides) reqBody.wanDiffusionOverrides = wdOverrides;
+  // v0.76.0: local_diffusion + generation overrides.
+  const ldOverrides = buildLocalDiffusionOverrides();
+  if (ldOverrides) reqBody.localDiffusionOverrides = ldOverrides;
+  const genOverrides = buildGenerationOverrides();
+  if (genOverrides) reqBody.generationOverrides = genOverrides;
 
   let resp = null;
   let data = null;

@@ -850,6 +850,102 @@
             tier's per-shot adjustment.
           </p>
         </details>
+        <!-- v0.76.0: local_diffusion + generation overrides (vivijure-
+             serverless 0.4.32+). The SDXL base + keyframe-SDXL knobs
+             that pre-0.4.32 were baked into the image. -->
+        <details class="planner-overrides-raw-details">
+          <summary class="planner-overrides-summary">SDXL base + keyframe + seeds (advanced)</summary>
+          <div class="planner-overrides-fields">
+            <label class="planner-field">
+              <span>SDXL base model id (pod default stabilityai/sdxl-turbo)</span>
+              <input id="planner-ld-model-id" type="text" maxlength="256" placeholder="stabilityai/sdxl-turbo" />
+            </label>
+            <label class="planner-field">
+              <span>SDXL base resolution (pod default 1920x1080)</span>
+              <input id="planner-ld-resolution" type="text" pattern="\d+x\d+" placeholder="1920x1080" />
+            </label>
+            <label class="planner-field">
+              <span>portrait resolution (pod default 1080x1920)</span>
+              <input id="planner-ld-portrait-resolution" type="text" pattern="\d+x\d+" placeholder="1080x1920" />
+            </label>
+            <label class="planner-field">
+              <span>SDXL base steps (pod default 6 turbo)</span>
+              <input id="planner-ld-steps" type="number" min="1" max="64" step="1" placeholder="6" />
+            </label>
+            <label class="planner-field">
+              <span>SDXL base CFG (pod default 0.0 turbo)</span>
+              <input id="planner-ld-guidance-scale" type="number" min="0" max="30" step="0.1" placeholder="0.0" />
+            </label>
+            <label class="planner-field">
+              <span>img2img denoise (pod default 0.46)</span>
+              <input id="planner-ld-denoising-strength" type="number" min="0" max="1" step="0.01" placeholder="0.46" />
+            </label>
+            <label class="planner-field">
+              <span>device</span>
+              <select id="planner-ld-device">
+                <option value="">(use pod default: gpu)</option>
+                <option value="gpu">gpu</option>
+                <option value="cpu">cpu</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>dtype</span>
+              <select id="planner-ld-dtype">
+                <option value="">(use pod default: float16)</option>
+                <option value="float16">float16</option>
+                <option value="bfloat16">bfloat16</option>
+                <option value="float32">float32</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>sequential CPU offload</span>
+              <select id="planner-ld-seq-cpu-offload">
+                <option value="">(use pod default: false)</option>
+                <option value="true">true (lower VRAM while Wan runs)</option>
+                <option value="false">false</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>keyframe SDXL model id (empty = auto-detect; turbo refused)</span>
+              <input id="planner-ld-keyframe-model-id" type="text" maxlength="256" placeholder="" />
+            </label>
+            <label class="planner-field">
+              <span>keyframe CFG (pod default 6.0)</span>
+              <input id="planner-ld-keyframe-guidance-scale" type="number" min="0" max="30" step="0.1" placeholder="6.0" />
+            </label>
+            <label class="planner-field">
+              <span>keyframe steps (pod default 28)</span>
+              <input id="planner-ld-keyframe-steps" type="number" min="1" max="128" step="1" placeholder="28" />
+            </label>
+            <label class="planner-field">
+              <span>seed mode</span>
+              <select id="planner-gen-seed-mode">
+                <option value="">(use pod default: locked)</option>
+                <option value="locked">locked (same seed every shot)</option>
+                <option value="sequential">sequential (seed + shot_index*step)</option>
+                <option value="random">random</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>seed (pod default 424242)</span>
+              <input id="planner-gen-seed" type="number" min="0" step="1" placeholder="424242" />
+            </label>
+            <label class="planner-field">
+              <span>seed_per_shot_step (sequential only; pod default 1)</span>
+              <input id="planner-gen-seed-per-shot-step" type="number" min="1" max="1000" step="1" placeholder="1" />
+            </label>
+          </div>
+          <p class="planner-overrides-hint">
+            forwarded as <code>local_diffusion_overrides</code> +
+            <code>generation_overrides</code>. SDXL base controls govern
+            the img2img path used for portraits / chained scenes;
+            keyframe controls govern the CFG-capable SDXL base used for
+            the per-shot keyframe (turbo refused at the keyframe stage).
+            seed_mode here is the block-level value;
+            <code>seed_mode</code> in render_overrides above wins on
+            key conflict.
+          </p>
+        </details>
         <details class="planner-overrides-raw-details">
           <summary class="planner-overrides-summary">raw JSON overrides (wins on conflict)</summary>
           <textarea id="planner-render-overrides" rows="3" placeholder='{"wan_inference_steps": 12, "wan_num_frames": 33}' spellcheck="false"></textarea>

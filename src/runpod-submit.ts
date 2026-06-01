@@ -77,6 +77,10 @@ export interface RenderSubmitArgs {
   // (vivijure-serverless 0.4.31+).
   adetailerOverrides?: AdetailerOverrides;
   wanDiffusionOverrides?: WanDiffusionOverrides;
+  // v0.76.0: local_diffusion block + generation block
+  // (vivijure-serverless 0.4.32+).
+  localDiffusionOverrides?: LocalDiffusionOverrides;
+  generationOverrides?: GenerationOverrides;
 }
 
 export interface LoraTrainOverrides {
@@ -115,6 +119,49 @@ export interface QualityGateOverrides {
   // When true the render proceeds even on verdict="fail". When false
   // a hard fail blocks the render.
   allow_warn?: boolean;
+}
+
+// v0.76.0: local_diffusion block - the SDXL base + keyframe-SDXL knobs
+// the pod uses for keyframe generation. Routes through to vivijure-
+// serverless 0.4.32+'s in-place mutation of core.CONFIG["local_diffusion"].
+export interface LocalDiffusionOverrides {
+  // Base SDXL model id. Pod default stabilityai/sdxl-turbo.
+  model_id?: string;
+  // "WIDTHxHEIGHT" string. Pod default "1920x1080".
+  resolution?: string;
+  // "WIDTHxHEIGHT" string. Pod default "1080x1920".
+  portrait_resolution?: string;
+  // Inference steps for the base SDXL path. Pod default 6 (turbo).
+  steps?: number;             // int 1..64
+  // CFG guidance. Pod default 0.0 for turbo.
+  guidance_scale?: number;    // 0..30
+  // img2img denoise. Pod default 0.46.
+  denoising_strength?: number; // 0..1
+  // "gpu" | "cpu". Pod default "gpu".
+  device?: string;
+  // "float16" | "float32" | "bfloat16". Pod default float16.
+  dtype?: string;
+  // Offload SDXL to CPU between calls to free VRAM for Wan. Pod default false.
+  sequential_cpu_offload?: boolean;
+  // Override keyframe-stage SDXL model. Empty = auto-detect a CFG-capable
+  // base (turbo is refused because it drops the unconditional pass).
+  keyframe_model_id?: string;
+  // CFG for the keyframe stage. Pod default 6.0.
+  keyframe_guidance_scale?: number; // 0..30
+  // Steps for the keyframe stage. Pod default 28.
+  keyframe_steps?: number;          // int 1..128
+}
+
+// v0.76.0: generation block - seed handling. seed_mode is already exposed
+// as a flat render_overrides key (v0.71.0); this lets seed + seed_per_
+// shot_step also be Worker-driven without a pod rebuild.
+export interface GenerationOverrides {
+  // "random" | "locked" | "sequential". Pod default "locked".
+  seed_mode?: "random" | "locked" | "sequential";
+  // Base RNG seed. Pod default 424242.
+  seed?: number;                // int >=0
+  // sequential mode only: seed + shot_index*step. Pod default 1.
+  seed_per_shot_step?: number;  // int 1..1000
 }
 
 // v0.75.0: production.adetailer sub-block - the hand/face inpaint
@@ -341,6 +388,9 @@ export interface RenderJobInput {
   // v0.75.0: adetailer + wan_diffusion (0.4.31+).
   adetailer_overrides?: AdetailerOverrides;
   wan_diffusion_overrides?: WanDiffusionOverrides;
+  // v0.76.0: local_diffusion + generation (0.4.32+).
+  local_diffusion_overrides?: LocalDiffusionOverrides;
+  generation_overrides?: GenerationOverrides;
 }
 
 // v0.41.0: per-shot SDXL keyframe regeneration. The Worker derives the
@@ -404,6 +454,9 @@ export interface FinalizeArgs {
   // v0.75.0: same adetailer + wan_diffusion overrides as RenderSubmitArgs.
   adetailerOverrides?: AdetailerOverrides;
   wanDiffusionOverrides?: WanDiffusionOverrides;
+  // v0.76.0: same local_diffusion + generation overrides as RenderSubmitArgs.
+  localDiffusionOverrides?: LocalDiffusionOverrides;
+  generationOverrides?: GenerationOverrides;
 }
 
 export interface FinalizeJobInput {
@@ -427,6 +480,8 @@ export interface FinalizeJobInput {
   face_lock_overrides?: FaceLockOverrides;
   adetailer_overrides?: AdetailerOverrides;
   wan_diffusion_overrides?: WanDiffusionOverrides;
+  local_diffusion_overrides?: LocalDiffusionOverrides;
+  generation_overrides?: GenerationOverrides;
 }
 
 // v0.57.0: standalone LoRA training. The cast manager UI on /cast
@@ -575,6 +630,11 @@ export function buildSubmitPayload(args: RenderSubmitArgs): { input: RenderJobIn
   if (ad) input.adetailer_overrides = ad;
   const wd = normalizeWanDiffusionOverrides(args.wanDiffusionOverrides);
   if (wd) input.wan_diffusion_overrides = wd;
+  // v0.76.0: local_diffusion + generation.
+  const ld = normalizeLocalDiffusionOverrides(args.localDiffusionOverrides);
+  if (ld) input.local_diffusion_overrides = ld;
+  const gen = normalizeGenerationOverrides(args.generationOverrides);
+  if (gen) input.generation_overrides = gen;
   return { input };
 }
 
@@ -631,6 +691,10 @@ export function buildFinalizePayload(args: FinalizeArgs): { input: FinalizeJobIn
   if (adF) input.adetailer_overrides = adF;
   const wdF = normalizeWanDiffusionOverrides(args.wanDiffusionOverrides);
   if (wdF) input.wan_diffusion_overrides = wdF;
+  const ldF = normalizeLocalDiffusionOverrides(args.localDiffusionOverrides);
+  if (ldF) input.local_diffusion_overrides = ldF;
+  const genF = normalizeGenerationOverrides(args.generationOverrides);
+  if (genF) input.generation_overrides = genF;
   return { input };
 }
 
@@ -673,6 +737,69 @@ export function normalizeLoraTrainOverrides(
     if (typeof v === "number" && Number.isFinite(v) && v > 0) {
       out[k] = v;
     }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// v0.76.0: normalize local_diffusion overrides. The resolution strings
+// are validated against "WIDTHxHEIGHT" with dimensions in 64..7680.
+export function normalizeLocalDiffusionOverrides(
+  raw: LocalDiffusionOverrides | undefined,
+): LocalDiffusionOverrides | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: LocalDiffusionOverrides = {};
+  if (typeof raw.model_id === "string" && raw.model_id.length > 0 && raw.model_id.length <= 256) {
+    out.model_id = raw.model_id;
+  }
+  const resRe = /^\d{2,5}x\d{2,5}$/;
+  if (typeof raw.resolution === "string" && resRe.test(raw.resolution)) {
+    out.resolution = raw.resolution;
+  }
+  if (typeof raw.portrait_resolution === "string" && resRe.test(raw.portrait_resolution)) {
+    out.portrait_resolution = raw.portrait_resolution;
+  }
+  if (typeof raw.steps === "number" && Number.isInteger(raw.steps) && raw.steps >= 1 && raw.steps <= 64) {
+    out.steps = raw.steps;
+  }
+  if (typeof raw.guidance_scale === "number" && Number.isFinite(raw.guidance_scale) && raw.guidance_scale >= 0 && raw.guidance_scale <= 30) {
+    out.guidance_scale = raw.guidance_scale;
+  }
+  if (typeof raw.denoising_strength === "number" && Number.isFinite(raw.denoising_strength) && raw.denoising_strength >= 0 && raw.denoising_strength <= 1) {
+    out.denoising_strength = raw.denoising_strength;
+  }
+  if (raw.device === "gpu" || raw.device === "cpu") out.device = raw.device;
+  if (raw.dtype === "float16" || raw.dtype === "float32" || raw.dtype === "bfloat16") {
+    out.dtype = raw.dtype;
+  }
+  if (typeof raw.sequential_cpu_offload === "boolean") {
+    out.sequential_cpu_offload = raw.sequential_cpu_offload;
+  }
+  if (typeof raw.keyframe_model_id === "string" && raw.keyframe_model_id.length <= 256) {
+    out.keyframe_model_id = raw.keyframe_model_id;
+  }
+  if (typeof raw.keyframe_guidance_scale === "number" && Number.isFinite(raw.keyframe_guidance_scale) && raw.keyframe_guidance_scale >= 0 && raw.keyframe_guidance_scale <= 30) {
+    out.keyframe_guidance_scale = raw.keyframe_guidance_scale;
+  }
+  if (typeof raw.keyframe_steps === "number" && Number.isInteger(raw.keyframe_steps) && raw.keyframe_steps >= 1 && raw.keyframe_steps <= 128) {
+    out.keyframe_steps = raw.keyframe_steps;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// v0.76.0: normalize generation overrides.
+export function normalizeGenerationOverrides(
+  raw: GenerationOverrides | undefined,
+): GenerationOverrides | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: GenerationOverrides = {};
+  if (raw.seed_mode === "random" || raw.seed_mode === "locked" || raw.seed_mode === "sequential") {
+    out.seed_mode = raw.seed_mode;
+  }
+  if (typeof raw.seed === "number" && Number.isInteger(raw.seed) && raw.seed >= 0) {
+    out.seed = raw.seed;
+  }
+  if (typeof raw.seed_per_shot_step === "number" && Number.isInteger(raw.seed_per_shot_step) && raw.seed_per_shot_step >= 1 && raw.seed_per_shot_step <= 1000) {
+    out.seed_per_shot_step = raw.seed_per_shot_step;
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }

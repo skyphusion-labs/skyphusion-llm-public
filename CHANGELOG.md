@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.76.0
+
+Phase 9 of the worker-pod config pull. The `local_diffusion.*` block (12 keys; SDXL base + keyframe-SDXL knobs) and the `generation.*` block (3 keys; seed handling) become routable from the web Worker. Pod side landed in vivijure-serverless 0.4.32, which also fixes the v0.4.31 parse-block gap (the `adetailer_overrides` + `wan_diffusion_overrides` kwargs were referencing variables that were never parsed off the input — a NameError at runtime any time those overrides reached the handler).
+
+### Backend
+
+- `src/runpod-submit.ts`: `LocalDiffusionOverrides` + `GenerationOverrides` interfaces + `normalizeLocalDiffusionOverrides` / `normalizeGenerationOverrides` with per-field union / range / length-cap validation and "WIDTHxHEIGHT" resolution-string check. Both Args + JobInput types carry the new fields; all three builders forward them.
+- `src/index.ts`: `RenderSubmitRequest` accepts `localDiffusionOverrides` + `generationOverrides`; both render and finalize handlers read them and forward through.
+
+### Frontend
+
+- `public/planner.html`: new "SDXL base + keyframe + seeds (advanced)" disclosure with all 15 controls.
+- `public/planner.js`: `buildLocalDiffusionOverrides()` + `buildGenerationOverrides()` read + validate, attached alongside the other override builders.
+
+### Tests
+
+464/464 still passing, type-check clean.
+
 ## v0.75.0
 
 Phase 8 of the worker-pod config pull. Two more config.yaml blocks become routable from the web Worker: `production.adetailer.*` (7 keys; the hand/face inpaint refinement pass) and `wan_diffusion.*` (11 keys; the Wan I2V / T2V model + inference knobs). Pod side landed in vivijure-serverless 0.4.31.

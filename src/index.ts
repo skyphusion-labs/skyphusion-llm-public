@@ -3643,6 +3643,15 @@ async function runMusic(
   // look it up later for status/observability. If create() itself fails
   // (e.g., quota exceeded), fail the row synchronously so the client sees
   // an error rather than an indefinite pending state.
+  // v0.62.0: MiniMax music-2.6 returns gateway error 7003 ("User Input
+  // Error") when lyrics is empty or missing, even for instrumental
+  // requests. Default to "[Instrumental]" - the model's own marker
+  // syntax - so a caller that wants an instrumental track can omit the
+  // system_prompt without their job failing seconds after submit. A
+  // non-empty system_prompt (real lyrics) wins.
+  const rawLyrics = (body.system_prompt ?? "").trim();
+  const lyrics = rawLyrics.length > 0 ? body.system_prompt! : "[Instrumental]";
+
   let instanceId: string;
   try {
     const instance = await env.LONGRUN.create({
@@ -3651,7 +3660,7 @@ async function runMusic(
         userEmail,
         modelId: model.id,
         prompt: body.user_input,
-        lyrics: body.system_prompt ?? "",
+        lyrics,
         kind: "music",
         startedAtIso: startedAt,
       } satisfies LongRunParams,

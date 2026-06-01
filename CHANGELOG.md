@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.62.0
+
+Second hot-fix surfaced during the end-to-end smoke test: MiniMax music-2.6 returns AI Gateway error 7003 ("User Input Error") when the `lyrics` field is empty or missing, even for instrumental requests. The planner's music-gen UI submits with no `system_prompt`, so every "generate music" click was failing seconds after submit.
+
+### Backend
+
+- `src/index.ts` `runMusic`: when the caller omits `system_prompt` (or sends an empty / whitespace-only string), default `lyrics` to `[Instrumental]` - MiniMax's own marker syntax for an instrumental track. A non-empty system_prompt (real lyrics) still wins, so users who want vocals can keep doing so.
+
+No UI change needed: the existing music-gen button sends `{model, user_input}` only, and the Worker now fills in the lyrics default behind it. Future UI work could surface an explicit lyrics input, but the implicit default unblocks the common case immediately.
+
+464/464 still passing.
+
 ## v0.61.0
 
 Hot-fix surfaced during the v0.61.0-era end-to-end smoke test: the standalone LoRA training gate at `POST /api/cast/:id/train-lora` accepted cast members with as few as 4 reference images, but the GPU side (`orchestrator.py:39 MIN_TRAINING_IMAGES = 8`) rejects them with `train_loras returned {}` after the bundle is built and uploaded. Two test characters with 5 and 7 refs each FAILED in ~5 seconds with no .safetensors produced.

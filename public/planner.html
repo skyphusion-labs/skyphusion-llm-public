@@ -946,6 +946,88 @@
             key conflict.
           </p>
         </details>
+        <!-- v0.77.0: top-level scene-length scalars + movie block
+             (vivijure-serverless 0.4.34+). These govern how long the
+             pipeline thinks each scene should be and the movie-mode
+             chain defaults. -->
+        <details class="planner-overrides-raw-details">
+          <summary class="planner-overrides-summary">scene length + movie (advanced)</summary>
+          <div class="planner-overrides-fields">
+            <label class="planner-field">
+              <span>target scene seconds (pod default 8.0)</span>
+              <input id="planner-sl-target-scene-seconds" type="number" min="0.5" max="60" step="0.1" placeholder="8.0" />
+            </label>
+            <label class="planner-field">
+              <span>min scene seconds (pod default 6.0)</span>
+              <input id="planner-sl-min-scene-seconds" type="number" min="0.5" max="60" step="0.1" placeholder="6.0" />
+            </label>
+            <label class="planner-field">
+              <span>max scene seconds (pod default 10.0)</span>
+              <input id="planner-sl-max-scene-seconds" type="number" min="0.5" max="60" step="0.1" placeholder="10.0" />
+            </label>
+            <label class="planner-field">
+              <span>max video seconds (pod default 900)</span>
+              <input id="planner-sl-max-video-seconds" type="number" min="1" max="7200" step="1" placeholder="900" />
+            </label>
+            <label class="planner-field">
+              <span>max scenes (pod default 100)</span>
+              <input id="planner-sl-max-scenes" type="number" min="1" max="500" step="1" placeholder="100" />
+            </label>
+            <label class="planner-field">
+              <span>movie default clip seconds (pod default 8.0)</span>
+              <input id="planner-mv-default-clip-seconds" type="number" min="0.5" max="60" step="0.1" placeholder="8.0" />
+            </label>
+            <label class="planner-field">
+              <span>movie min clip seconds (pod default 6.0)</span>
+              <input id="planner-mv-min-clip-seconds" type="number" min="0.5" max="60" step="0.1" placeholder="6.0" />
+            </label>
+            <label class="planner-field">
+              <span>force exact N shots (pod default 0 = off)</span>
+              <input id="planner-mv-default-force-shots" type="number" min="0" max="500" step="1" placeholder="0" />
+            </label>
+            <label class="planner-field">
+              <span>movie default duration minutes (pod default 2)</span>
+              <input id="planner-mv-default-duration-minutes" type="number" min="0" max="120" step="1" placeholder="2" />
+            </label>
+            <label class="planner-field">
+              <span>movie crossfade seconds (pod default 0.45)</span>
+              <input id="planner-mv-crossfade-seconds" type="number" min="0" max="5" step="0.05" placeholder="0.45" />
+            </label>
+            <label class="planner-field">
+              <span>chain scenes</span>
+              <select id="planner-mv-chain-scenes">
+                <option value="">(use pod default: true)</option>
+                <option value="true">true</option>
+                <option value="false">false (independent clips)</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>movie Wan num_frames (pod default 97)</span>
+              <input id="planner-mv-wan-num-frames" type="number" min="1" max="256" step="1" placeholder="97" />
+            </label>
+            <label class="planner-field">
+              <span>movie Wan inference_steps (pod default 22)</span>
+              <input id="planner-mv-wan-inference-steps" type="number" min="1" max="64" step="1" placeholder="22" />
+            </label>
+            <label class="planner-field">
+              <span>movie Wan fps (pod default 16)</span>
+              <input id="planner-mv-wan-fps" type="number" min="1" max="120" step="1" placeholder="16" />
+            </label>
+            <label class="planner-field">
+              <span>motion suffix (free text)</span>
+              <input id="planner-mv-motion-suffix" type="text" maxlength="512" placeholder="smooth cinematic camera motion, natural movement..." />
+            </label>
+          </div>
+          <p class="planner-overrides-hint">
+            forwarded as <code>scene_length_overrides</code> +
+            <code>movie_overrides</code>. scene-length caps gate the
+            planner's clip-duration math. movie block governs
+            production_mode=movie chain defaults; the flat
+            <code>wan_num_frames</code> / <code>wan_inference_steps</code>
+            <code>render_overrides</code> keys above still win when both
+            are set.
+          </p>
+        </details>
         <details class="planner-overrides-raw-details">
           <summary class="planner-overrides-summary">raw JSON overrides (wins on conflict)</summary>
           <textarea id="planner-render-overrides" rows="3" placeholder='{"wan_inference_steps": 12, "wan_num_frames": 33}' spellcheck="false"></textarea>

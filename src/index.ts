@@ -1509,6 +1509,10 @@ interface RenderSubmitRequest {
   // (vivijure-serverless 0.4.32+).
   localDiffusionOverrides?: unknown;
   generationOverrides?: unknown;
+  // v0.77.0: scene-length scalars + movie block
+  // (vivijure-serverless 0.4.34+).
+  sceneLengthOverrides?: unknown;
+  movieOverrides?: unknown;
 }
 
 async function handleRenderSubmit(request: Request, env: Env): Promise<Response> {
@@ -1704,6 +1708,15 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
     generationOverrides:
       body.generationOverrides && typeof body.generationOverrides === "object"
         ? (body.generationOverrides as RenderSubmitArgs["generationOverrides"])
+        : undefined,
+    // v0.77.0: scene_length + movie passthrough.
+    sceneLengthOverrides:
+      body.sceneLengthOverrides && typeof body.sceneLengthOverrides === "object"
+        ? (body.sceneLengthOverrides as RenderSubmitArgs["sceneLengthOverrides"])
+        : undefined,
+    movieOverrides:
+      body.movieOverrides && typeof body.movieOverrides === "object"
+        ? (body.movieOverrides as RenderSubmitArgs["movieOverrides"])
         : undefined,
   };
 
@@ -2378,6 +2391,8 @@ async function handleFinalizeSubmit(
   let bodyWanDiffusionOverrides: RenderSubmitArgs["wanDiffusionOverrides"] | undefined;
   let bodyLocalDiffusionOverrides: RenderSubmitArgs["localDiffusionOverrides"] | undefined;
   let bodyGenerationOverrides: RenderSubmitArgs["generationOverrides"] | undefined;
+  let bodySceneLengthOverrides: RenderSubmitArgs["sceneLengthOverrides"] | undefined;
+  let bodyMovieOverrides: RenderSubmitArgs["movieOverrides"] | undefined;
   try {
     const ct = (request.headers.get("content-type") || "").toLowerCase();
     if (ct.includes("application/json")) {
@@ -2397,6 +2412,8 @@ async function handleFinalizeSubmit(
         wanDiffusionOverrides?: unknown;
         localDiffusionOverrides?: unknown;
         generationOverrides?: unknown;
+        sceneLengthOverrides?: unknown;
+        movieOverrides?: unknown;
       };
       if (typeof parsed?.audioKey === "string" && parsed.audioKey.length > 0) {
         bodyAudioKey = parsed.audioKey;
@@ -2491,6 +2508,20 @@ async function handleFinalizeSubmit(
         && !Array.isArray(parsed.generationOverrides)
       ) {
         bodyGenerationOverrides = parsed.generationOverrides as RenderSubmitArgs["generationOverrides"];
+      }
+      if (
+        parsed?.sceneLengthOverrides
+        && typeof parsed.sceneLengthOverrides === "object"
+        && !Array.isArray(parsed.sceneLengthOverrides)
+      ) {
+        bodySceneLengthOverrides = parsed.sceneLengthOverrides as RenderSubmitArgs["sceneLengthOverrides"];
+      }
+      if (
+        parsed?.movieOverrides
+        && typeof parsed.movieOverrides === "object"
+        && !Array.isArray(parsed.movieOverrides)
+      ) {
+        bodyMovieOverrides = parsed.movieOverrides as RenderSubmitArgs["movieOverrides"];
       }
       if (parsed?.castLoras !== undefined) {
         if (
@@ -2621,6 +2652,9 @@ async function handleFinalizeSubmit(
     // v0.76.0: local_diffusion + generation passthrough (vivijure-serverless 0.4.32+).
     localDiffusionOverrides: bodyLocalDiffusionOverrides,
     generationOverrides: bodyGenerationOverrides,
+    // v0.77.0: scene_length + movie passthrough (vivijure-serverless 0.4.34+).
+    sceneLengthOverrides: bodySceneLengthOverrides,
+    movieOverrides: bodyMovieOverrides,
   });
   if (!result.ok) {
     return json(

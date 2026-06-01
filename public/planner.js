@@ -603,6 +603,51 @@ function buildCastLoraSubmit() {
   return out;
 }
 
+// v0.77.0: scene-length scalar overrides from the advanced disclosure.
+function buildSceneLengthOverrides() {
+  const $sel = (s) => $(s);
+  const out = {};
+  const tss = parseFloat(($sel("#planner-sl-target-scene-seconds") || {}).value || "");
+  if (Number.isFinite(tss) && tss >= 0.5 && tss <= 60) out.target_scene_seconds = tss;
+  const minss = parseFloat(($sel("#planner-sl-min-scene-seconds") || {}).value || "");
+  if (Number.isFinite(minss) && minss >= 0.5 && minss <= 60) out.min_scene_seconds = minss;
+  const maxss = parseFloat(($sel("#planner-sl-max-scene-seconds") || {}).value || "");
+  if (Number.isFinite(maxss) && maxss >= 0.5 && maxss <= 60) out.max_scene_seconds = maxss;
+  const mvs = parseFloat(($sel("#planner-sl-max-video-seconds") || {}).value || "");
+  if (Number.isInteger(mvs) && mvs >= 1 && mvs <= 7200) out.max_video_seconds = mvs;
+  const msc = parseFloat(($sel("#planner-sl-max-scenes") || {}).value || "");
+  if (Number.isInteger(msc) && msc >= 1 && msc <= 500) out.max_scenes = msc;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// v0.77.0: movie block overrides from the advanced disclosure.
+function buildMovieOverrides() {
+  const $sel = (s) => $(s);
+  const out = {};
+  const dcs = parseFloat(($sel("#planner-mv-default-clip-seconds") || {}).value || "");
+  if (Number.isFinite(dcs) && dcs >= 0.5 && dcs <= 60) out.default_clip_seconds = dcs;
+  const mcs = parseFloat(($sel("#planner-mv-min-clip-seconds") || {}).value || "");
+  if (Number.isFinite(mcs) && mcs >= 0.5 && mcs <= 60) out.min_clip_seconds = mcs;
+  const dfs = parseFloat(($sel("#planner-mv-default-force-shots") || {}).value || "");
+  if (Number.isInteger(dfs) && dfs >= 0 && dfs <= 500) out.default_force_shots = dfs;
+  const ddm = parseFloat(($sel("#planner-mv-default-duration-minutes") || {}).value || "");
+  if (Number.isInteger(ddm) && ddm >= 0 && ddm <= 120) out.default_duration_minutes = ddm;
+  const cfs = parseFloat(($sel("#planner-mv-crossfade-seconds") || {}).value || "");
+  if (Number.isFinite(cfs) && cfs >= 0 && cfs <= 5) out.crossfade_seconds = cfs;
+  const cs = ($sel("#planner-mv-chain-scenes") || {}).value;
+  if (cs === "true") out.chain_scenes = true;
+  else if (cs === "false") out.chain_scenes = false;
+  const wnf = parseFloat(($sel("#planner-mv-wan-num-frames") || {}).value || "");
+  if (Number.isInteger(wnf) && wnf >= 1 && wnf <= 256) out.wan_num_frames = wnf;
+  const wis = parseFloat(($sel("#planner-mv-wan-inference-steps") || {}).value || "");
+  if (Number.isInteger(wis) && wis >= 1 && wis <= 64) out.wan_inference_steps = wis;
+  const wf = parseFloat(($sel("#planner-mv-wan-fps") || {}).value || "");
+  if (Number.isInteger(wf) && wf >= 1 && wf <= 120) out.wan_fps = wf;
+  const ms = (($sel("#planner-mv-motion-suffix") || {}).value || "").trim();
+  if (ms && ms.length <= 512) out.motion_suffix = ms;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 // v0.76.0: local_diffusion overrides from the advanced disclosure.
 function buildLocalDiffusionOverrides() {
   const $sel = (s) => $(s);
@@ -2881,6 +2926,11 @@ async function submitRender() {
   if (ldOverrides) reqBody.localDiffusionOverrides = ldOverrides;
   const genOverrides = buildGenerationOverrides();
   if (genOverrides) reqBody.generationOverrides = genOverrides;
+  // v0.77.0: scene-length + movie overrides.
+  const slOverrides = buildSceneLengthOverrides();
+  if (slOverrides) reqBody.sceneLengthOverrides = slOverrides;
+  const mvOverrides = buildMovieOverrides();
+  if (mvOverrides) reqBody.movieOverrides = mvOverrides;
 
   let resp = null;
   let data = null;

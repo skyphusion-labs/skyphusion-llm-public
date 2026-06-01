@@ -81,6 +81,10 @@ export interface RenderSubmitArgs {
   // (vivijure-serverless 0.4.32+).
   localDiffusionOverrides?: LocalDiffusionOverrides;
   generationOverrides?: GenerationOverrides;
+  // v0.77.0: top-level scene-length scalars + movie block
+  // (vivijure-serverless 0.4.34+).
+  sceneLengthOverrides?: SceneLengthOverrides;
+  movieOverrides?: MovieOverrides;
 }
 
 export interface LoraTrainOverrides {
@@ -119,6 +123,50 @@ export interface QualityGateOverrides {
   // When true the render proceeds even on verdict="fail". When false
   // a hard fail blocks the render.
   allow_warn?: boolean;
+}
+
+// v0.77.0: top-level scene-length scalars. Affect clip-duration
+// computation in the renderer + scene-cap gates in story planning.
+// Routed through vivijure-serverless 0.4.34+'s in-place mutation
+// of the five flat keys on core.CONFIG.
+export interface SceneLengthOverrides {
+  // Target seconds per scene when no explicit duration. Pod default 8.0.
+  target_scene_seconds?: number; // 0.5..60
+  // Lower bound for scene length. Pod default 6.0.
+  min_scene_seconds?: number;    // 0.5..60
+  // Upper bound for scene length. Pod default 10.0.
+  max_scene_seconds?: number;    // 0.5..60
+  // Hard cap on total video length. Pod default 900s.
+  max_video_seconds?: number;    // int 1..7200
+  // Hard cap on scene count. Pod default 100.
+  max_scenes?: number;           // int 1..500
+}
+
+// v0.77.0: movie block - the chained-scenes / motion / per-clip Wan
+// defaults used in movie production mode. Routes through vivijure-
+// serverless 0.4.34+'s in-place CONFIG mutation.
+export interface MovieOverrides {
+  // Target clip seconds (movie mode). Pod default 8.0.
+  default_clip_seconds?: number; // 0.5..60
+  // Lower bound for movie-mode clips. Pod default 6.0.
+  min_clip_seconds?: number;     // 0.5..60
+  // When >0, forces exactly N shots ignoring duration math. Pod default 0 (off).
+  default_force_shots?: number;  // int 0..500
+  // Default movie duration when not specified by the user. Pod default 2 minutes.
+  default_duration_minutes?: number; // int 0..120
+  // Crossfade seconds between movie clips. Pod default 0.45.
+  crossfade_seconds?: number;    // 0..5
+  // Whether to chain scenes (previous shot's last frame seeds the next). Pod default true.
+  chain_scenes?: boolean;
+  // Movie-mode Wan frame count per clip. Pod default 97 (~6s at 16fps).
+  wan_num_frames?: number;       // int 1..256
+  // Movie-mode Wan inference steps per clip. Pod default 22.
+  wan_inference_steps?: number;  // int 1..64
+  // Movie-mode Wan fps. Pod default 16.
+  wan_fps?: number;              // int 1..120
+  // Movie-mode motion-prompt suffix appended to every shot. Pod default
+  // "smooth cinematic camera motion, natural movement, temporal consistency, film sequence".
+  motion_suffix?: string;        // max 512 chars
 }
 
 // v0.76.0: local_diffusion block - the SDXL base + keyframe-SDXL knobs
@@ -391,6 +439,9 @@ export interface RenderJobInput {
   // v0.76.0: local_diffusion + generation (0.4.32+).
   local_diffusion_overrides?: LocalDiffusionOverrides;
   generation_overrides?: GenerationOverrides;
+  // v0.77.0: scene-length scalars + movie block (0.4.34+).
+  scene_length_overrides?: SceneLengthOverrides;
+  movie_overrides?: MovieOverrides;
 }
 
 // v0.41.0: per-shot SDXL keyframe regeneration. The Worker derives the
@@ -457,6 +508,9 @@ export interface FinalizeArgs {
   // v0.76.0: same local_diffusion + generation overrides as RenderSubmitArgs.
   localDiffusionOverrides?: LocalDiffusionOverrides;
   generationOverrides?: GenerationOverrides;
+  // v0.77.0: same scene_length + movie overrides as RenderSubmitArgs.
+  sceneLengthOverrides?: SceneLengthOverrides;
+  movieOverrides?: MovieOverrides;
 }
 
 export interface FinalizeJobInput {
@@ -482,6 +536,8 @@ export interface FinalizeJobInput {
   wan_diffusion_overrides?: WanDiffusionOverrides;
   local_diffusion_overrides?: LocalDiffusionOverrides;
   generation_overrides?: GenerationOverrides;
+  scene_length_overrides?: SceneLengthOverrides;
+  movie_overrides?: MovieOverrides;
 }
 
 // v0.57.0: standalone LoRA training. The cast manager UI on /cast
@@ -635,6 +691,11 @@ export function buildSubmitPayload(args: RenderSubmitArgs): { input: RenderJobIn
   if (ld) input.local_diffusion_overrides = ld;
   const gen = normalizeGenerationOverrides(args.generationOverrides);
   if (gen) input.generation_overrides = gen;
+  // v0.77.0: scene-length + movie.
+  const sl = normalizeSceneLengthOverrides(args.sceneLengthOverrides);
+  if (sl) input.scene_length_overrides = sl;
+  const mv = normalizeMovieOverrides(args.movieOverrides);
+  if (mv) input.movie_overrides = mv;
   return { input };
 }
 
@@ -695,6 +756,10 @@ export function buildFinalizePayload(args: FinalizeArgs): { input: FinalizeJobIn
   if (ldF) input.local_diffusion_overrides = ldF;
   const genF = normalizeGenerationOverrides(args.generationOverrides);
   if (genF) input.generation_overrides = genF;
+  const slF = normalizeSceneLengthOverrides(args.sceneLengthOverrides);
+  if (slF) input.scene_length_overrides = slF;
+  const mvF = normalizeMovieOverrides(args.movieOverrides);
+  if (mvF) input.movie_overrides = mvF;
   return { input };
 }
 
@@ -737,6 +802,68 @@ export function normalizeLoraTrainOverrides(
     if (typeof v === "number" && Number.isFinite(v) && v > 0) {
       out[k] = v;
     }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// v0.77.0: normalize scene-length overrides. All 5 keys are top-level
+// scalars on the pod's config.yaml; the integer keys must be integers.
+export function normalizeSceneLengthOverrides(
+  raw: SceneLengthOverrides | undefined,
+): SceneLengthOverrides | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: SceneLengthOverrides = {};
+  if (typeof raw.target_scene_seconds === "number" && Number.isFinite(raw.target_scene_seconds) && raw.target_scene_seconds >= 0.5 && raw.target_scene_seconds <= 60) {
+    out.target_scene_seconds = raw.target_scene_seconds;
+  }
+  if (typeof raw.min_scene_seconds === "number" && Number.isFinite(raw.min_scene_seconds) && raw.min_scene_seconds >= 0.5 && raw.min_scene_seconds <= 60) {
+    out.min_scene_seconds = raw.min_scene_seconds;
+  }
+  if (typeof raw.max_scene_seconds === "number" && Number.isFinite(raw.max_scene_seconds) && raw.max_scene_seconds >= 0.5 && raw.max_scene_seconds <= 60) {
+    out.max_scene_seconds = raw.max_scene_seconds;
+  }
+  if (typeof raw.max_video_seconds === "number" && Number.isInteger(raw.max_video_seconds) && raw.max_video_seconds >= 1 && raw.max_video_seconds <= 7200) {
+    out.max_video_seconds = raw.max_video_seconds;
+  }
+  if (typeof raw.max_scenes === "number" && Number.isInteger(raw.max_scenes) && raw.max_scenes >= 1 && raw.max_scenes <= 500) {
+    out.max_scenes = raw.max_scenes;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// v0.77.0: normalize movie overrides.
+export function normalizeMovieOverrides(
+  raw: MovieOverrides | undefined,
+): MovieOverrides | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: MovieOverrides = {};
+  if (typeof raw.default_clip_seconds === "number" && Number.isFinite(raw.default_clip_seconds) && raw.default_clip_seconds >= 0.5 && raw.default_clip_seconds <= 60) {
+    out.default_clip_seconds = raw.default_clip_seconds;
+  }
+  if (typeof raw.min_clip_seconds === "number" && Number.isFinite(raw.min_clip_seconds) && raw.min_clip_seconds >= 0.5 && raw.min_clip_seconds <= 60) {
+    out.min_clip_seconds = raw.min_clip_seconds;
+  }
+  if (typeof raw.default_force_shots === "number" && Number.isInteger(raw.default_force_shots) && raw.default_force_shots >= 0 && raw.default_force_shots <= 500) {
+    out.default_force_shots = raw.default_force_shots;
+  }
+  if (typeof raw.default_duration_minutes === "number" && Number.isInteger(raw.default_duration_minutes) && raw.default_duration_minutes >= 0 && raw.default_duration_minutes <= 120) {
+    out.default_duration_minutes = raw.default_duration_minutes;
+  }
+  if (typeof raw.crossfade_seconds === "number" && Number.isFinite(raw.crossfade_seconds) && raw.crossfade_seconds >= 0 && raw.crossfade_seconds <= 5) {
+    out.crossfade_seconds = raw.crossfade_seconds;
+  }
+  if (typeof raw.chain_scenes === "boolean") out.chain_scenes = raw.chain_scenes;
+  if (typeof raw.wan_num_frames === "number" && Number.isInteger(raw.wan_num_frames) && raw.wan_num_frames >= 1 && raw.wan_num_frames <= 256) {
+    out.wan_num_frames = raw.wan_num_frames;
+  }
+  if (typeof raw.wan_inference_steps === "number" && Number.isInteger(raw.wan_inference_steps) && raw.wan_inference_steps >= 1 && raw.wan_inference_steps <= 64) {
+    out.wan_inference_steps = raw.wan_inference_steps;
+  }
+  if (typeof raw.wan_fps === "number" && Number.isInteger(raw.wan_fps) && raw.wan_fps >= 1 && raw.wan_fps <= 120) {
+    out.wan_fps = raw.wan_fps;
+  }
+  if (typeof raw.motion_suffix === "string" && raw.motion_suffix.length <= 512) {
+    out.motion_suffix = raw.motion_suffix;
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }

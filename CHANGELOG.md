@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.77.0
+
+Phase 10 of the worker-pod config pull. Two more config.yaml regions become routable from the web Worker: five top-level scene-length scalars (`target_scene_seconds`, `min_scene_seconds`, `max_scene_seconds`, `max_video_seconds`, `max_scenes`) and the `movie.*` block (10 keys; the movie-mode chain + per-clip Wan defaults). Pod side landed in vivijure-serverless 0.4.34.
+
+### Backend
+
+- `src/runpod-submit.ts`: `SceneLengthOverrides` + `MovieOverrides` interfaces + `normalizeSceneLengthOverrides` / `normalizeMovieOverrides` with per-field union / range / length-cap validation. Both Args + JobInput types carry the new fields; all builders forward them.
+- `src/index.ts`: `RenderSubmitRequest` accepts `sceneLengthOverrides` + `movieOverrides`; both render and finalize handlers read them and forward through.
+
+### Frontend
+
+- `public/planner.html`: new "scene length + movie (advanced)" disclosure with all 15 controls.
+- `public/planner.js`: `buildSceneLengthOverrides()` + `buildMovieOverrides()` read + validate, attached alongside the other override builders.
+
+### Tests
+
+464/464 still passing, type-check clean.
+
 ## v0.76.0
 
 Phase 9 of the worker-pod config pull. The `local_diffusion.*` block (12 keys; SDXL base + keyframe-SDXL knobs) and the `generation.*` block (3 keys; seed handling) become routable from the web Worker. Pod side landed in vivijure-serverless 0.4.32, which also fixes the v0.4.31 parse-block gap (the `adetailer_overrides` + `wan_diffusion_overrides` kwargs were referencing variables that were never parsed off the input — a NameError at runtime any time those overrides reached the handler).

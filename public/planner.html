@@ -224,6 +224,23 @@
       </div>
     </section>
 
+    <!-- v0.54.0: pre-render preflight. Pure storyboard checks +
+         optional R2 HEAD for the bundle / audio. The bundle and
+         render submit buttons gate on no preflight errors when the
+         panel is open; warnings are advisory and pass through. -->
+    <section id="planner-preflight" class="planner-stage" hidden>
+      <header class="planner-stage-header">
+        <h2 class="planner-stage-title">1d. preflight</h2>
+        <span id="planner-preflight-status" class="planner-status"></span>
+      </header>
+      <p class="planner-stage-hint">runs validator + scene shape checks + cast readiness + bundle / audio existence. errors gate the bundle button; warnings pass through.</p>
+      <div class="planner-preflight-toolbar">
+        <button id="planner-preflight-run" type="button" class="planner-secondary">run preflight</button>
+        <span id="planner-preflight-counts" class="planner-status"></span>
+      </div>
+      <ul id="planner-preflight-issues" class="planner-preflight-issues"></ul>
+    </section>
+
     <!-- v0.33.0: bundle stage. Revealed after a successful plan. -->
     <section id="planner-bundle" class="planner-stage" hidden>
       <header class="planner-stage-header">

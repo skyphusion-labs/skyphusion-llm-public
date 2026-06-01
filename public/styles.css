@@ -3691,3 +3691,70 @@ textarea:focus {
   font-family: inherit;
   font-size: 12px;
 }
+
+/* v0.54.0: preflight panel. */
+
+.planner-preflight-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.planner-preflight-issues {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.planner-preflight-issue {
+  display: grid;
+  grid-template-columns: 64px 120px 1fr;
+  gap: 12px;
+  align-items: start;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.planner-preflight-badge {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-align: center;
+}
+
+.planner-preflight-issue-error .planner-preflight-badge {
+  background: var(--error);
+  color: var(--bg);
+}
+
+.planner-preflight-issue-warning .planner-preflight-badge {
+  background: rgba(255, 196, 0, 0.85);
+  color: var(--bg);
+}
+
+.planner-preflight-issue-info .planner-preflight-badge {
+  background: var(--bg-elev2);
+  color: var(--fg-dim);
+}
+
+.planner-preflight-issue-error { border-color: var(--error); }
+.planner-preflight-issue-warning { border-color: rgba(255, 196, 0, 0.5); }
+
+.planner-preflight-scope {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.planner-preflight-msg {
+  color: var(--fg);
+}

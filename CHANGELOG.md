@@ -1,5 +1,54 @@
 # Changelog
 
+## v0.54.0
+
+Pre-render preflight + project dial-in expansion. The legacy
+`/api/project/{p}/preflight` and `/dial-in` routes had no Worker
+equivalent until now. v0.54.0 adds a pre-render validation surface
+that catches schema / shape / readiness errors before the user spends
+GPU time, and broadens the project-prefs round-trip from the small
+v0.53.0 set (model + brief + BPM) to the full render preset.
+
+### Preflight
+
+- `src/preflight.ts` (new, pure): `checkStoryboardShape` walks every scene checking for empty / very short prompts, slots not in `use_characters`, target_seconds outside the renderable range (<= 0, < 1.5s warning, > 12s warning). `checkCastBindingsReady` resolves slot → cast_id → catalog and flags missing portraits, missing refs, and sparse refs (<4). `summarize` produces a `{ok, counts, issues[]}` envelope (`ok = no errors`).
+- `POST /api/storyboard/preflight` (new): body `{storyboard, bundleKey?, audioKey?, castBindings?}`. Runs validator + pure checks; adds R2 HEAD checks on the bundle key (must exist in `R2_RENDERS`) and the audio key (resolves to `R2` for `out/...`, `R2_RENDERS` for `audio/...`; mismatched owner = error, missing = warning since the GPU just falls back to silent). Returns the summarize envelope.
+- Frontend (`#planner-preflight`): new section between the audio block and the bundle stage. Visible when a storyboard exists. Auto-runs on every successful plan and on demand via the "run preflight" button. Issues render with severity-colored badges (error red, warning amber, info dim) and a scope tag. When `counts.error > 0`, the bundle button gets disabled to gate the submit; warnings pass through.
+
+### Dial-in expansion
+
+The v0.53.0 prefs covered model id, brief, BPM, beats-per-shot. v0.54.0 adds the full render preset:
+
+- quality tier
+- keyframes-only checkbox
+- seed (text)
+- adetailer select
+- lora scale (number)
+- consistency select
+- render overrides JSON textarea (verbatim)
+
+`gatherProjectPrefs` reads them on save; `applyProjectPrefs` writes them on load. Saving a project after configuring the render form once means a future "Load project" restores the same render preset across sessions / browsers.
+
+### Tests
+
+20 new vitest tests:
+
+- `checkStoryboardShape` — empty prompt, very short prompt, slot mismatch, target_seconds <= 0, target_seconds < 1.5, target_seconds > 12, clean-pass, empty scenes
+- `checkCastBindingsReady` — happy path, no portrait, no refs, sparse refs, deleted binding, null bindings
+- `summarize` — ok-true on warnings only, ok-false on any error, empty list
+
+439/439 passing, type-check clean, planner.js syntax-checks.
+
+### No schema change
+
+Pure planner-side surface. Deploy is just `npm run deploy`; no D1 migration.
+
+### What is NOT in this PR
+
+- Auto-preflight on every scene edit (currently only on plan + refine + manual click). A debounced auto-run after edits would be a small follow-up.
+- Bundle button styling change beyond `disabled` (the gate works; an explicit "blocked by preflight: N errors" tooltip would polish the UX).
+- Pinning render-history rows to a `storyboard_projects.id` (still tracked from v0.53.0).
+
 ## v0.53.0
 
 Two legacy gaps closed in one PR: NLE markers export (one marker per scene, downloads as CSV ready for Premiere or DaVinci Resolve) and persisted storyboard projects (D1-backed, separate from the chat-side projects table). The planner gains a small project picker at the top ("(none) | <projects> | + new") and an "export markers" button in the scene editor toolbar.

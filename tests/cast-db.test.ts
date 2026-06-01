@@ -448,3 +448,142 @@ describe("slugifyProject", () => {
     expect(slugifyProject("---")).toBe("project");
   });
 });
+
+// v0.54.0: preflight. Pure storyboard checks; env checks (R2 HEAD) live
+// in the route handler.
+import { checkStoryboardShape, checkCastBindingsReady, summarize } from "../src/preflight";
+
+describe("checkStoryboardShape", () => {
+  const okSb = {
+    title: "t",
+    use_characters: ["A"],
+    scenes: [
+      { id: "shot_01", prompt: "wide establishing shot", character_slots: ["A"], target_seconds: 4 },
+      { id: "shot_02", prompt: "close-up reaction", character_slots: ["A"], target_seconds: 3 },
+    ],
+  };
+
+  it("flags empty prompt as error", () => {
+    const out = checkStoryboardShape({
+      ...okSb,
+      scenes: [{ id: "shot_01", prompt: "", character_slots: ["A"], target_seconds: 4 }],
+    });
+    expect(out.some((i) => i.level === "error" && /empty prompt/.test(i.message))).toBe(true);
+  });
+
+  it("flags very short prompt as warning", () => {
+    const out = checkStoryboardShape({
+      ...okSb,
+      scenes: [{ id: "shot_01", prompt: "hi", character_slots: ["A"], target_seconds: 4 }],
+    });
+    expect(out.some((i) => i.level === "warning" && /very short/.test(i.message))).toBe(true);
+  });
+
+  it("flags slot not in use_characters as error", () => {
+    const out = checkStoryboardShape({
+      ...okSb,
+      scenes: [{ id: "shot_01", prompt: "wide", character_slots: ["B"], target_seconds: 4 }],
+    });
+    expect(out.some((i) => i.level === "error" && /references slot "B"/.test(i.message))).toBe(true);
+  });
+
+  it("flags target_seconds <= 0 as error", () => {
+    const out = checkStoryboardShape({
+      ...okSb,
+      scenes: [{ id: "shot_01", prompt: "ok prompt", character_slots: ["A"], target_seconds: 0 }],
+    });
+    expect(out.some((i) => i.level === "error" && /target_seconds <= 0/.test(i.message))).toBe(true);
+  });
+
+  it("flags very short target_seconds as warning", () => {
+    const out = checkStoryboardShape({
+      ...okSb,
+      scenes: [{ id: "shot_01", prompt: "ok prompt", character_slots: ["A"], target_seconds: 1 }],
+    });
+    expect(out.some((i) => i.level === "warning" && /minimum is ~1.5s/.test(i.message))).toBe(true);
+  });
+
+  it("flags very long target_seconds as warning", () => {
+    const out = checkStoryboardShape({
+      ...okSb,
+      scenes: [{ id: "shot_01", prompt: "ok prompt", character_slots: ["A"], target_seconds: 15 }],
+    });
+    expect(out.some((i) => i.level === "warning" && /static/.test(i.message))).toBe(true);
+  });
+
+  it("returns no issues on a clean storyboard", () => {
+    const out = checkStoryboardShape(okSb);
+    expect(out).toHaveLength(0);
+  });
+
+  it("flags zero scenes as error", () => {
+    const out = checkStoryboardShape({ ...okSb, scenes: [] });
+    expect(out.some((i) => i.level === "error" && /no scenes/.test(i.message))).toBe(true);
+  });
+});
+
+describe("checkCastBindingsReady", () => {
+  const catalog = [
+    { id: 1, name: "Kira", portrait_key: "cast/1/portrait.png", ref_keys: [
+      { key: "a" }, { key: "b" }, { key: "c" }, { key: "d" },
+    ] },
+    { id: 2, name: "Voss", portrait_key: null, ref_keys: [{ key: "x" }] },
+    { id: 3, name: "Ash", portrait_key: "cast/3/portrait.png", ref_keys: [] },
+  ];
+
+  it("happy path: well-stocked binding produces no issues", () => {
+    const out = checkCastBindingsReady({ A: 1 }, catalog);
+    expect(out).toHaveLength(0);
+  });
+
+  it("flags missing portrait as error", () => {
+    const out = checkCastBindingsReady({ A: 2 }, catalog);
+    expect(out.some((i) => i.level === "error" && /no portrait/.test(i.message))).toBe(true);
+  });
+
+  it("flags zero refs as error", () => {
+    const out = checkCastBindingsReady({ A: 3 }, catalog);
+    expect(out.some((i) => i.level === "error" && /no training refs/.test(i.message))).toBe(true);
+  });
+
+  it("flags sparse refs as warning", () => {
+    const out = checkCastBindingsReady({ A: 2 }, catalog);
+    expect(out.some((i) => i.level === "warning" && /only 1 training refs/.test(i.message))).toBe(true);
+  });
+
+  it("flags binding to deleted cast as error", () => {
+    const out = checkCastBindingsReady({ A: 999 }, catalog);
+    expect(out.some((i) => i.level === "error" && /no longer exists/.test(i.message))).toBe(true);
+  });
+
+  it("returns empty for null/undefined bindings", () => {
+    expect(checkCastBindingsReady(null, catalog)).toEqual([]);
+    expect(checkCastBindingsReady(undefined, catalog)).toEqual([]);
+  });
+});
+
+describe("summarize", () => {
+  it("ok=true when no errors", () => {
+    const r = summarize([
+      { level: "warning", scope: "x", message: "m" },
+      { level: "info", scope: "x", message: "m" },
+    ]);
+    expect(r.ok).toBe(true);
+    expect(r.counts).toEqual({ error: 0, warning: 1, info: 1 });
+  });
+
+  it("ok=false when any error", () => {
+    const r = summarize([
+      { level: "error", scope: "x", message: "m" },
+      { level: "warning", scope: "x", message: "m" },
+    ]);
+    expect(r.ok).toBe(false);
+    expect(r.counts.error).toBe(1);
+  });
+
+  it("empty issues → ok=true with zero counts", () => {
+    const r = summarize([]);
+    expect(r.ok).toBe(true);
+    expect(r.counts).toEqual({ error: 0, warning: 0, info: 0 });
+  });
+});

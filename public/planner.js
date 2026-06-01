@@ -730,6 +730,120 @@ function collectCast() {
   return characters;
 }
 
+// ---------- Preflight (v0.54.0) ----------
+//
+// Runs the storyboard through /api/storyboard/preflight and renders
+// the resulting issue list. Errors gate the bundle button; warnings
+// just warn. Auto-runs once when a fresh plan or refine lands; the
+// user can re-run via the "run preflight" button after any edit.
+
+let preflightLastResult = null;
+let preflightRunning = false;
+
+function setPreflightStatus(text, kind) {
+  const el = $("#planner-preflight-status");
+  if (!el) return;
+  el.textContent = text || "";
+  el.className = "planner-status" + (kind ? " planner-" + kind : "");
+}
+
+function setPreflightCounts(text) {
+  const el = $("#planner-preflight-counts");
+  if (!el) return;
+  el.textContent = text || "";
+}
+
+function renderPreflightIssues(result) {
+  const list = $("#planner-preflight-issues");
+  if (!list) return;
+  list.innerHTML = "";
+  if (!result || !Array.isArray(result.issues) || result.issues.length === 0) {
+    setPreflightCounts(result ? "all clear (0 issues)" : "");
+    return;
+  }
+  setPreflightCounts(
+    "errors: " + (result.counts.error || 0)
+    + " · warnings: " + (result.counts.warning || 0)
+    + " · info: " + (result.counts.info || 0)
+  );
+  for (const issue of result.issues) {
+    const li = document.createElement("li");
+    li.className = "planner-preflight-issue planner-preflight-issue-" + issue.level;
+    const badge = document.createElement("span");
+    badge.className = "planner-preflight-badge";
+    badge.textContent = issue.level;
+    li.appendChild(badge);
+    const scope = document.createElement("span");
+    scope.className = "planner-preflight-scope";
+    scope.textContent = issue.scope;
+    li.appendChild(scope);
+    const msg = document.createElement("span");
+    msg.className = "planner-preflight-msg";
+    msg.textContent = issue.message;
+    li.appendChild(msg);
+    list.appendChild(li);
+  }
+}
+
+function showPreflightSection() {
+  const section = $("#planner-preflight");
+  if (!section) return;
+  section.hidden = !planState.storyboard;
+}
+
+function preflightBlocksBundle() {
+  return !!(preflightLastResult && preflightLastResult.counts && preflightLastResult.counts.error > 0);
+}
+
+async function runPreflight() {
+  if (!planState.storyboard) return;
+  if (preflightRunning) return;
+  preflightRunning = true;
+  $("#planner-preflight-run").disabled = true;
+  setPreflightStatus("running...", "loading");
+  try {
+    const body = {
+      storyboard: planState.storyboard,
+    };
+    if (bundleState.bundleKey) body.bundleKey = bundleState.bundleKey;
+    if (planState.audioKey) body.audioKey = planState.audioKey;
+    if (planState.castBindings && Object.keys(planState.castBindings).length > 0) {
+      body.castBindings = planState.castBindings;
+    }
+    const resp = await fetch("/api/storyboard/preflight", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || "HTTP " + resp.status);
+    preflightLastResult = data;
+    renderPreflightIssues(data);
+    if (data.ok) {
+      setPreflightStatus(
+        data.counts.warning > 0
+          ? "ok with " + data.counts.warning + " warning(s); bundle is unblocked"
+          : "all clear",
+        "success",
+      );
+    } else {
+      setPreflightStatus(
+        data.counts.error + " error(s); bundle is blocked",
+        "error",
+      );
+    }
+    // The bundle button is in the existing bundle stage; toggle disabled
+    // based on preflight outcome so the user cannot bypass an error.
+    const bundleBtn = $("#planner-bundle-btn");
+    if (bundleBtn) bundleBtn.disabled = preflightBlocksBundle();
+  } catch (err) {
+    setPreflightStatus("preflight failed: " + err.message, "error");
+  } finally {
+    preflightRunning = false;
+    $("#planner-preflight-run").disabled = false;
+  }
+}
+
 // ---------- Project picker + markers export (v0.53.0) ----------
 
 async function loadProjects() {
@@ -789,35 +903,63 @@ function applyProjectPrefs(prefs) {
   if (!prefs || typeof prefs !== "object") return;
   // Selectively pull known fields from the prefs object. The Worker
   // accepts arbitrary keys so the planner can add more here without a
-  // schema change.
-  if (typeof prefs.modelId === "string") {
-    const sel = $("#planner-model");
-    if (sel) sel.value = prefs.modelId;
-  }
+  // schema change. v0.54.0 expanded "dial-in" to include the render
+  // form fields (quality tier, structured overrides, keyframes-only)
+  // so picking a project also restores the render preset.
+  const setVal = (sel, v) => {
+    if (v === undefined || v === null) return;
+    const el = $(sel);
+    if (el) el.value = String(v);
+  };
+  const setCheck = (sel, v) => {
+    if (typeof v !== "boolean") return;
+    const el = $(sel);
+    if (el) el.checked = v;
+  };
+  setVal("#planner-model", prefs.modelId);
+  setVal("#planner-brief", prefs.brief);
   if (typeof prefs.bpm === "number" && prefs.bpm > 0) {
     planState.bpm = prefs.bpm;
-    const el = $("#planner-bpm");
-    if (el) el.value = String(prefs.bpm);
+    setVal("#planner-bpm", prefs.bpm);
   }
   if (typeof prefs.beatsPerShot === "number" && prefs.beatsPerShot > 0) {
     planState.beatsPerShot = prefs.beatsPerShot;
-    const el = $("#planner-beats-per-shot");
-    if (el) el.value = String(prefs.beatsPerShot);
+    setVal("#planner-beats-per-shot", prefs.beatsPerShot);
   }
-  if (typeof prefs.brief === "string") {
-    const el = $("#planner-brief");
-    if (el) el.value = prefs.brief;
+  // v0.54.0 dial-in: render-form fields.
+  setVal("#planner-quality-tier", prefs.qualityTier);
+  setCheck("#planner-keyframes-only", prefs.keyframesOnly);
+  setVal("#planner-seed", prefs.seed);
+  setVal("#planner-adetailer", prefs.adetailer);
+  setVal("#planner-lora-scale", prefs.loraScale);
+  setVal("#planner-consistency", prefs.consistency);
+  if (typeof prefs.renderOverridesText === "string") {
+    setVal("#planner-render-overrides", prefs.renderOverridesText);
   }
 }
 
 function gatherProjectPrefs() {
-  const modelEl = $("#planner-model");
-  const briefEl = $("#planner-brief");
+  const readVal = (sel) => {
+    const el = $(sel);
+    return el ? el.value : undefined;
+  };
+  const readCheck = (sel) => {
+    const el = $(sel);
+    return el ? !!el.checked : undefined;
+  };
   return {
-    modelId: modelEl ? modelEl.value : undefined,
-    brief: briefEl ? briefEl.value : undefined,
+    modelId: readVal("#planner-model"),
+    brief: readVal("#planner-brief"),
     bpm: planState.bpm,
     beatsPerShot: planState.beatsPerShot,
+    // v0.54.0 dial-in additions: full render preset.
+    qualityTier: readVal("#planner-quality-tier"),
+    keyframesOnly: readCheck("#planner-keyframes-only"),
+    seed: readVal("#planner-seed"),
+    adetailer: readVal("#planner-adetailer"),
+    loraScale: readVal("#planner-lora-scale"),
+    consistency: readVal("#planner-consistency"),
+    renderOverridesText: readVal("#planner-render-overrides"),
   };
 }
 
@@ -1723,6 +1865,10 @@ function renderPlanResult(httpStatus, data, model, characters) {
     planState.pendingMusicChatId = null;
     showAudioSection();
     renderSceneEditor(data.storyboard);
+    // v0.54.0: show the preflight section and auto-run a first check
+    // so the user sees the panel's state immediately.
+    showPreflightSection();
+    runPreflight();
     showBundleStage(data.storyboard, characters);
     savePersistedState();
     return;
@@ -4075,6 +4221,9 @@ document.addEventListener("DOMContentLoaded", () => {
   if (projDel) projDel.addEventListener("click", deleteActiveProject);
   const markersBtn = $("#planner-markers-export");
   if (markersBtn) markersBtn.addEventListener("click", exportMarkers);
+  // v0.54.0: preflight run button.
+  const preflightBtn = $("#planner-preflight-run");
+  if (preflightBtn) preflightBtn.addEventListener("click", runPreflight);
   const bpmEl = $("#planner-bpm");
   if (bpmEl) bpmEl.addEventListener("change", () => {
     const v = Number(bpmEl.value);

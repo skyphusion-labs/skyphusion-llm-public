@@ -35,6 +35,10 @@ import {
   setLastStoryboard, deleteProject,
 } from "./storyboard-projects-db";
 import { emitMarkers, type MarkersFormat } from "./markers";
+import {
+  checkStoryboardShape, checkCastBindingsReady, summarize,
+  type PreflightIssue,
+} from "./preflight";
 import { aiRun, aiLogId } from "./ai-binding";
 import { extractOutput, extractUsage, detectProviderFailure, extractProxiedImageUrl } from "./output-extract";
 import { chunkText } from "./chunking";
@@ -410,6 +414,13 @@ export default {
     // browser.
     if (url.pathname === "/api/storyboard/markers" && request.method === "POST") {
       return handleStoryboardMarkers(request);
+    }
+    // v0.54.0: pre-render preflight. Pure checks over the storyboard
+    // shape + optional R2 HEAD calls for the bundle / audio. Returns
+    // a list of {error|warning|info} issues; the planner UI gates the
+    // submit button on errors.
+    if (url.pathname === "/api/storyboard/preflight" && request.method === "POST") {
+      return handleStoryboardPreflight(request, env);
     }
     // v0.53.0: persisted storyboard projects (separate from chat projects).
     // List, create, get one, patch (name / prefs), save the last storyboard
@@ -900,6 +911,119 @@ async function handleAudioUpload(request: Request, env: Env): Promise<Response> 
     customMetadata: { user_email: userEmail },
   });
   return json({ key, mime, size: buf.byteLength, user: userEmail });
+}
+
+// ---------- /api/storyboard/preflight (v0.54.0) ----------
+//
+// Body: {storyboard, bundleKey?, audioKey?, castBindings?}.
+// Returns {ok, counts: {error, warning, info}, issues: [{level, scope, message}]}.
+// Pure storyboard checks come from src/preflight.ts; the env-touching
+// checks (R2 HEAD for the bundle, R2 HEAD for the audio) live here
+// and append to the same issue list.
+
+interface PreflightRequest {
+  storyboard?: unknown;
+  bundleKey?: unknown;
+  audioKey?: unknown;
+  castBindings?: unknown;
+}
+
+async function handleStoryboardPreflight(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  let body: PreflightRequest;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  if (body.storyboard === undefined || body.storyboard === null) {
+    return json({ error: "storyboard required" }, { status: 400 });
+  }
+  const validation = validateStoryboard(body.storyboard);
+  if (!validation.ok) {
+    // A storyboard that does not pass the validator is automatically
+    // "not renderable" with each validator error mapped to a preflight
+    // error. UI shows them inline so the user can fix without opening
+    // the JSON pane.
+    const issues: PreflightIssue[] = validation.errors.map((m) => ({
+      level: "error",
+      scope: "schema",
+      message: m,
+    }));
+    return json(summarize(issues));
+  }
+
+  const issues: PreflightIssue[] = [];
+  issues.push(...checkStoryboardShape(validation.value));
+
+  // Cast bindings readiness check: needs the persisted cast catalog so
+  // we can resolve {slot -> cast_id} -> {portrait + refs}. Skip when
+  // the planner did not supply bindings.
+  if (
+    body.castBindings
+    && typeof body.castBindings === "object"
+    && !Array.isArray(body.castBindings)
+  ) {
+    const catalog = await listCastForUser(env, userEmail);
+    issues.push(
+      ...checkCastBindingsReady(
+        body.castBindings as Record<string, number>,
+        catalog,
+      ),
+    );
+  }
+
+  // Bundle HEAD: if a bundleKey was supplied, confirm the .tar.gz
+  // exists in R2_RENDERS. The GPU side downloads from R2_BUCKET (=
+  // R2_RENDERS), so a missing key is a hard render error.
+  if (typeof body.bundleKey === "string" && body.bundleKey.length > 0) {
+    try {
+      const head = await env.R2_RENDERS.head(body.bundleKey);
+      if (!head) {
+        issues.push({
+          level: "error",
+          scope: "bundle",
+          message: `bundle ${body.bundleKey} does not exist in R2 (re-assemble at stage 2)`,
+        });
+      }
+    } catch (e) {
+      issues.push({
+        level: "warning",
+        scope: "bundle",
+        message: `could not HEAD bundle: ${e instanceof Error ? e.message : String(e)}`,
+      });
+    }
+  }
+
+  // Audio HEAD: BYO uploads live at audio/ in R2_RENDERS; MiniMax
+  // tracks live at out/ in R2. Resolve to the right bucket and HEAD.
+  if (typeof body.audioKey === "string" && body.audioKey.length > 0) {
+    const bucket = body.audioKey.startsWith("out/") ? env.R2 : env.R2_RENDERS;
+    try {
+      const head = await bucket.head(body.audioKey);
+      if (!head) {
+        issues.push({
+          level: "warning",
+          scope: "audio",
+          message: `audio key ${body.audioKey} does not exist; render will fall back to silent`,
+        });
+      } else if (head.customMetadata?.user_email !== userEmail) {
+        issues.push({
+          level: "error",
+          scope: "audio",
+          message: `audio key ${body.audioKey} is not owned by you`,
+        });
+      }
+    } catch (e) {
+      issues.push({
+        level: "warning",
+        scope: "audio",
+        message: `could not HEAD audio: ${e instanceof Error ? e.message : String(e)}`,
+      });
+    }
+  }
+
+  return json(summarize(issues));
 }
 
 // ---------- /api/storyboard/markers (v0.53.0) ----------

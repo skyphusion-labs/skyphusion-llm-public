@@ -2562,6 +2562,32 @@ textarea:focus {
   display: none;
 }
 
+/* v0.42.1: inline video player for completed rows that produced a
+   silent MP4. The video element constrains itself to the row width
+   and a reasonable max height so a 1080p MP4 does not blow out the
+   layout; aspect ratio is preserved via the intrinsic dimensions
+   the browser reads from the metadata fetch (preload="metadata"). */
+.planner-history-player {
+  margin-top: 12px;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: #000;
+}
+
+.planner-history-player-video {
+  display: block;
+  width: 100%;
+  max-height: 480px;
+  background: #000;
+}
+
+/* Gate the player on the row's collapsed state too, so a one-line
+   collapsed row stays one line. */
+.planner-history-item-collapsed .planner-history-player {
+  display: none;
+}
+
 .planner-history-keyframe-cap {
   font-size: 10px;
   color: var(--fg-dim);

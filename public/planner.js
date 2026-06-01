@@ -1772,6 +1772,26 @@ function buildHistoryRow(r) {
     if (strip.children.length > 0) li.appendChild(strip);
   }
 
+  // v0.42.1: inline video player for completed rows that produced a
+  // silent MP4. Sits between the keyframe strip (the per-shot stills)
+  // and the finalize row, so the visual order is meta -> stills ->
+  // motion. preload="metadata" so opening a row does NOT auto-pull
+  // the whole MP4; the network fetch starts when the user clicks
+  // play. The element is gated by the existing -collapsed class so
+  // a collapsed row stays one line.
+  if (r.status === "COMPLETED" && r.output_key) {
+    const playerWrap = document.createElement("div");
+    playerWrap.className = "planner-history-player";
+    const video = document.createElement("video");
+    video.src = "/api/artifact/" + r.output_key;
+    video.controls = true;
+    video.preload = "metadata";
+    video.playsInline = true;
+    video.className = "planner-history-player-video";
+    playerWrap.appendChild(video);
+    li.appendChild(playerWrap);
+  }
+
   // v0.42.0: finalize button. Shown only on completed keyframes-only
   // previews. Submits a finalize render (Wan I2V + assemble) using the
   // same bundle the preview used; the result lands as a NEW history

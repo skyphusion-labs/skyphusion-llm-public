@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.42.1
+
+Inline video player on completed history rows. Any row with `status: "COMPLETED"` and an `output_key` (silent MP4 produced) now renders a `<video controls>` element in the expanded view, sitting between the keyframe strip and the finalize row. Visual order is meta -> stills -> motion -> finalize, so the user can scrub a row from concept to finished movie without leaving the planner page.
+
+### Why
+
+The download MP4 -> open-locally dance was the only way to actually watch a finished render. For a 6-shot 20-second cut that takes 5 seconds to render in the system audio path but 30 seconds of clicking through. Inline play is just an `<video>` tag away, and it pairs naturally with the keyframe strip we already show.
+
+### What
+
+- `public/planner.js`: `buildHistoryRow` gains one block that creates a `.planner-history-player` div containing a `<video>` element when `r.status === "COMPLETED" && r.output_key`. Inserted between the keyframe strip and the finalize row, so the existing collapsed / expanded gating + finalize ordering work unchanged.
+- `<video>` config: `preload="metadata"` (do NOT auto-pull the whole MP4 on row expand; only the metadata block needed to render the controls and duration), `controls` (native browser playback chrome), `playsInline` (iOS Safari does not try to go full-screen on play). `src` is the existing `/api/artifact/<output_key>` route; the ownership check there already authorizes the user to their own MP4 via the customMetadata user_email stamp the GPU sets at upload.
+- `public/styles.css`: `.planner-history-player` (rounded border + black background so a portrait or aspect-mismatched video stays visually contained), `.planner-history-player-video` (full width, max-height 480px). Gated by the existing `.planner-history-item-collapsed` class so a collapsed row stays one line.
+
+### Behavior notes
+
+- Network: `preload="metadata"` is supported across all current browsers; for very large MP4s some browsers fall back to fetching the first chunk anyway. Worst case the player triggers a short range request when the row expands. The download button (when `output_key` is present) still works for the actual offline copy.
+- Mobile: `playsInline` keeps playback in the row instead of taking over the screen. Tap-to-play is the user's choice; we never autoplay.
+- Failure path: a 403 or 404 from `/api/artifact` shows the browser's native broken-video icon inside the player frame. The download button under the actions row also fails the same way, so the player is consistent with the rest of the row.
+
+No backend change. No D1 change. No cross-repo change. Tests 370/370 unchanged. Typecheck clean.
+
+### Apply
+
+```
+npm run deploy
+```
+
 ## v0.42.0
 
 Lock + finalize. Completes the per-shot loop: preview keyframes (v0.40.0), regen the bad ones (v0.41.0), lock the good ones, then click finalize to run Wan I2V + assemble the silent MP4 over every keyframe on the volume.

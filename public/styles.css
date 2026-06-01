@@ -2435,6 +2435,49 @@ textarea:focus {
   display: block;
 }
 
+/* v0.41.0: each keyframe in the strip gets its own column: the anchor-
+   wrapped thumb + caption (existing) plus a regen button beneath. The
+   wrap is a flex column so the button sits below the chip and inherits
+   its width. */
+.planner-history-keyframe-wrap {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.planner-history-keyframe-regen {
+  font-size: 10px;
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+  background: var(--bg-elev2);
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 2px 0;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  width: 96px;
+}
+
+.planner-history-keyframe-regen:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.planner-history-keyframe-regen:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+/* Mark the thumbnail while its regen is in flight. Subtle dim + a
+   yellow border so the user knows which shot is regenerating without
+   needing to read the button text. */
+.planner-history-keyframe-img-regen-pending {
+  opacity: 0.55;
+  outline: 1px solid var(--warn);
+  outline-offset: -1px;
+}
+
 .planner-history-keyframe-cap {
   font-size: 10px;
   color: var(--fg-dim);

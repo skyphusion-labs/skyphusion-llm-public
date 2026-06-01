@@ -1360,6 +1360,15 @@ const historyState = {
   // Default-collapsed lets the list stay scannable once history grows;
   // clicks toggle individual rows open without leaving the page.
   expandedIds: new Set(),
+  // v0.41.0: in-flight regen-shot jobs. Keyed by `<rowId>:<shotId>`.
+  // Value: { jobId, kfKey, shotId, rowId, startedAt }. Used to:
+  //   1. Re-disable the regen button + show the loading label when
+  //      buildHistoryRow re-runs on auto-refresh.
+  //   2. Drive the polling loop independently of DOM lifecycle, so a
+  //      row re-render mid-poll does not cancel the poll.
+  // The polling tick locates the current DOM nodes via querySelector
+  // each time, so stale refs from before a re-render are not held.
+  regenJobs: new Map(),
 };
 
 async function loadHistory() {
@@ -1624,11 +1633,22 @@ function buildHistoryRow(r) {
   // existing /api/artifact ownership-checked route; the GPU side stamps
   // each keyframe upload with the submitter's user_email so the route
   // authorizes the user back to their own thumbs.
+  // v0.41.0: each thumbnail also gets a `regen` button that submits a
+  // single-shot SDXL regeneration to the GPU. The button is gated on
+  // (a) the originating row being COMPLETED (no point regening an in-
+  // flight render's keyframes) and (b) the row having a bundle_key
+  // (preserved on every row at submit time). Re-render survival is
+  // handled by reading historyState.regenJobs in buildHistoryRow: an
+  // already-in-flight regen leaves the button disabled + labeled
+  // "regen..." after the row re-builds on the 30s auto-refresh.
   if (Array.isArray(r.keyframes) && r.keyframes.length > 0) {
     const strip = document.createElement("div");
     strip.className = "planner-history-keyframes";
+    const regenEligible = r.status === "COMPLETED" && r.bundle_key;
     for (const kf of r.keyframes) {
       if (!kf || typeof kf.key !== "string" || typeof kf.shot_id !== "string") continue;
+      const wrap = document.createElement("div");
+      wrap.className = "planner-history-keyframe-wrap";
       const a = document.createElement("a");
       a.href = "/api/artifact/" + kf.key;
       a.target = "_blank";
@@ -1639,17 +1659,174 @@ function buildHistoryRow(r) {
       img.src = "/api/artifact/" + kf.key;
       img.alt = kf.shot_id;
       img.loading = "lazy";
+      img.dataset.shotId = kf.shot_id;
+      img.className = "planner-history-keyframe-img";
       a.appendChild(img);
       const cap = document.createElement("span");
       cap.className = "planner-history-keyframe-cap";
       cap.textContent = kf.shot_id;
       a.appendChild(cap);
-      strip.appendChild(a);
+      wrap.appendChild(a);
+
+      if (regenEligible) {
+        const regenKey = String(r.id) + ":" + kf.shot_id;
+        const active = historyState.regenJobs.get(regenKey);
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "planner-history-keyframe-regen";
+        btn.dataset.shotId = kf.shot_id;
+        btn.title = "regenerate this keyframe (SDXL only; about 30-60s)";
+        if (active) {
+          btn.disabled = true;
+          btn.textContent = "regen...";
+        } else {
+          btn.textContent = "regen";
+        }
+        btn.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          regenShot(r, kf, btn, img);
+        });
+        wrap.appendChild(btn);
+      }
+
+      strip.appendChild(wrap);
     }
     if (strip.children.length > 0) li.appendChild(strip);
   }
 
   return li;
+}
+
+// v0.41.0: submit a single-shot SDXL regen + start polling. The button
+// and img refs are passed in for the immediate UI flip (disabled +
+// "submitting..."); subsequent polls re-query the DOM each tick so
+// they survive a parent row re-render on the 30s auto-refresh.
+async function regenShot(row, kf, btnEl, imgEl) {
+  const confirmMsg =
+    "regen keyframe for " + kf.shot_id + "?\n\n"
+    + "this runs SDXL only (no motion, no assembly) and overwrites the "
+    + "thumbnail above. takes about 30 to 60 seconds.";
+  if (!window.confirm(confirmMsg)) return;
+
+  const regenKey = String(row.id) + ":" + kf.shot_id;
+  btnEl.disabled = true;
+  btnEl.textContent = "submitting...";
+
+  let resp = null;
+  let data = null;
+  try {
+    resp = await fetch(
+      "/api/storyboard/renders/" + encodeURIComponent(row.id) + "/regen-shot",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ shotId: kf.shot_id }),
+      },
+    );
+    data = await resp.json();
+  } catch (err) {
+    btnEl.disabled = false;
+    btnEl.textContent = "regen";
+    window.alert("regen submit failed: " + err.message);
+    return;
+  }
+  if (!resp.ok || !data || !data.ok) {
+    btnEl.disabled = false;
+    btnEl.textContent = "regen";
+    const msg = (data && (data.error
+      || (Array.isArray(data.errors) && data.errors.join(", "))))
+      || ("HTTP " + (resp ? resp.status : "?"));
+    window.alert("regen submit failed: " + msg);
+    return;
+  }
+
+  // Submitted. Park the state in regenJobs and start polling.
+  btnEl.textContent = "regen...";
+  imgEl.classList.add("planner-history-keyframe-img-regen-pending");
+  historyState.regenJobs.set(regenKey, {
+    jobId: data.jobId,
+    kfKey: kf.key,
+    shotId: kf.shot_id,
+    rowId: row.id,
+    startedAt: Date.now(),
+  });
+  pollRegenJob(regenKey);
+}
+
+// v0.41.0: poll one regen job. Re-queries the DOM each tick so a row
+// re-render on auto-refresh does not strand us with detached refs.
+// Reuses the existing /api/storyboard/render/<jobId> route (no new
+// poll endpoint; the GPU job is just another RunPod job from the
+// platform's perspective).
+function pollRegenJob(regenKey) {
+  const state = historyState.regenJobs.get(regenKey);
+  if (!state) return;
+  fetch("/api/storyboard/render/" + encodeURIComponent(state.jobId))
+    .then((r) => r.json())
+    .then((data) => {
+      const status = (data && data.status) || "IN_QUEUE";
+      const terminal = (
+        status === "COMPLETED"
+          || status === "FAILED"
+          || status === "CANCELLED"
+          || status === "TIMED_OUT"
+      );
+      if (!terminal) {
+        setTimeout(() => pollRegenJob(regenKey), 4000);
+        return;
+      }
+      // Locate the current DOM nodes for this row + shot. The row may
+      // have been re-rendered since the regen was submitted (auto-
+      // refresh on a 30s timer), so the original refs would be stale.
+      const li = document.querySelector(
+        '.planner-history-item[data-id="' + state.rowId + '"]',
+      );
+      const img = li && li.querySelector(
+        '.planner-history-keyframe-img[data-shot-id="' + cssEscape(state.shotId) + '"]',
+      );
+      const btn = li && li.querySelector(
+        '.planner-history-keyframe-regen[data-shot-id="' + cssEscape(state.shotId) + '"]',
+      );
+      historyState.regenJobs.delete(regenKey);
+      if (status === "COMPLETED") {
+        if (img) {
+          img.src = "/api/artifact/" + state.kfKey + "?v=" + Date.now();
+          img.classList.remove("planner-history-keyframe-img-regen-pending");
+        }
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = "regen";
+        }
+        return;
+      }
+      // Terminal but not COMPLETED.
+      if (img) img.classList.remove("planner-history-keyframe-img-regen-pending");
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "regen";
+      }
+      window.alert(
+        "regen " + status.toLowerCase() + " for " + state.shotId + ": "
+          + ((data && data.error) || "(no error message)"),
+      );
+    })
+    .catch((err) => {
+      console.warn("regen poll failed:", err);
+      setTimeout(() => pollRegenJob(regenKey), 4000);
+    });
+}
+
+// Minimal CSS.escape polyfill. Modern browsers ship it but planner.js
+// is loaded by older devices too; this covers the safe subset we need
+// for shot ids ("shot_01", "shot_02", ...). For anything outside that
+// shape we fall back to the input string, which is fine because the
+// shot ids are validated on the GPU side and never contain CSS-meta.
+function cssEscape(s) {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(s);
+  }
+  return String(s).replace(/[^a-zA-Z0-9_-]/g, "\\$&");
 }
 
 // v0.35.4: prompt + delete one history row. The artifact-cleanup query

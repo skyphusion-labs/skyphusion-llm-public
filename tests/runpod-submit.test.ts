@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
+  buildRegenShotPayload,
   buildSubmitPayload,
   buildSubmitUrl,
   buildStatusUrl,
@@ -158,6 +159,65 @@ describe("buildSubmitPayload", () => {
       keyframesOnly: false,
     });
     expect(out2.input.render_overrides).toBeUndefined();
+  });
+});
+
+describe("buildRegenShotPayload (v0.41.0)", () => {
+  it("wraps the canonical regen_shot input shape", () => {
+    const out = buildRegenShotPayload({
+      project: "cherry",
+      bundleKey: "bundles/cherry.tar.gz",
+      shotId: "shot_01",
+      parentJobId: "abc-123-u1",
+    });
+    expect(out).toEqual({
+      input: {
+        action: "regen_shot",
+        project: "cherry",
+        bundle_key: "bundles/cherry.tar.gz",
+        shot_id: "shot_01",
+        parent_job_id: "abc-123-u1",
+      },
+    });
+  });
+
+  it("includes user_email when set", () => {
+    const out = buildRegenShotPayload({
+      project: "cherry",
+      bundleKey: "bundles/cherry.tar.gz",
+      shotId: "shot_01",
+      parentJobId: "abc-123-u1",
+      userEmail: "alice@example.com",
+    });
+    expect(out.input.user_email).toBe("alice@example.com");
+  });
+
+  it("omits user_email when missing / empty", () => {
+    const out1 = buildRegenShotPayload({
+      project: "cherry",
+      bundleKey: "bundles/cherry.tar.gz",
+      shotId: "shot_01",
+      parentJobId: "abc-123-u1",
+    });
+    expect("user_email" in out1.input).toBe(false);
+    const out2 = buildRegenShotPayload({
+      project: "cherry",
+      bundleKey: "bundles/cherry.tar.gz",
+      shotId: "shot_01",
+      parentJobId: "abc-123-u1",
+      userEmail: "",
+    });
+    expect("user_email" in out2.input).toBe(false);
+  });
+
+  it("always sets action='regen_shot' so the GPU dispatcher routes correctly", () => {
+    const out = buildRegenShotPayload({
+      project: "cherry",
+      bundleKey: "bundles/cherry.tar.gz",
+      shotId: "shot_01",
+      parentJobId: "abc-123-u1",
+    });
+    expect(out.input.action).toBe("regen_shot");
   });
 });
 

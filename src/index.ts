@@ -42,6 +42,7 @@ import {
   deriveProjectFromBundleKey,
   isValidJobId,
   pollRenderJob,
+  submitRegenShotJob,
   submitRenderJob,
   type RenderSubmitArgs,
 } from "./runpod-submit";
@@ -380,6 +381,15 @@ export default {
     if (rd) {
       if (request.method === "DELETE") return handleRenderRowDelete(request, env, rd[1]);
       if (request.method === "PATCH") return handleRenderRowPatch(request, env, rd[1]);
+    }
+    // v0.41.0: per-shot SDXL keyframe regeneration. Submits a regen job
+    // to RunPod (vivijure-serverless 0.4.3+ dispatches by action), returns
+    // the new jobId for the client to poll via the existing render-poll
+    // route. Ownership: the path-prefix /renders/<id>/ matches the row's
+    // user_email (404 on miss-or-not-owned, same shape as the row PATCH).
+    const rg = url.pathname.match(/^\/api\/storyboard\/renders\/(\d+)\/regen-shot$/);
+    if (rg && request.method === "POST") {
+      return handleRegenShotSubmit(request, env, rg[1]);
     }
     // v0.32.0: poll one render job by its RunPod-issued id.
     // v0.33.1: DELETE cancels the same job via RunPod's POST /cancel.
@@ -1387,6 +1397,106 @@ async function handleRenderRowPatch(
 
   await setRenderLabel(env, id, userEmail, label);
   return json({ ok: true, id, label, user: userEmail });
+}
+
+// ---------- /api/storyboard/renders/<id>/regen-shot (v0.41.0) ----------
+//
+// Submit a single-shot SDXL keyframe regeneration to the vivijure-
+// serverless RunPod endpoint. The originating renders row (id from the
+// path, ownership by user_email) supplies project + bundle_key +
+// parentJobId; the body carries only the shotId to regen.
+//
+// The GPU side (vivijure-serverless 0.4.3+) dispatches by action,
+// clears just that shot's keyframe, re-runs SDXL, and writes the new
+// pixels to the SAME R2 key the planner UI already has in D1. On a
+// cache-bust the <img> src refreshes.
+//
+// Returns the regen jobId for client polling via the existing
+// GET /api/storyboard/render/<jobId> route. We deliberately do NOT
+// insert a new history row for the regen: it is a sub-action of the
+// existing row, not a separate render.
+
+interface RegenShotRequest {
+  shotId?: unknown;
+}
+
+async function handleRegenShotSubmit(
+  request: Request,
+  env: Env,
+  idStr: string,
+): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const id = Number(idStr);
+  if (!Number.isInteger(id) || id <= 0) {
+    return json({ error: "invalid id" }, { status: 400 });
+  }
+
+  let body: RegenShotRequest;
+  try {
+    body = await request.json<RegenShotRequest>();
+  } catch {
+    return json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  if (typeof body.shotId !== "string" || body.shotId.trim().length === 0) {
+    return json({ error: "shotId is required (non-empty string)" }, { status: 400 });
+  }
+  const shotId = body.shotId.trim();
+
+  // Same ownership pattern as PATCH: 404 on miss-or-not-owned so a
+  // guessed id cannot enumerate other users' rows.
+  const row = await getRenderByIdForUser(env, id, userEmail);
+  if (!row) {
+    return json({ error: "render not found" }, { status: 404 });
+  }
+
+  // Sanity check: the shotId must be one of the row's known keyframes.
+  // The GPU would fail-loud on an unknown shot id anyway, but a 400 at
+  // the Worker boundary is a faster + clearer failure for the UI.
+  const known = Array.isArray(row.keyframes)
+    ? row.keyframes.map((k) => k.shot_id)
+    : [];
+  if (known.length > 0 && !known.includes(shotId)) {
+    return json(
+      {
+        error: `shotId ${JSON.stringify(shotId)} is not a known keyframe on render ${id} (known: ${JSON.stringify(known)})`,
+      },
+      { status: 400 },
+    );
+  }
+
+  if (!env.RUNPOD_API_KEY || !env.RUNPOD_ENDPOINT_ID) {
+    return json(
+      {
+        error:
+          "RUNPOD_API_KEY and RUNPOD_ENDPOINT_ID must be set on the Worker. Configure via: npx wrangler secret put RUNPOD_API_KEY, then RUNPOD_ENDPOINT_ID.",
+      },
+      { status: 503 },
+    );
+  }
+
+  const result = await submitRegenShotJob(env, {
+    project: row.project,
+    bundleKey: row.bundle_key,
+    shotId,
+    parentJobId: row.job_id,
+    userEmail,
+  });
+  if (!result.ok) {
+    return json(
+      { ok: false, errors: [result.error], user: userEmail },
+      { status: 502 },
+    );
+  }
+
+  return json({
+    ok: true,
+    jobId: result.view.jobId,
+    status: result.view.status,
+    statusRaw: result.view.statusRaw,
+    parentId: id,
+    shotId,
+    user: userEmail,
+  });
 }
 
 // ---------- Chat (text generation, multimodal in) ----------

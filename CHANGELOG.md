@@ -1,5 +1,56 @@
 # Changelog
 
+## v0.41.0
+
+Per-shot SDXL keyframe regeneration. Each thumbnail in the history-row keyframe strip gains a `regen` button (visible only when the row is COMPLETED and has a bundle_key). Click -> confirm -> POST submits a regen job to the vivijure-serverless GPU (0.4.3+), which clears just that shot's keyframe, re-runs SDXL with the existing trained LoRA on the volume, and overwrites the same R2 key the planner already has in D1. The UI polls the job and cache-busts the thumbnail src on COMPLETED so the user sees the new pixels in place. No new R2 keys, no new D1 rows; the originating render's row keeps its existing `keyframes_json` array.
+
+### Why
+
+v0.40.0 shipped the keyframes-only preview pass, letting the user see SDXL output before committing to motion + assembly. But a user looking at a strip of 6 keyframes and seeing one bad shot still has no surgical fix; they have to re-render everything. This commit closes that loop: regen the one bad shot in 30 to 60 seconds, leave the other 5 untouched. The per-shot lock + finalize-from-locked-keyframes flow (v0.42.0) builds on this; the lock concept maps cleanly onto "shots whose regen button you DID NOT press."
+
+### Cross-repo coordination
+
+Needs **vivijure-serverless 0.4.3** on the RunPod endpoint. The GPU-side change:
+
+- `rp_handler.handler` dispatches by `action` (default `render`, new `regen_shot`). The render path is byte-identical to 0.4.2; only jobs that pass `action: "regen_shot"` enter the new branch.
+- `rp_handler._handle_regen_shot` pulls the bundle (download_and_extract is idempotent and preserves prior clips + keyframes for other shots), calls `orchestrator.regen_shot(name, shot_id)`, then re-uploads the produced PNG to the SAME R2 key the original render produced. The key shape (`renders/<project>/<parent_job_id>/keyframes/<shot_id>.png`) is reconstructed from the inbound `parent_job_id` so it matches what skyphusion has in D1 verbatim.
+- `orchestrator.regen_shot` resolves the scene_index by scanning the manifest for a matching `id`, ensures the manifest exists (building it from storyboard.yaml if a fresh worker has never rendered the project), calls the existing `core.regen_scene_keyframe(project, scene_index)` (which itself calls `clear_scene_output` then `_ensure_scene_keyframe`), and verifies the PNG landed on disk. Raises RuntimeError on any failure; rp_handler catches and surfaces it as `error` on the envelope.
+
+Pre-0.4.3 GPU endpoints will reject the new action with `unknown action 'regen_shot'`. The Worker translates the RunPod 502 into a 502 with a clear error string so the planner UI can show it.
+
+### Worker
+
+- `src/runpod-submit.ts`: new `RegenShotArgs` + `RegenShotJobInput` types, pure `buildRegenShotPayload(args)` builder, dispatcher `submitRegenShotJob(env, args)` mirroring `submitRenderJob`'s contract (never throws on HTTP errors).
+- `src/index.ts`: new `POST /api/storyboard/renders/<id>/regen-shot` route. Same ownership pattern as the PATCH route (404 on miss-or-not-owned so a guessed id cannot enumerate other users' rows). Validates `shotId` is a non-empty string, validates it is one of the row's known keyframes (the `keyframes_json` array), then submits via `submitRegenShotJob`. Returns `{ ok: true, jobId, status, statusRaw, parentId, shotId, user }`. No new D1 row is inserted; the regen is a sub-action of the existing row, not a separate render.
+
+### UI
+
+- `public/planner.js`:
+  - `historyState.regenJobs` Map tracks in-flight regen state keyed by `<rowId>:<shotId>`. Survives row re-renders on the 30s auto-refresh: `buildHistoryRow` checks the Map and renders the regen button as `regen...` + disabled when an active job is found.
+  - `buildHistoryRow` now wraps each keyframe anchor in a `.planner-history-keyframe-wrap` and appends a `regen` button. Button visibility is gated on `r.status === "COMPLETED" && r.bundle_key` so in-flight or bundle-less rows omit it.
+  - New `regenShot(row, kf, btnEl, imgEl)` submits the POST, parks state in `regenJobs`, kicks off `pollRegenJob(regenKey)`.
+  - `pollRegenJob` hits the existing `GET /api/storyboard/render/<jobId>` route every 4s. On COMPLETED, re-queries the DOM via `querySelector` (NOT the stored refs, which may be stale after a row re-render), cache-busts the `<img>` src with `?v=<now>`, restores the button, and clears the Map entry. On any other terminal status (FAILED, CANCELLED, TIMED_OUT) it restores the button and surfaces the error via `window.alert`.
+  - Minimal `cssEscape` helper for the dataset-attribute selectors (CSS.escape is widely supported but worth not crashing the loop on older agents).
+- `public/styles.css`: `.planner-history-keyframe-wrap` (flex column so the regen button sits beneath the thumbnail at the same width), `.planner-history-keyframe-regen` (small monospace pill, dim default, accent on hover, progress cursor when disabled), `.planner-history-keyframe-img-regen-pending` (0.55 opacity + warn-tinted outline so the user sees which shot is regenerating).
+
+### Tests
+
+`tests/runpod-submit.test.ts` gets 4 new cases under a `buildRegenShotPayload (v0.41.0)` describe block:
+
+- Canonical input shape
+- `user_email` included when set, omitted when missing or empty
+- `action: "regen_shot"` is always present
+
+Total 357 (353 prior + 4 new). Typecheck clean. No D1 migration; the regen flow uses existing columns and reuses the existing render-poll route.
+
+### Apply
+
+```
+npm run deploy
+```
+
+Then push vivijure-serverless 0.4.3 to RunPod (Jenkins auto-builds on the `vivijure-serverless 0.4.3:` commit subject).
+
 ## v0.40.0
 
 Keyframes-only preview pass. Render-stage gets a `[ ] render keyframes only (preview before generating motion)` checkbox. When set, the job submits with `keyframes_only: true` merged into `render_overrides`, the GPU side (vivijure-serverless 0.4.2+) skips Wan I2V and silent-MP4 assembly after the SDXL pass, and the COMPLETED envelope returns `mode: "keyframes-only"` with `output_key: null` plus the populated `keyframes` array. The history row shows a `kf only` badge in the meta line and the download MP4 button stays hidden (no MP4 to download).

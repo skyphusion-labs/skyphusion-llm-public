@@ -338,19 +338,32 @@
   const TRAINING_MODEL_ID = "@cf/black-forest-labs/flux-2-dev";
   const FLUX2_REF_MAX_DIM = 512;
 
-  // 10 standard pose / framing templates. Each is suffixed with the
-  // character bible at gen time for character-consistent output.
+  // 10 training templates spanning orthogonal axes: framing (close-up,
+  // medium, three-quarter, full-body, profile), camera angle (eye-level,
+  // low, high, slight tilt), lighting (studio neutral, golden hour, side
+  // window, dramatic side, harsh midday, warm interior), expression
+  // (neutral, slight smile, serious, contemplative), pose (standing,
+  // sitting, mid-action), and background (clean grey, blurred outdoor,
+  // neutral indoor, plain wall, soft bokeh).
+  //
+  // v0.64.0: the pre-v0.64 set was 8/10 "portrait, ... clean background"
+  // with tiny expression/lighting tweaks, producing near-duplicate
+  // training images. The LoRA overfit on the clean-background-portrait
+  // distribution rather than identity, so the GPU-side LoRA quality gate
+  // ssim scored ~0 on the smoke-test cast. Diversifying the prompts
+  // forces the LoRA to learn the subject's identity independent of any
+  // single framing or lighting choice.
   const TRAINING_PROMPTS = [
-    "portrait, neutral expression, looking at camera, eye level, soft studio lighting, clean background",
-    "portrait, slight smile, looking slightly off to the right, eye level, soft studio lighting, clean background",
-    "left side profile, three-quarter framing, looking forward, soft studio lighting, clean background",
-    "right side profile, three-quarter framing, looking forward, soft studio lighting, clean background",
-    "portrait, looking up at the camera, low angle, soft studio lighting, clean background",
-    "portrait, serious expression, looking at camera, eye level, dramatic side lighting, clean background",
-    "portrait, laughing, looking off to the side, eye level, natural lighting, clean background",
-    "medium shot, dynamic action pose, looking at camera, eye level, natural lighting, clean background",
-    "portrait, contemplative expression, looking down, slight overhead angle, soft natural lighting, clean background",
-    "portrait, surprised expression, looking at camera, eye level, soft studio lighting, clean background",
+    "close-up portrait, neutral expression, eye level, soft studio lighting, clean grey background",
+    "medium shot, three-quarter angle, looking forward, golden-hour outdoor lighting, blurred natural background",
+    "full-body shot, standing pose, hands at sides, even daylight, plain neutral indoor space",
+    "profile shot looking left, shoulders-up framing, soft window light from the side, plain wall background",
+    "three-quarter shot from slightly above, looking down, warm interior lighting, soft bokeh background",
+    "medium close-up, slight smile, looking off to the right, overcast natural daylight, outdoor blurred treeline",
+    "close-up portrait, serious expression, looking at camera, dramatic side lighting from the right, dark backdrop",
+    "medium shot, dynamic mid-action pose, looking forward, harsh midday sunlight, plain background",
+    "three-quarter shot, sitting on a stool, looking thoughtfully to the side, warm indoor lamp lighting, plain dark background",
+    "close-up portrait, slight head tilt, looking up at the camera, soft natural window light, plain background",
   ];
 
   // Build the prompt sent to /api/chat: pose template, then a separator,

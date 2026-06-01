@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.64.0
+
+Diversify the LoRA training-image generator's prompt set. Surfaced during the post-v0.60 smoke test of cast-member rendering: the pre-v0.64 `TRAINING_PROMPTS` were 8/10 "portrait, ... clean background" with only minor expression / lighting tweaks, so the 10 generated images came back as near-duplicates. The GPU-side LoRA quality gate scored both smoke-test cast members at ~0 SSIM (well below the 0.28 threshold), and SDXL collapsed the two characters into one fused face on the multi-character keyframe because neither LoRA's identity was anchored strongly enough to override the prompt's "two people" pull.
+
+### Why this matters
+
+A LoRA learns to associate a trigger word with whatever varies AND whatever stays constant across the training set. If every training image is the same framing, lighting, and background, the LoRA learns "trigger -> clean-background head-and-shoulders portrait" instead of "trigger -> this person's identity in any setting." At inference time the trigger then carries the BACKGROUND distribution, which is useless when the render prompt wants two characters at a campfire.
+
+### Frontend
+
+- `public/cast.js` `TRAINING_PROMPTS`: replaces the 10 portrait-leaning templates with 10 spanning orthogonal axes - framing (close-up, medium, three-quarter, full-body, profile), camera angle (eye-level, low, high, slight tilt), lighting (studio neutral, golden hour, side window, dramatic side, harsh midday, warm interior), expression (neutral, slight smile, serious, contemplative), pose (standing, sitting, mid-action), background (clean grey, blurred outdoor, neutral indoor, plain wall, soft bokeh). The bible is still appended to each via the unchanged `composeTrainingPrompt` so character-specific clothing / features come through.
+
+The /api/chat surface and FLUX-2-Dev model are unchanged; this is a pure prompt-set swap. Existing cast members with LoRAs trained against the old prompt set are NOT auto-retrained; the user can hit "regenerate training images" + "retrain" on /cast to get a stronger LoRA against the new set.
+
+464/464 still passing; cast.js syntax-checks.
+
 ## v0.63.0
 
 UX hot-fix: the render-result panel at the top of the planner sticks around after a render reaches a terminal state (COMPLETED / FAILED / CANCELLED / TIMED_OUT), and because the in-flight `jobId` is persisted to localStorage, it survives a page reload too. So a render that died days ago can still show "job 9f295c7b... status: FAILED" on top of the page after several successful renders have happened since. The history list below already shows all rows; the top panel duplicating a stale failed row is just visual noise.

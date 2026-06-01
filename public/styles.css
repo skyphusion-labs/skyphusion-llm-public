@@ -3315,3 +3315,48 @@ textarea:focus {
 .cast-training-row-done { color: var(--fg-dim); }
 
 .cast-training-row-fail { color: var(--error); border-color: var(--error); }
+
+/* v0.48.0: planner cast picker + bound slot indicator. */
+
+.planner-cast-row {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr 2fr;
+  gap: 8px;
+  align-items: start;
+}
+
+.planner-cast-pick {
+  background: var(--bg-elev);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 12px;
+  align-self: center;
+}
+
+.planner-cast-row-bound .planner-cast-name,
+.planner-cast-row-bound .planner-cast-bible {
+  background: var(--bg);
+  border-style: dashed;
+  color: var(--fg-dim);
+}
+
+.planner-slot-upload-bound {
+  border: 1px dashed var(--accent);
+  background: var(--bg);
+}
+
+.planner-slot-linked {
+  font-size: 12px;
+  color: var(--accent);
+  padding: 6px 0;
+  font-style: italic;
+}
+
+@media (max-width: 720px) {
+  .planner-cast-row {
+    grid-template-columns: 1fr;
+  }
+}

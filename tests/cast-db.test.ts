@@ -23,6 +23,24 @@ function composeTrainingPrompt(template: string, bible: string | null | undefine
   return template + ". " + trimmed;
 }
 
+// Mirror of reconcileCastBindings in public/planner.js (v0.48.0).
+// Keep in sync. Returns the bindings whose cast_id still exists in the
+// fresh catalog plus the slot ids that lost their binding.
+function reconcileCastBindings(
+  bindings: Record<string, number>,
+  catalog: Array<{ id: number }>,
+): { kept: Record<string, number>; dropped: string[] } {
+  const live = new Set((catalog || []).map((c) => c.id));
+  const kept: Record<string, number> = {};
+  const dropped: string[] = [];
+  for (const slot of Object.keys(bindings || {})) {
+    const id = bindings[slot];
+    if (live.has(id)) kept[slot] = id;
+    else dropped.push(slot);
+  }
+  return { kept, dropped };
+}
+
 describe("slugifyCharacter", () => {
   it("lowercases and dashes a normal name", () => {
     expect(slugifyCharacter("Kira Voss")).toBe("kira-voss");
@@ -84,5 +102,44 @@ describe("composeTrainingPrompt", () => {
     const exact = "y".repeat(600);
     const out = composeTrainingPrompt("template", exact);
     expect(out).toBe("template. " + exact);
+  });
+});
+
+describe("reconcileCastBindings", () => {
+  it("keeps bindings whose cast_id is still in the catalog", () => {
+    const bindings = { A: 1, B: 2 };
+    const catalog = [{ id: 1 }, { id: 2 }, { id: 3 }];
+    const { kept, dropped } = reconcileCastBindings(bindings, catalog);
+    expect(kept).toEqual({ A: 1, B: 2 });
+    expect(dropped).toEqual([]);
+  });
+
+  it("drops bindings whose cast_id was deleted", () => {
+    const bindings = { A: 1, B: 99, C: 3 };
+    const catalog = [{ id: 1 }, { id: 3 }];
+    const { kept, dropped } = reconcileCastBindings(bindings, catalog);
+    expect(kept).toEqual({ A: 1, C: 3 });
+    expect(dropped).toEqual(["B"]);
+  });
+
+  it("handles empty catalog", () => {
+    const { kept, dropped } = reconcileCastBindings({ A: 1, B: 2 }, []);
+    expect(kept).toEqual({});
+    expect(dropped.sort()).toEqual(["A", "B"]);
+  });
+
+  it("handles empty bindings", () => {
+    const { kept, dropped } = reconcileCastBindings({}, [{ id: 1 }]);
+    expect(kept).toEqual({});
+    expect(dropped).toEqual([]);
+  });
+
+  it("tolerates a missing bindings argument", () => {
+    const { kept, dropped } = reconcileCastBindings(
+      undefined as unknown as Record<string, number>,
+      [{ id: 1 }],
+    );
+    expect(kept).toEqual({});
+    expect(dropped).toEqual([]);
   });
 });

@@ -33,6 +33,14 @@ const $ = (sel) => document.querySelector(sel);
 const planState = {
   storyboard: null,         // StoryboardValidated from POST /api/storyboard/plan
   cast: [],                 // PlannerCharacter[] from the cast form at plan time
+  // v0.48.0: persisted cast wiring. castCatalog is the user's cast members
+  // fetched from /api/cast (one fetch per page load). castBindings maps
+  // a slot id ("A"/"B"/"C"/"D") to a cast member id; a bound slot pulls
+  // name + bible from the cast member at plan time and pulls portrait +
+  // ref keys into bundleState.perSlotUploads at bundle stage (instead of
+  // showing the file-picker).
+  castCatalog: [],
+  castBindings: {},
 };
 
 const bundleState = {
@@ -153,6 +161,9 @@ function collectPlanFormState() {
         bible: row.querySelector(".planner-cast-bible").value,
       };
     }),
+    // v0.48.0: persist slot->cast_id bindings so a tab reopen keeps
+    // each slot linked to the right persisted cast member.
+    castBindings: { ...planState.castBindings },
   };
 }
 
@@ -315,6 +326,13 @@ function restorePlanForm(saved) {
       bible.value = entry.bible || "";
     }
   }
+  // v0.48.0: restore slot->cast bindings AFTER the cast catalog has
+  // been fetched (or reconciled to drop dead bindings). The restore
+  // flow defers re-applying bindings until loadCast() resolves; see
+  // applyRestoredCastBindings.
+  if (saved.castBindings && typeof saved.castBindings === "object") {
+    planState.castBindings = { ...saved.castBindings };
+  }
 }
 
 function restorePlanResultPanel(saved) {
@@ -438,6 +456,128 @@ function restoreRenderStagePanel(saved) {
 
 // ---------- Cast editor (plan stage) ----------
 
+// v0.48.0: fetch the user's persisted cast catalog. One call per page
+// load; failures are non-fatal (planner still works with inline-only
+// cast slots, the "from cast" dropdown just shows the inline option).
+async function loadCast() {
+  try {
+    const resp = await fetch("/api/cast");
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const data = await resp.json();
+    planState.castCatalog = Array.isArray(data.cast) ? data.cast : [];
+  } catch (err) {
+    console.warn("loadCast failed; planner cast picker will show inline-only:", err);
+    planState.castCatalog = [];
+  }
+}
+
+// Pure helper: given a bindings map and a current catalog, return the
+// filtered bindings (with cast-ids that no longer exist removed) and a
+// list of the slots that lost their binding. Used after loadCast on
+// page restore so a deleted cast member does not leave a slot stuck.
+function reconcileCastBindings(bindings, catalog) {
+  const live = new Set((catalog || []).map((c) => c.id));
+  const kept = {};
+  const dropped = [];
+  for (const slot of Object.keys(bindings || {})) {
+    const id = bindings[slot];
+    if (live.has(id)) {
+      kept[slot] = id;
+    } else {
+      dropped.push(slot);
+    }
+  }
+  return { kept, dropped };
+}
+
+function findCastById(id) {
+  return planState.castCatalog.find((c) => c.id === id) || null;
+}
+
+function bindSlotToCast(slot, castId) {
+  const cast = findCastById(castId);
+  if (!cast) return;
+  planState.castBindings[slot] = castId;
+  const row = document.querySelector('.planner-cast-row[data-slot="' + slot + '"]');
+  if (!row) return;
+  const checkInput = row.querySelector("[data-cast-include]");
+  const name = row.querySelector(".planner-cast-name");
+  const bible = row.querySelector(".planner-cast-bible");
+  checkInput.checked = true;
+  name.value = cast.name;
+  bible.value = cast.bible || "";
+  // Lock the fields so the user does not edit a copy out of sync with
+  // the persisted cast member. The bible can still be edited by going
+  // to /cast.
+  name.disabled = true;
+  bible.disabled = true;
+  name.readOnly = true;
+  bible.readOnly = true;
+  row.classList.add("planner-cast-row-bound");
+  persistSoon();
+}
+
+function unbindSlot(slot) {
+  delete planState.castBindings[slot];
+  const row = document.querySelector('.planner-cast-row[data-slot="' + slot + '"]');
+  if (!row) return;
+  const checkInput = row.querySelector("[data-cast-include]");
+  const name = row.querySelector(".planner-cast-name");
+  const bible = row.querySelector(".planner-cast-bible");
+  name.readOnly = false;
+  bible.readOnly = false;
+  name.disabled = !checkInput.checked;
+  bible.disabled = !checkInput.checked;
+  row.classList.remove("planner-cast-row-bound");
+  persistSoon();
+}
+
+// Apply restored bindings after the cast catalog is available. Called
+// from the init flow after loadCast() resolves; the localStorage
+// restore path stashes bindings into planState.castBindings as soon as
+// the persisted blob is read, then this function re-renders the slot
+// fields against the freshly-fetched catalog.
+function applyRestoredCastBindings() {
+  const { kept, dropped } = reconcileCastBindings(planState.castBindings, planState.castCatalog);
+  planState.castBindings = kept;
+  for (const slot of Object.keys(kept)) {
+    bindSlotToCast(slot, kept[slot]);
+  }
+  // Re-render each row's dropdown so the bound state shows in the UI.
+  for (const slot of SLOT_IDS) {
+    const sel = document.querySelector('.planner-cast-row[data-slot="' + slot + '"] .planner-cast-pick');
+    if (sel) sel.value = kept[slot] ? String(kept[slot]) : "";
+  }
+  if (dropped.length > 0) {
+    console.info("planner: dropped cast bindings for slots (cast deleted):", dropped);
+  }
+}
+
+// Build (or rebuild) the "from cast" dropdown's options. Called on
+// initial render and after a fresh loadCast (e.g. user opened /cast,
+// added a character, then came back). Idempotent.
+function renderCastPickerOptions() {
+  for (const slot of SLOT_IDS) {
+    const sel = document.querySelector('.planner-cast-row[data-slot="' + slot + '"] .planner-cast-pick');
+    if (!sel) continue;
+    const current = sel.value;
+    sel.innerHTML = "";
+    const inlineOpt = document.createElement("option");
+    inlineOpt.value = "";
+    inlineOpt.textContent = "inline (type here)";
+    sel.appendChild(inlineOpt);
+    for (const c of planState.castCatalog) {
+      const opt = document.createElement("option");
+      opt.value = String(c.id);
+      const refsCount = Array.isArray(c.ref_keys) ? c.ref_keys.length : 0;
+      const portraitNote = c.portrait_key ? "portrait" : "no portrait";
+      opt.textContent = c.name + " (" + portraitNote + ", " + refsCount + " refs)";
+      sel.appendChild(opt);
+    }
+    sel.value = current;
+  }
+}
+
 function renderCast() {
   const root = $("#planner-cast");
   root.innerHTML = "";
@@ -454,6 +594,12 @@ function renderCast() {
     check.appendChild(checkInput);
     check.appendChild(document.createTextNode(" slot " + slot));
 
+    // v0.48.0: pick-from-cast dropdown. Empty value = inline; any
+    // non-empty value = a cast_id bound to this slot.
+    const pick = document.createElement("select");
+    pick.className = "planner-cast-pick";
+    pick.title = "load a persisted cast member (manage at /cast)";
+
     const name = document.createElement("input");
     name.type = "text";
     name.className = "planner-cast-name";
@@ -468,10 +614,24 @@ function renderCast() {
 
     checkInput.addEventListener("change", () => {
       const enabled = checkInput.checked;
-      name.disabled = !enabled;
-      bible.disabled = !enabled;
-      if (enabled) name.focus();
+      // If the slot is bound, do not let manual edit re-enable; the
+      // user must explicitly unbind via the dropdown.
+      if (!planState.castBindings[slot]) {
+        name.disabled = !enabled;
+        bible.disabled = !enabled;
+        if (enabled) name.focus();
+      }
       persistSoon();
+    });
+    pick.addEventListener("change", () => {
+      const v = pick.value;
+      if (!v) {
+        unbindSlot(slot);
+        return;
+      }
+      const id = Number(v);
+      if (!Number.isFinite(id)) return;
+      bindSlotToCast(slot, id);
     });
     // v0.38.0: persist cast field changes so the brief + names + bibles
     // survive a tab close.
@@ -479,10 +639,12 @@ function renderCast() {
     bible.addEventListener("input", persistSoon);
 
     row.appendChild(check);
+    row.appendChild(pick);
     row.appendChild(name);
     row.appendChild(bible);
     root.appendChild(row);
   }
+  renderCastPickerOptions();
 }
 
 function collectCast() {
@@ -705,19 +867,29 @@ function showBundleStage(storyboard, characters, initialUploads) {
     root.appendChild(note);
   } else {
     for (const slot of useChars) {
-      // v0.38.0: only initialize an empty array when we did not get
-      // pre-populated uploads from restoration. Otherwise the existing
-      // entries are preserved.
-      if (!bundleState.perSlotUploads[slot]) {
+      // v0.48.0: if this slot is bound to a persisted cast member,
+      // synthesize the perSlotUploads entries from the cast's portrait
+      // + ref_keys and overwrite any inline uploads from a prior pass.
+      // This makes the bundle-assembly code (which reads keys from
+      // perSlotUploads) work without any change.
+      const boundId = planState.castBindings[slot];
+      const bound = boundId ? findCastById(boundId) : null;
+      if (bound) {
+        bundleState.perSlotUploads[slot] = synthesizeUploadsFromCast(bound);
+      } else if (!bundleState.perSlotUploads[slot]) {
+        // v0.38.0: only initialize an empty array when we did not get
+        // pre-populated uploads from restoration. Otherwise the existing
+        // entries are preserved.
         bundleState.perSlotUploads[slot] = [];
       }
       const ch = characters.find((c) => c.slot === slot) || {
         name: "Character " + slot,
         bible: "",
       };
-      root.appendChild(buildSlotUploadRow(slot, ch));
+      root.appendChild(buildSlotUploadRow(slot, ch, bound));
       // Hydrate the file list from any pre-existing entries (typically
-      // staged-to-R2 keys from before a tab close).
+      // staged-to-R2 keys from before a tab close, or v0.48.0
+      // synthesized from a bound cast).
       if (bundleState.perSlotUploads[slot].length > 0) {
         renderSlotList(slot);
       }
@@ -732,9 +904,42 @@ function showBundleStage(storyboard, characters, initialUploads) {
   setBundleMeta("");
 }
 
-function buildSlotUploadRow(slot, char) {
+// v0.48.0: synthesize bundleState.perSlotUploads[slot] entries from a
+// persisted cast member's portrait + ref_keys. The bundle assembler
+// reads keys from these entries and does not care whether the file was
+// uploaded inline (staged ephemerally) or pulled from a persisted cast
+// member; matching the same {key, status: "done"} shape keeps the
+// downstream code path unchanged.
+function synthesizeUploadsFromCast(cast) {
+  const entries = [];
+  if (cast.portrait_key) {
+    entries.push({
+      filename: "portrait",
+      size: 0,
+      mime: cast.portrait_mime || "image/png",
+      key: cast.portrait_key,
+      status: "done",
+      fromCast: true,
+    });
+  }
+  for (let i = 0; i < (cast.ref_keys || []).length; i++) {
+    const r = cast.ref_keys[i];
+    entries.push({
+      filename: "ref-" + (i + 1),
+      size: 0,
+      mime: r.mime || "image/png",
+      key: r.key,
+      status: "done",
+      fromCast: true,
+    });
+  }
+  return entries;
+}
+
+function buildSlotUploadRow(slot, char, bound) {
   const row = document.createElement("div");
   row.className = "planner-slot-upload";
+  if (bound) row.classList.add("planner-slot-upload-bound");
   row.dataset.slot = slot;
 
   const head = document.createElement("div");
@@ -749,6 +954,31 @@ function buildSlotUploadRow(slot, char) {
     head.appendChild(bible);
   }
   row.appendChild(head);
+
+  // v0.48.0: bound to a persisted cast member. Hide the file picker
+  // and show a small badge instead; the perSlotUploads array was
+  // already populated with the cast's portrait + refs. Manage at
+  // /cast.html instead.
+  if (bound) {
+    const linked = document.createElement("div");
+    linked.className = "planner-slot-linked";
+    const portraitCount = bound.portrait_key ? 1 : 0;
+    const refCount = (bound.ref_keys || []).length;
+    linked.textContent =
+      "linked to cast member: " + bound.name
+      + " (" + portraitCount + " portrait, " + refCount + " refs). "
+      + "manage at /cast.";
+    row.appendChild(linked);
+    const list = document.createElement("ul");
+    list.className = "planner-slot-list";
+    list.id = "planner-list-" + slot;
+    row.appendChild(list);
+    const summary = document.createElement("div");
+    summary.className = "planner-slot-summary";
+    summary.id = "planner-summary-" + slot;
+    row.appendChild(summary);
+    return row;
+  }
 
   const input = document.createElement("input");
   input.type = "file";
@@ -2829,6 +3059,14 @@ document.addEventListener("DOMContentLoaded", () => {
         if (found) select.value = stash.planForm.modelId;
       }
     }
+  });
+  // v0.48.0: fetch the user's cast catalog and rebuild the dropdown
+  // options on each row. After this resolves, any bindings stashed by
+  // restorePersistedState are reconciled against the live catalog so a
+  // deleted cast member does not leave a slot stuck in "bound" mode.
+  loadCast().then(() => {
+    renderCastPickerOptions();
+    applyRestoredCastBindings();
   });
   loadHistory();
   initNotifications();

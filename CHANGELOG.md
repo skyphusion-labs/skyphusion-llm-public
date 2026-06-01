@@ -1,5 +1,45 @@
 # Changelog
 
+## v0.48.0
+
+Planner reads from the persisted cast. The /cast page (v0.46.0+) was a standalone surface up to v0.47.1: users could create characters, generate portraits, and build LoRA training sets there, but the planner still required typing the name + bible inline and re-uploading training images for every storyboard. v0.48.0 wires the two together: each plan-stage cast slot grows a "from cast" dropdown, and a picked cast member auto-fills name + bible and pre-populates the bundle stage's per-slot training-image set with the cast's portrait + ref keys.
+
+### Plan stage (`#planner-cast`)
+
+Each slot row now has a `<select>` between the include checkbox and the name input. Options are `inline (type here)` plus one entry per persisted cast member (`Name (portrait, N refs)`). Picking a cast member:
+
+- Fills the name field with `cast.name`
+- Fills the bible textarea with `cast.bible`
+- Marks both fields readonly so they cannot drift out of sync with /cast
+- Records the binding in `planState.castBindings[slot] = cast_id`
+
+Picking `inline (type here)` reverses the above: removes the binding, clears readonly, and the user can type a one-off character that does not need persisting.
+
+### Bundle stage (`#planner-bundle-cast`)
+
+For every slot bound to a cast member, `bundleState.perSlotUploads[slot]` is synthesized from the cast's `portrait_key` + `ref_keys[]` (each as a `{key, status: "done", fromCast: true}` entry). The slot's row hides the file picker entirely and shows a small badge: `linked to cast member: <name> (1 portrait, N refs). manage at /cast.`
+
+The bundle assembler code at the submit path is unchanged: it reads keys out of `perSlotUploads`, doesn't care whether they came from an inline upload (`character-refs/<uuid>`) or a persisted cast member (`cast/<id>/portrait.<ext>`, `cast/<id>/refs/<uuid>.<ext>`). The v0.47.1 routing patch (`cast/` keys go to `R2_RENDERS`) is what makes the GPU worker resolve those keys at render time.
+
+### Persistence + reconciliation
+
+`castBindings` is added to the localStorage stash so a tab close keeps each slot linked. On reload, the planner fetches `/api/cast` first and runs `reconcileCastBindings(saved, catalog)`: any binding whose `cast_id` was deleted out of band falls back to inline (the slot row goes editable again, the user is not stuck with a stale character).
+
+### Backend
+
+No backend changes. The `/api/storyboard/bundle` route accepts the existing `characterRefs: {slot: {name, prompt, trainingImages: [{key}]}}` shape; the keys just happen to be persisted ones now.
+
+### Tests
+
+5 new vitest unit tests for `reconcileCastBindings` (kept / dropped / empty catalog / empty bindings / missing bindings). 390/390 passing.
+
+### What is NOT in this PR
+
+- Cast picker on /cast itself (the /cast page is the editor; the planner is the consumer; not the other way around).
+- Drag-and-drop reordering of bound slots.
+- Bulk "set all slots to defaults" affordance.
+- A "create cast member from this inline character" shortcut (would close the loop the other way; tracked for a follow-up).
+
 ## v0.47.1
 
 Hotfix on v0.47.0: GET `/api/artifact/cast/<id>/portrait.<ext>` returned 404 because `isRendersKey` (the artifact-route bucket-picker) did not know about the new `cast/` prefix. Cast portraits and refs are physically in env.R2_RENDERS (the vivijure bucket), where the GPU worker also reads them; the read path was selecting env.R2 (the chat bucket) by default and missing. Adds `cast/` to the renders-bucket prefix list and a regression test. Smoke test on prod with a v0.47.1 deploy: portrait save round-trips through /api/artifact correctly; the training-set generator can now resolve the portrait URL the same way the browser does.

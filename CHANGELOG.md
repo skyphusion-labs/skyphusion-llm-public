@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.73.0
+
+Phase 6 of the worker-pod config pull. Three more config.yaml blocks become routable from the web Worker: `continuity.*` (8 keys), `image_prompting.*` (4 keys), `character_generation.*` (2 keys). Pod side landed in vivijure-serverless 0.4.29.
+
+### Backend
+
+- `src/runpod-submit.ts`: `ContinuityOverrides`, `ImagePromptingOverrides`, `CharacterGenerationOverrides` interfaces + three normalizers. Per-field validation (booleans strict, numeric ranges, suffix-string length caps). All three Args + JobInput types carry the fields; both builders forward them.
+- `src/index.ts`: `RenderSubmitRequest` accepts the three new fields; both render and finalize handlers read them and forward through.
+
+### Frontend
+
+- `public/planner.html`: new "continuity + prompting (advanced)" disclosure with ten controls (continuity enabled, use_last_frame, max_anchor_frames, chain_denoising; anatomy_guard, negative_mode, positive_extra, negative_extra; portrait reference_denoising, reference_prompt_suffix).
+- `public/planner.js`: `buildContinuityOverrides`, `buildImagePromptingOverrides`, `buildCharacterGenerationOverrides` read + validate, attach to the submit body alongside the other override builders.
+
+### Tests
+
+464/464 still passing, type-check clean.
+
 ## v0.72.0
 
 Phase 5 of the worker-pod config pull. `consistency.*` (8 keys) and `video_consistency.*` (5 keys) become routable from the web Worker via two new optional submit-body fields. Pod side landed in vivijure-serverless 0.4.28.

@@ -66,6 +66,11 @@ export interface RenderSubmitArgs {
   consistencyOverrides?: ConsistencyOverrides;
   // v0.72.0: video_consistency block override (vivijure-serverless 0.4.28+).
   videoConsistencyOverrides?: VideoConsistencyOverrides;
+  // v0.73.0: continuity / image_prompting / character_generation
+  // (vivijure-serverless 0.4.29+).
+  continuityOverrides?: ContinuityOverrides;
+  imagePromptingOverrides?: ImagePromptingOverrides;
+  characterGenerationOverrides?: CharacterGenerationOverrides;
 }
 
 export interface LoraTrainOverrides {
@@ -104,6 +109,35 @@ export interface QualityGateOverrides {
   // When true the render proceeds even on verdict="fail". When false
   // a hard fail blocks the render.
   allow_warn?: boolean;
+}
+
+// v0.73.0: matching continuity block from config.yaml. Routes through to
+// vivijure-serverless 0.4.29+'s continuity_refs.set_overrides.
+export interface ContinuityOverrides {
+  enabled?: boolean;
+  use_last_frame?: boolean;
+  max_anchor_frames?: number;       // int 1..32
+  style_blend_corner?: boolean;
+  anchor_strip?: boolean;
+  chain_denoising?: number;         // float 0..1
+  trim_join_frame?: boolean;
+  trim_join_frames?: number;        // int 0..16
+}
+
+// v0.73.0: image_prompting block (negative-prompt mode + anatomy guard +
+// suffix-extras the renderer appends to every SDXL prompt).
+export interface ImagePromptingOverrides {
+  anatomy_guard?: boolean;
+  negative_mode?: "focused" | "full";
+  positive_extra?: string;          // max 512 chars
+  negative_extra?: string;          // max 512 chars
+}
+
+// v0.73.0: character_generation block - the two knobs on the portrait
+// img2img path.
+export interface CharacterGenerationOverrides {
+  reference_denoising?: number;     // float 0..1
+  reference_prompt_suffix?: string; // max 512 chars
 }
 
 // v0.72.0: matching consistency block from config.yaml. Routes through to
@@ -210,6 +244,10 @@ export interface RenderJobInput {
   // v0.72.0: consistency / video_consistency overrides (0.4.28+).
   consistency_overrides?: ConsistencyOverrides;
   video_consistency_overrides?: VideoConsistencyOverrides;
+  // v0.73.0: continuity / image_prompting / character_generation (0.4.29+).
+  continuity_overrides?: ContinuityOverrides;
+  image_prompting_overrides?: ImagePromptingOverrides;
+  character_generation_overrides?: CharacterGenerationOverrides;
 }
 
 // v0.41.0: per-shot SDXL keyframe regeneration. The Worker derives the
@@ -264,6 +302,10 @@ export interface FinalizeArgs {
   // v0.72.0: same consistency / video_consistency overrides.
   consistencyOverrides?: ConsistencyOverrides;
   videoConsistencyOverrides?: VideoConsistencyOverrides;
+  // v0.73.0: same as RenderSubmitArgs.
+  continuityOverrides?: ContinuityOverrides;
+  imagePromptingOverrides?: ImagePromptingOverrides;
+  characterGenerationOverrides?: CharacterGenerationOverrides;
 }
 
 export interface FinalizeJobInput {
@@ -281,6 +323,9 @@ export interface FinalizeJobInput {
   quality_gate_overrides?: QualityGateOverrides;
   consistency_overrides?: ConsistencyOverrides;
   video_consistency_overrides?: VideoConsistencyOverrides;
+  continuity_overrides?: ContinuityOverrides;
+  image_prompting_overrides?: ImagePromptingOverrides;
+  character_generation_overrides?: CharacterGenerationOverrides;
 }
 
 // v0.57.0: standalone LoRA training. The cast manager UI on /cast
@@ -414,6 +459,13 @@ export function buildSubmitPayload(args: RenderSubmitArgs): { input: RenderJobIn
   if (co) input.consistency_overrides = co;
   const vco = normalizeVideoConsistencyOverrides(args.videoConsistencyOverrides);
   if (vco) input.video_consistency_overrides = vco;
+  // v0.73.0: continuity / image_prompting / character_generation.
+  const cont = normalizeContinuityOverrides(args.continuityOverrides);
+  if (cont) input.continuity_overrides = cont;
+  const ip = normalizeImagePromptingOverrides(args.imagePromptingOverrides);
+  if (ip) input.image_prompting_overrides = ip;
+  const cg = normalizeCharacterGenerationOverrides(args.characterGenerationOverrides);
+  if (cg) input.character_generation_overrides = cg;
   return { input };
 }
 
@@ -458,6 +510,12 @@ export function buildFinalizePayload(args: FinalizeArgs): { input: FinalizeJobIn
   if (coF) input.consistency_overrides = coF;
   const vcoF = normalizeVideoConsistencyOverrides(args.videoConsistencyOverrides);
   if (vcoF) input.video_consistency_overrides = vcoF;
+  const contF = normalizeContinuityOverrides(args.continuityOverrides);
+  if (contF) input.continuity_overrides = contF;
+  const ipF = normalizeImagePromptingOverrides(args.imagePromptingOverrides);
+  if (ipF) input.image_prompting_overrides = ipF;
+  const cgF = normalizeCharacterGenerationOverrides(args.characterGenerationOverrides);
+  if (cgF) input.character_generation_overrides = cgF;
   return { input };
 }
 
@@ -500,6 +558,63 @@ export function normalizeLoraTrainOverrides(
     if (typeof v === "number" && Number.isFinite(v) && v > 0) {
       out[k] = v;
     }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// v0.73.0: normalize continuity overrides.
+export function normalizeContinuityOverrides(
+  raw: ContinuityOverrides | undefined,
+): ContinuityOverrides | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: ContinuityOverrides = {};
+  if (typeof raw.enabled === "boolean") out.enabled = raw.enabled;
+  if (typeof raw.use_last_frame === "boolean") out.use_last_frame = raw.use_last_frame;
+  if (typeof raw.max_anchor_frames === "number" && Number.isInteger(raw.max_anchor_frames) && raw.max_anchor_frames >= 1 && raw.max_anchor_frames <= 32) {
+    out.max_anchor_frames = raw.max_anchor_frames;
+  }
+  if (typeof raw.style_blend_corner === "boolean") out.style_blend_corner = raw.style_blend_corner;
+  if (typeof raw.anchor_strip === "boolean") out.anchor_strip = raw.anchor_strip;
+  if (typeof raw.chain_denoising === "number" && Number.isFinite(raw.chain_denoising) && raw.chain_denoising >= 0 && raw.chain_denoising <= 1) {
+    out.chain_denoising = raw.chain_denoising;
+  }
+  if (typeof raw.trim_join_frame === "boolean") out.trim_join_frame = raw.trim_join_frame;
+  if (typeof raw.trim_join_frames === "number" && Number.isInteger(raw.trim_join_frames) && raw.trim_join_frames >= 0 && raw.trim_join_frames <= 16) {
+    out.trim_join_frames = raw.trim_join_frames;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// v0.73.0: normalize image_prompting overrides.
+export function normalizeImagePromptingOverrides(
+  raw: ImagePromptingOverrides | undefined,
+): ImagePromptingOverrides | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: ImagePromptingOverrides = {};
+  if (typeof raw.anatomy_guard === "boolean") out.anatomy_guard = raw.anatomy_guard;
+  if (raw.negative_mode === "focused" || raw.negative_mode === "full") {
+    out.negative_mode = raw.negative_mode;
+  }
+  if (typeof raw.positive_extra === "string" && raw.positive_extra.length <= 512) {
+    out.positive_extra = raw.positive_extra;
+  }
+  if (typeof raw.negative_extra === "string" && raw.negative_extra.length <= 512) {
+    out.negative_extra = raw.negative_extra;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// v0.73.0: normalize character_generation overrides.
+export function normalizeCharacterGenerationOverrides(
+  raw: CharacterGenerationOverrides | undefined,
+): CharacterGenerationOverrides | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: CharacterGenerationOverrides = {};
+  if (typeof raw.reference_denoising === "number" && Number.isFinite(raw.reference_denoising) && raw.reference_denoising >= 0 && raw.reference_denoising <= 1) {
+    out.reference_denoising = raw.reference_denoising;
+  }
+  if (typeof raw.reference_prompt_suffix === "string" && raw.reference_prompt_suffix.length <= 512) {
+    out.reference_prompt_suffix = raw.reference_prompt_suffix;
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }

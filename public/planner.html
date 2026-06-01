@@ -562,6 +562,77 @@
             defaults.
           </p>
         </details>
+        <!-- v0.73.0: continuity + image_prompting + character_generation
+             block overrides (vivijure-serverless 0.4.29+). -->
+        <details class="planner-overrides-raw-details">
+          <summary class="planner-overrides-summary">continuity + prompting (advanced)</summary>
+          <div class="planner-overrides-fields">
+            <label class="planner-field">
+              <span>continuity enabled</span>
+              <select id="planner-ct-enabled">
+                <option value="">(use pod default: true)</option>
+                <option value="true">true</option>
+                <option value="false">false (no chain-init)</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>use last frame</span>
+              <select id="planner-ct-use-last-frame">
+                <option value="">(use pod default: true)</option>
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>max anchor frames (pod default 6)</span>
+              <input id="planner-ct-max-anchors" type="number" min="1" max="32" step="1" placeholder="6" />
+            </label>
+            <label class="planner-field">
+              <span>continuity chain denoising (pod default 0.28)</span>
+              <input id="planner-ct-chain-denoising" type="number" min="0" max="1" step="0.01" placeholder="0.28" />
+            </label>
+            <label class="planner-field">
+              <span>anatomy guard</span>
+              <select id="planner-ip-anatomy-guard">
+                <option value="">(use pod default: true)</option>
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>negative mode</span>
+              <select id="planner-ip-negative-mode">
+                <option value="">(use pod default: focused)</option>
+                <option value="focused">focused (shorter neg, often sharper)</option>
+                <option value="full">full (long community neg list)</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>positive extra (free text)</span>
+              <input id="planner-ip-positive-extra" type="text" maxlength="512" placeholder="anatomically correct, coherent anatomy..." />
+            </label>
+            <label class="planner-field">
+              <span>negative extra (free text)</span>
+              <input id="planner-ip-negative-extra" type="text" maxlength="512" placeholder="bad hands, extra fingers..." />
+            </label>
+            <label class="planner-field">
+              <span>portrait reference denoising (pod default 0.36)</span>
+              <input id="planner-cg-ref-denoising" type="number" min="0" max="1" step="0.01" placeholder="0.36" />
+            </label>
+            <label class="planner-field">
+              <span>portrait reference prompt suffix</span>
+              <input id="planner-cg-ref-suffix" type="text" maxlength="512" placeholder="match reference image likeness, face, hair, outfit..." />
+            </label>
+          </div>
+          <p class="planner-overrides-hint">
+            forwarded as <code>continuity_overrides</code> +
+            <code>image_prompting_overrides</code> +
+            <code>character_generation_overrides</code>. controls scene
+            chaining, the always-appended prompt suffixes that SDXL gets
+            for anatomy + identity coherence, and the img2img knobs the
+            portrait gen path uses.
+          </p>
+        </details>
         <!-- v0.71.0: render-output + Wan inference knobs that vivijure-
              serverless 0.4.27+ accepts as flat render_overrides keys. -->
         <details class="planner-overrides-raw-details">

@@ -1494,6 +1494,11 @@ interface RenderSubmitRequest {
   // vivijure-serverless 0.4.28+.
   consistencyOverrides?: unknown;
   videoConsistencyOverrides?: unknown;
+  // v0.73.0: continuity / image_prompting / character_generation
+  // routed to vivijure-serverless 0.4.29+.
+  continuityOverrides?: unknown;
+  imagePromptingOverrides?: unknown;
+  characterGenerationOverrides?: unknown;
 }
 
 async function handleRenderSubmit(request: Request, env: Env): Promise<Response> {
@@ -1653,6 +1658,19 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
     videoConsistencyOverrides:
       body.videoConsistencyOverrides && typeof body.videoConsistencyOverrides === "object"
         ? (body.videoConsistencyOverrides as RenderSubmitArgs["videoConsistencyOverrides"])
+        : undefined,
+    // v0.73.0: optional continuity / image_prompting / character_generation.
+    continuityOverrides:
+      body.continuityOverrides && typeof body.continuityOverrides === "object"
+        ? (body.continuityOverrides as RenderSubmitArgs["continuityOverrides"])
+        : undefined,
+    imagePromptingOverrides:
+      body.imagePromptingOverrides && typeof body.imagePromptingOverrides === "object"
+        ? (body.imagePromptingOverrides as RenderSubmitArgs["imagePromptingOverrides"])
+        : undefined,
+    characterGenerationOverrides:
+      body.characterGenerationOverrides && typeof body.characterGenerationOverrides === "object"
+        ? (body.characterGenerationOverrides as RenderSubmitArgs["characterGenerationOverrides"])
         : undefined,
   };
 
@@ -2319,6 +2337,9 @@ async function handleFinalizeSubmit(
   let bodyQualityGateOverrides: RenderSubmitArgs["qualityGateOverrides"] | undefined;
   let bodyConsistencyOverrides: RenderSubmitArgs["consistencyOverrides"] | undefined;
   let bodyVideoConsistencyOverrides: RenderSubmitArgs["videoConsistencyOverrides"] | undefined;
+  let bodyContinuityOverrides: RenderSubmitArgs["continuityOverrides"] | undefined;
+  let bodyImagePromptingOverrides: RenderSubmitArgs["imagePromptingOverrides"] | undefined;
+  let bodyCharacterGenerationOverrides: RenderSubmitArgs["characterGenerationOverrides"] | undefined;
   try {
     const ct = (request.headers.get("content-type") || "").toLowerCase();
     if (ct.includes("application/json")) {
@@ -2330,6 +2351,9 @@ async function handleFinalizeSubmit(
         qualityGateOverrides?: unknown;
         consistencyOverrides?: unknown;
         videoConsistencyOverrides?: unknown;
+        continuityOverrides?: unknown;
+        imagePromptingOverrides?: unknown;
+        characterGenerationOverrides?: unknown;
       };
       if (typeof parsed?.audioKey === "string" && parsed.audioKey.length > 0) {
         bodyAudioKey = parsed.audioKey;
@@ -2368,6 +2392,27 @@ async function handleFinalizeSubmit(
         && !Array.isArray(parsed.videoConsistencyOverrides)
       ) {
         bodyVideoConsistencyOverrides = parsed.videoConsistencyOverrides as RenderSubmitArgs["videoConsistencyOverrides"];
+      }
+      if (
+        parsed?.continuityOverrides
+        && typeof parsed.continuityOverrides === "object"
+        && !Array.isArray(parsed.continuityOverrides)
+      ) {
+        bodyContinuityOverrides = parsed.continuityOverrides as RenderSubmitArgs["continuityOverrides"];
+      }
+      if (
+        parsed?.imagePromptingOverrides
+        && typeof parsed.imagePromptingOverrides === "object"
+        && !Array.isArray(parsed.imagePromptingOverrides)
+      ) {
+        bodyImagePromptingOverrides = parsed.imagePromptingOverrides as RenderSubmitArgs["imagePromptingOverrides"];
+      }
+      if (
+        parsed?.characterGenerationOverrides
+        && typeof parsed.characterGenerationOverrides === "object"
+        && !Array.isArray(parsed.characterGenerationOverrides)
+      ) {
+        bodyCharacterGenerationOverrides = parsed.characterGenerationOverrides as RenderSubmitArgs["characterGenerationOverrides"];
       }
       if (parsed?.castLoras !== undefined) {
         if (
@@ -2485,6 +2530,11 @@ async function handleFinalizeSubmit(
     // (vivijure-serverless 0.4.28+).
     consistencyOverrides: bodyConsistencyOverrides,
     videoConsistencyOverrides: bodyVideoConsistencyOverrides,
+    // v0.73.0: same for continuity / image_prompting / character_generation
+    // (vivijure-serverless 0.4.29+).
+    continuityOverrides: bodyContinuityOverrides,
+    imagePromptingOverrides: bodyImagePromptingOverrides,
+    characterGenerationOverrides: bodyCharacterGenerationOverrides,
   });
   if (!result.ok) {
     return json(

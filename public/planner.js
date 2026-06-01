@@ -603,6 +603,48 @@ function buildCastLoraSubmit() {
   return out;
 }
 
+// v0.73.0: continuity / image_prompting / character_generation builders.
+function buildContinuityOverrides() {
+  const $sel = (s) => $(s);
+  const out = {};
+  const en = ($sel("#planner-ct-enabled") || {}).value;
+  if (en === "true") out.enabled = true;
+  else if (en === "false") out.enabled = false;
+  const lf = ($sel("#planner-ct-use-last-frame") || {}).value;
+  if (lf === "true") out.use_last_frame = true;
+  else if (lf === "false") out.use_last_frame = false;
+  const ma = parseFloat(($sel("#planner-ct-max-anchors") || {}).value || "");
+  if (Number.isInteger(ma) && ma >= 1 && ma <= 32) out.max_anchor_frames = ma;
+  const cd = parseFloat(($sel("#planner-ct-chain-denoising") || {}).value || "");
+  if (Number.isFinite(cd) && cd >= 0 && cd <= 1) out.chain_denoising = cd;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function buildImagePromptingOverrides() {
+  const $sel = (s) => $(s);
+  const out = {};
+  const ag = ($sel("#planner-ip-anatomy-guard") || {}).value;
+  if (ag === "true") out.anatomy_guard = true;
+  else if (ag === "false") out.anatomy_guard = false;
+  const nm = ($sel("#planner-ip-negative-mode") || {}).value;
+  if (nm === "focused" || nm === "full") out.negative_mode = nm;
+  const pe = (($sel("#planner-ip-positive-extra") || {}).value || "").trim();
+  if (pe && pe.length <= 512) out.positive_extra = pe;
+  const ne = (($sel("#planner-ip-negative-extra") || {}).value || "").trim();
+  if (ne && ne.length <= 512) out.negative_extra = ne;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function buildCharacterGenerationOverrides() {
+  const $sel = (s) => $(s);
+  const out = {};
+  const rd = parseFloat(($sel("#planner-cg-ref-denoising") || {}).value || "");
+  if (Number.isFinite(rd) && rd >= 0 && rd <= 1) out.reference_denoising = rd;
+  const ps = (($sel("#planner-cg-ref-suffix") || {}).value || "").trim();
+  if (ps && ps.length <= 512) out.reference_prompt_suffix = ps;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 // v0.72.0: consistency block overrides from the advanced disclosure.
 // Same drop-on-empty / off-the-wire-when-empty pattern.
 function buildConsistencyOverrides() {
@@ -2695,6 +2737,13 @@ async function submitRender() {
   if (consOverrides) reqBody.consistencyOverrides = consOverrides;
   const vconsOverrides = buildVideoConsistencyOverrides();
   if (vconsOverrides) reqBody.videoConsistencyOverrides = vconsOverrides;
+  // v0.73.0: continuity / image_prompting / character_generation overrides.
+  const contOverrides = buildContinuityOverrides();
+  if (contOverrides) reqBody.continuityOverrides = contOverrides;
+  const ipOverrides = buildImagePromptingOverrides();
+  if (ipOverrides) reqBody.imagePromptingOverrides = ipOverrides;
+  const cgOverrides = buildCharacterGenerationOverrides();
+  if (cgOverrides) reqBody.characterGenerationOverrides = cgOverrides;
 
   let resp = null;
   let data = null;

@@ -1484,6 +1484,12 @@ interface RenderSubmitRequest {
   // side"). The builder's normalizer drops anything that doesn't
   // satisfy the per-key union/range.
   multiCharacterOverrides?: unknown;
+  // v0.70.0: lora_quality_gate overrides routed to vivijure-serverless
+  // 0.4.25+. Recognized keys: enabled (bool), min_file_bytes (int),
+  // probe_count (1-16), min_ssim (0..1), pass_ssim (0..1),
+  // default_trigger (string), probe_lora_scale (0..2), base_seed
+  // (int), allow_warn (bool).
+  qualityGateOverrides?: unknown;
 }
 
 async function handleRenderSubmit(request: Request, env: Env): Promise<Response> {
@@ -1629,6 +1635,11 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
     multiCharacterOverrides:
       body.multiCharacterOverrides && typeof body.multiCharacterOverrides === "object"
         ? (body.multiCharacterOverrides as RenderSubmitArgs["multiCharacterOverrides"])
+        : undefined,
+    // v0.70.0: optional lora_quality_gate overrides.
+    qualityGateOverrides:
+      body.qualityGateOverrides && typeof body.qualityGateOverrides === "object"
+        ? (body.qualityGateOverrides as RenderSubmitArgs["qualityGateOverrides"])
         : undefined,
   };
 
@@ -2292,6 +2303,7 @@ async function handleFinalizeSubmit(
   let bodyCastLoras: CastLoraBindings | undefined;
   let bodyLoraTrainOverrides: RenderSubmitArgs["loraTrainOverrides"] | undefined;
   let bodyMultiCharacterOverrides: RenderSubmitArgs["multiCharacterOverrides"] | undefined;
+  let bodyQualityGateOverrides: RenderSubmitArgs["qualityGateOverrides"] | undefined;
   try {
     const ct = (request.headers.get("content-type") || "").toLowerCase();
     if (ct.includes("application/json")) {
@@ -2300,6 +2312,7 @@ async function handleFinalizeSubmit(
         castLoras?: unknown;
         loraTrainOverrides?: unknown;
         multiCharacterOverrides?: unknown;
+        qualityGateOverrides?: unknown;
       };
       if (typeof parsed?.audioKey === "string" && parsed.audioKey.length > 0) {
         bodyAudioKey = parsed.audioKey;
@@ -2317,6 +2330,13 @@ async function handleFinalizeSubmit(
         && !Array.isArray(parsed.multiCharacterOverrides)
       ) {
         bodyMultiCharacterOverrides = parsed.multiCharacterOverrides as RenderSubmitArgs["multiCharacterOverrides"];
+      }
+      if (
+        parsed?.qualityGateOverrides
+        && typeof parsed.qualityGateOverrides === "object"
+        && !Array.isArray(parsed.qualityGateOverrides)
+      ) {
+        bodyQualityGateOverrides = parsed.qualityGateOverrides as RenderSubmitArgs["qualityGateOverrides"];
       }
       if (parsed?.castLoras !== undefined) {
         if (
@@ -2427,6 +2447,9 @@ async function handleFinalizeSubmit(
     // v0.69.0: same for multi_character overrides (vivijure-serverless
     // 0.4.23+).
     multiCharacterOverrides: bodyMultiCharacterOverrides,
+    // v0.70.0: same for quality_gate overrides (vivijure-serverless
+    // 0.4.25+).
+    qualityGateOverrides: bodyQualityGateOverrides,
   });
   if (!result.ok) {
     return json(
@@ -2897,19 +2920,32 @@ async function handleCastTrainLora(
   if (!Number.isInteger(id) || id <= 0) {
     return json({ error: "invalid id" }, { status: 400 });
   }
-  // v0.68.0: optional body field forwarded to the GPU side's training
-  // subprocess so the cast manager's UI can dial steps / LR / etc.
+  // v0.68.0 + v0.70.0: optional body fields forwarded to the GPU side.
+  // loraTrainOverrides → run_training_subprocess hyperparams.
+  // qualityGateOverrides → lora_quality_gate.set_overrides (gate
+  // evaluation runs after standalone training too).
   let bodyLoraTrainOverrides: import("./runpod-submit").LoraTrainOverrides | undefined;
+  let bodyQualityGateOverrides: import("./runpod-submit").QualityGateOverrides | undefined;
   try {
     const ct = (request.headers.get("content-type") || "").toLowerCase();
     if (ct.includes("application/json")) {
-      const parsed = (await request.json()) as { loraTrainOverrides?: unknown };
+      const parsed = (await request.json()) as {
+        loraTrainOverrides?: unknown;
+        qualityGateOverrides?: unknown;
+      };
       if (
         parsed?.loraTrainOverrides
         && typeof parsed.loraTrainOverrides === "object"
         && !Array.isArray(parsed.loraTrainOverrides)
       ) {
         bodyLoraTrainOverrides = parsed.loraTrainOverrides as import("./runpod-submit").LoraTrainOverrides;
+      }
+      if (
+        parsed?.qualityGateOverrides
+        && typeof parsed.qualityGateOverrides === "object"
+        && !Array.isArray(parsed.qualityGateOverrides)
+      ) {
+        bodyQualityGateOverrides = parsed.qualityGateOverrides as import("./runpod-submit").QualityGateOverrides;
       }
     }
   } catch { /* empty body is fine */ }
@@ -2965,6 +3001,8 @@ async function handleCastTrainLora(
     loraDestKey,
     // v0.68.0: training hyperparam overrides from the request body.
     loraTrainOverrides: bodyLoraTrainOverrides,
+    // v0.70.0: quality-gate overrides for the post-training evaluation.
+    qualityGateOverrides: bodyQualityGateOverrides,
   });
   if (!submit.ok) {
     return json({ error: submit.error }, { status: 502 });

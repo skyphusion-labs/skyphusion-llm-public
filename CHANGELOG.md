@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.70.0
+
+Phase 3 of the worker-pod config pull (Phase 1: LoRA training, Phase 2: multi_character). The `loras.quality_gate` block from the pod's `config.yaml` becomes routable from the web Worker via a new `qualityGateOverrides` field on render + finalize + train-lora submit bodies. Pod side landed in vivijure-serverless 0.4.25.
+
+### Backend
+
+- `src/runpod-submit.ts`: new `QualityGateOverrides` interface + `normalizeQualityGateOverrides` validator. Per-key validation: `enabled` / `allow_warn` strict booleans; `probe_count` 1..16; `min_ssim` / `pass_ssim` 0..1; `probe_lora_scale` 0..2; `min_file_bytes` / `base_seed` non-negative integers; `default_trigger` 1..64 chars. `RenderJobInput`, `FinalizeJobInput`, `TrainLoraJobInput`, all three Args types carry the field; all three builders forward it through.
+- `src/index.ts`: `RenderSubmitRequest` accepts `qualityGateOverrides`; `handleRenderSubmit`, `handleFinalizeSubmit`, `handleCastTrainLora` all read it and forward through.
+
+### Frontend
+
+- `public/planner.html`: new "LoRA quality gate (advanced)" disclosure with seven controls (enabled, probe_count, min_ssim, pass_ssim, probe_lora_scale, base_seed, allow_warn). Each shows the pod default in placeholder.
+- `public/planner.js`: `buildQualityGateOverrides()` reads + validates, attaches alongside the other override builders.
+
+### Tests
+
+464/464 still passing, type-check clean.
+
 ## v0.69.0
 
 Phase 2 of the worker-pod config pull (Phase 1 was LoRA training in v0.68.0 / vivijure-serverless 0.4.19). The `production.multi_character` block from the pod's `config.yaml` becomes routable from the web Worker via a new `multiCharacterOverrides` field on render + finalize submit bodies. Pod side landed in vivijure-serverless 0.4.23.

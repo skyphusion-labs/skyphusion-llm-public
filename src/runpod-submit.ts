@@ -58,6 +58,10 @@ export interface RenderSubmitArgs {
   // every existing reader (mode_from_prefs, should_composite, layout,
   // generate_composite_keyframe) merges over config.yaml.
   multiCharacterOverrides?: MultiCharacterOverrides;
+  // v0.70.0: lora_quality_gate overrides. Routes through to vivijure-
+  // serverless 0.4.25+'s lora_quality_gate.set_overrides; gate_cfg()
+  // merges these over config.yaml's loras.quality_gate block.
+  qualityGateOverrides?: QualityGateOverrides;
 }
 
 export interface LoraTrainOverrides {
@@ -66,6 +70,36 @@ export interface LoraTrainOverrides {
   rank?: number;
   resolution?: number;
   timeout_seconds?: number;
+}
+
+// v0.70.0: matching loras.quality_gate config that the pod previously
+// read from config.yaml. Routes through to vivijure-serverless 0.4.25+'s
+// lora_quality_gate.set_overrides. All fields optional.
+export interface QualityGateOverrides {
+  // Master switch for the gate. When false, evaluate_lora returns a
+  // skipped verdict and the render proceeds without checking SSIM.
+  enabled?: boolean;
+  // Sanity floor on the .safetensors file size. Below this the gate
+  // verdicts "bad_file" and the render fails loudly.
+  min_file_bytes?: number;
+  // How many probe images SDXL generates per slot to score against
+  // the portrait. Pod default 2; raising costs gate time per slot.
+  probe_count?: number;
+  // SSIM floor: average below this -> verdict="fail" (render still
+  // continues since allow_warn defaults true; raise to gate harder).
+  min_ssim?: number;
+  // SSIM cap for pass: average >= this -> verdict="pass". Pod default 0.38.
+  pass_ssim?: number;
+  // Fallback trigger word when the slot's catalog entry has none.
+  default_trigger?: string;
+  // LoRA scale used for the probe gens. Lower = the gate is more
+  // forgiving; higher = stricter identity check.
+  probe_lora_scale?: number;
+  // Base seed for probe gens; the probe loop adds i to it.
+  base_seed?: number;
+  // When true the render proceeds even on verdict="fail". When false
+  // a hard fail blocks the render.
+  allow_warn?: boolean;
 }
 
 // v0.69.0: matching multi_character config that the pod previously read
@@ -112,6 +146,8 @@ export interface RenderJobInput {
   // v0.69.0: multi_character composite overrides (vivijure-serverless
   // 0.4.23+). Same forward-compat rule.
   multi_character_overrides?: MultiCharacterOverrides;
+  // v0.70.0: lora_quality_gate overrides (vivijure-serverless 0.4.25+).
+  quality_gate_overrides?: QualityGateOverrides;
 }
 
 // v0.41.0: per-shot SDXL keyframe regeneration. The Worker derives the
@@ -161,6 +197,8 @@ export interface FinalizeArgs {
   loraTrainOverrides?: LoraTrainOverrides;
   // v0.69.0: same multi_character overrides as RenderSubmitArgs.
   multiCharacterOverrides?: MultiCharacterOverrides;
+  // v0.70.0: same quality_gate overrides as RenderSubmitArgs.
+  qualityGateOverrides?: QualityGateOverrides;
 }
 
 export interface FinalizeJobInput {
@@ -175,6 +213,7 @@ export interface FinalizeJobInput {
   pretrained_loras?: Record<string, string>;
   lora_train_overrides?: LoraTrainOverrides;
   multi_character_overrides?: MultiCharacterOverrides;
+  quality_gate_overrides?: QualityGateOverrides;
 }
 
 // v0.57.0: standalone LoRA training. The cast manager UI on /cast
@@ -194,6 +233,9 @@ export interface TrainLoraArgs {
   // path. Lets the cast manager's "train LoRA" button iterate on
   // steps / lr / rank / resolution / timeout without an image rebuild.
   loraTrainOverrides?: LoraTrainOverrides;
+  // v0.70.0: same quality_gate overrides as the render path. The
+  // gate evaluation runs after standalone training too.
+  qualityGateOverrides?: QualityGateOverrides;
 }
 
 export interface TrainLoraJobInput {
@@ -203,6 +245,7 @@ export interface TrainLoraJobInput {
   user_email?: string;
   lora_dest_key: string;
   lora_train_overrides?: LoraTrainOverrides;
+  quality_gate_overrides?: QualityGateOverrides;
 }
 
 // RunPod queue-based job status. The platform uses these literal strings
@@ -296,6 +339,9 @@ export function buildSubmitPayload(args: RenderSubmitArgs): { input: RenderJobIn
   // v0.69.0: multi_character composite overrides. Same wire-omit rule.
   const mco = normalizeMultiCharacterOverrides(args.multiCharacterOverrides);
   if (mco) input.multi_character_overrides = mco;
+  // v0.70.0: lora_quality_gate overrides. Same wire-omit rule.
+  const qgo = normalizeQualityGateOverrides(args.qualityGateOverrides);
+  if (qgo) input.quality_gate_overrides = qgo;
   return { input };
 }
 
@@ -334,6 +380,8 @@ export function buildFinalizePayload(args: FinalizeArgs): { input: FinalizeJobIn
   if (ltoF) input.lora_train_overrides = ltoF;
   const mcoF = normalizeMultiCharacterOverrides(args.multiCharacterOverrides);
   if (mcoF) input.multi_character_overrides = mcoF;
+  const qgoF = normalizeQualityGateOverrides(args.qualityGateOverrides);
+  if (qgoF) input.quality_gate_overrides = qgoF;
   return { input };
 }
 
@@ -352,6 +400,8 @@ export function buildTrainLoraPayload(args: TrainLoraArgs): { input: TrainLoraJo
   }
   const lto = normalizeLoraTrainOverrides(args.loraTrainOverrides);
   if (lto) input.lora_train_overrides = lto;
+  const qgo = normalizeQualityGateOverrides(args.qualityGateOverrides);
+  if (qgo) input.quality_gate_overrides = qgo;
   return { input };
 }
 
@@ -375,6 +425,38 @@ export function normalizeLoraTrainOverrides(
       out[k] = v;
     }
   }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// v0.70.0: same shape, applied to lora_quality_gate overrides.
+export function normalizeQualityGateOverrides(
+  raw: QualityGateOverrides | undefined,
+): QualityGateOverrides | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: QualityGateOverrides = {};
+  if (typeof raw.enabled === "boolean") out.enabled = raw.enabled;
+  if (typeof raw.min_file_bytes === "number" && Number.isInteger(raw.min_file_bytes) && raw.min_file_bytes >= 0) {
+    out.min_file_bytes = raw.min_file_bytes;
+  }
+  if (typeof raw.probe_count === "number" && Number.isInteger(raw.probe_count) && raw.probe_count >= 1 && raw.probe_count <= 16) {
+    out.probe_count = raw.probe_count;
+  }
+  if (typeof raw.min_ssim === "number" && Number.isFinite(raw.min_ssim) && raw.min_ssim >= 0 && raw.min_ssim <= 1) {
+    out.min_ssim = raw.min_ssim;
+  }
+  if (typeof raw.pass_ssim === "number" && Number.isFinite(raw.pass_ssim) && raw.pass_ssim >= 0 && raw.pass_ssim <= 1) {
+    out.pass_ssim = raw.pass_ssim;
+  }
+  if (typeof raw.default_trigger === "string" && raw.default_trigger.trim().length > 0 && raw.default_trigger.length <= 64) {
+    out.default_trigger = raw.default_trigger;
+  }
+  if (typeof raw.probe_lora_scale === "number" && Number.isFinite(raw.probe_lora_scale) && raw.probe_lora_scale >= 0 && raw.probe_lora_scale <= 2) {
+    out.probe_lora_scale = raw.probe_lora_scale;
+  }
+  if (typeof raw.base_seed === "number" && Number.isInteger(raw.base_seed) && raw.base_seed >= 0) {
+    out.base_seed = raw.base_seed;
+  }
+  if (typeof raw.allow_warn === "boolean") out.allow_warn = raw.allow_warn;
   return Object.keys(out).length > 0 ? out : undefined;
 }
 

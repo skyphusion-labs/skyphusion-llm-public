@@ -603,6 +603,39 @@ function buildCastLoraSubmit() {
   return out;
 }
 
+// v0.70.0: read the seven quality-gate inputs in the advanced block.
+// Same drop-on-empty pattern as the other override builders.
+function buildQualityGateOverrides() {
+  const readStr = (sel) => {
+    const el = $(sel);
+    return el ? (el.value || "").trim() : "";
+  };
+  const readNum = (sel) => {
+    const raw = readStr(sel);
+    if (!raw) return undefined;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const out = {};
+  const en = readStr("#planner-qg-enabled");
+  if (en === "true") out.enabled = true;
+  else if (en === "false") out.enabled = false;
+  const pc = readNum("#planner-qg-probe-count");
+  if (pc !== undefined && pc >= 1 && pc <= 16) out.probe_count = Math.round(pc);
+  const mn = readNum("#planner-qg-min-ssim");
+  if (mn !== undefined && mn >= 0 && mn <= 1) out.min_ssim = mn;
+  const ps = readNum("#planner-qg-pass-ssim");
+  if (ps !== undefined && ps >= 0 && ps <= 1) out.pass_ssim = ps;
+  const ls = readNum("#planner-qg-lora-scale");
+  if (ls !== undefined && ls >= 0 && ls <= 2) out.probe_lora_scale = ls;
+  const bs = readNum("#planner-qg-base-seed");
+  if (bs !== undefined && bs >= 0) out.base_seed = Math.round(bs);
+  const aw = readStr("#planner-qg-allow-warn");
+  if (aw === "true") out.allow_warn = true;
+  else if (aw === "false") out.allow_warn = false;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 // v0.69.0: read the five multi-character inputs in the advanced block.
 // Same drop-on-empty pattern as buildLoraTrainOverrides: returns
 // undefined when nothing was overridden so the caller skips the key.
@@ -2592,6 +2625,9 @@ async function submitRender() {
   // v0.69.0: multi_character composite overrides.
   const mcOverrides = buildMultiCharacterOverrides();
   if (mcOverrides) reqBody.multiCharacterOverrides = mcOverrides;
+  // v0.70.0: lora_quality_gate overrides.
+  const qgOverrides = buildQualityGateOverrides();
+  if (qgOverrides) reqBody.qualityGateOverrides = qgOverrides;
 
   let resp = null;
   let data = null;

@@ -447,6 +447,56 @@
             to use the pod's <code>config.yaml</code> defaults.
           </p>
         </details>
+        <!-- v0.70.0: lora_quality_gate overrides. Vivijure-serverless
+             0.4.25+ accepts these on the job payload and merges them over
+             the pod's loras.quality_gate config block. -->
+        <details class="planner-overrides-raw-details">
+          <summary class="planner-overrides-summary">LoRA quality gate (advanced)</summary>
+          <div class="planner-overrides-fields">
+            <label class="planner-field">
+              <span>enabled</span>
+              <select id="planner-qg-enabled">
+                <option value="">(use pod default: true)</option>
+                <option value="true">true</option>
+                <option value="false">false (skip gate)</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>probe count (pod default 2)</span>
+              <input id="planner-qg-probe-count" type="number" min="1" max="16" step="1" placeholder="2" />
+            </label>
+            <label class="planner-field">
+              <span>min SSIM (pod default 0.28)</span>
+              <input id="planner-qg-min-ssim" type="number" min="0" max="1" step="0.01" placeholder="0.28" />
+            </label>
+            <label class="planner-field">
+              <span>pass SSIM (pod default 0.38)</span>
+              <input id="planner-qg-pass-ssim" type="number" min="0" max="1" step="0.01" placeholder="0.38" />
+            </label>
+            <label class="planner-field">
+              <span>probe LoRA scale (pod default 0.75)</span>
+              <input id="planner-qg-lora-scale" type="number" min="0" max="2" step="0.05" placeholder="0.75" />
+            </label>
+            <label class="planner-field">
+              <span>base seed (pod default 424242)</span>
+              <input id="planner-qg-base-seed" type="number" min="0" step="1" placeholder="424242" />
+            </label>
+            <label class="planner-field">
+              <span>allow warn (don't fail on weak LoRA)</span>
+              <select id="planner-qg-allow-warn">
+                <option value="">(use pod default: true)</option>
+                <option value="true">true</option>
+                <option value="false">false (verdict=fail blocks render)</option>
+              </select>
+            </label>
+          </div>
+          <p class="planner-overrides-hint">
+            forwarded as <code>quality_gate_overrides</code>. controls the
+            post-training similarity probe that scores each LoRA against the
+            cast portrait. leave fields blank to use the pod's
+            <code>config.yaml</code> defaults.
+          </p>
+        </details>
         <details class="planner-overrides-raw-details">
           <summary class="planner-overrides-summary">raw JSON overrides (wins on conflict)</summary>
           <textarea id="planner-render-overrides" rows="3" placeholder='{"wan_inference_steps": 12, "wan_num_frames": 33}' spellcheck="false"></textarea>

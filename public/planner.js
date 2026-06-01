@@ -252,6 +252,13 @@ function collectRenderStageState() {
     adetailer: readVal("#planner-adetailer"),
     loraScaleText: readVal("#planner-lora-scale"),
     consistency: readVal("#planner-consistency"),
+    // v0.59.0: persist the named knobs migrated from the legacy "Make"
+    // panel. Same raw-string round-trip as the structured fields above;
+    // empty string == "use bundle default" and never lands on the wire.
+    seedMode: readVal("#planner-seed-mode"),
+    multiCharacterMode: readVal("#planner-multi-character"),
+    identityLock: readVal("#planner-identity-lock"),
+    faceLockMode: readVal("#planner-face-lock-mode"),
     // v0.44.0: persist the render start timestamp so an elapsed +
     // ETA computation survives a page refresh. null means "no in-
     // flight render observed yet"; the updater anchors it lazily.
@@ -494,6 +501,11 @@ function restoreRenderStagePanel(saved) {
     ["#planner-adetailer", saved.adetailer],
     ["#planner-lora-scale", saved.loraScaleText],
     ["#planner-consistency", saved.consistency],
+    // v0.59.0
+    ["#planner-seed-mode", saved.seedMode],
+    ["#planner-multi-character", saved.multiCharacterMode],
+    ["#planner-identity-lock", saved.identityLock],
+    ["#planner-face-lock-mode", saved.faceLockMode],
   ];
   let anyRestored = false;
   for (const [sel, val] of restored) {
@@ -1001,6 +1013,11 @@ function applyProjectPrefs(prefs) {
   setVal("#planner-adetailer", prefs.adetailer);
   setVal("#planner-lora-scale", prefs.loraScale);
   setVal("#planner-consistency", prefs.consistency);
+  // v0.59.0
+  setVal("#planner-seed-mode", prefs.seedMode);
+  setVal("#planner-multi-character", prefs.multiCharacterMode);
+  setVal("#planner-identity-lock", prefs.identityLock);
+  setVal("#planner-face-lock-mode", prefs.faceLockMode);
   if (typeof prefs.renderOverridesText === "string") {
     setVal("#planner-render-overrides", prefs.renderOverridesText);
   }
@@ -1027,6 +1044,11 @@ function gatherProjectPrefs() {
     adetailer: readVal("#planner-adetailer"),
     loraScale: readVal("#planner-lora-scale"),
     consistency: readVal("#planner-consistency"),
+    // v0.59.0
+    seedMode: readVal("#planner-seed-mode"),
+    multiCharacterMode: readVal("#planner-multi-character"),
+    identityLock: readVal("#planner-identity-lock"),
+    faceLockMode: readVal("#planner-face-lock-mode"),
     renderOverridesText: readVal("#planner-render-overrides"),
   };
 }
@@ -2444,6 +2466,10 @@ async function submitRender() {
       adetailer: readVal("#planner-adetailer"),
       loraScaleText: readVal("#planner-lora-scale"),
       consistency: readVal("#planner-consistency"),
+      seedMode: readVal("#planner-seed-mode"),
+      multiCharacterMode: readVal("#planner-multi-character"),
+      identityLock: readVal("#planner-identity-lock"),
+      faceLockMode: readVal("#planner-face-lock-mode"),
       textareaText: readVal("#planner-render-overrides"),
     });
   } catch (err) {
@@ -3583,6 +3609,10 @@ function buildRenderOverrides({
   adetailer,
   loraScaleText,
   consistency,
+  seedMode,
+  multiCharacterMode,
+  identityLock,
+  faceLockMode,
   textareaText,
 }) {
   const out = {};
@@ -3608,6 +3638,30 @@ function buildRenderOverrides({
 
   if (consistency === "off" || consistency === "standard" || consistency === "strict") {
     out.consistency_mode = consistency;
+  }
+
+  // v0.59.0: named knobs migrated from the legacy "Make" panel. Empty
+  // string == "use bundle default" so the key is omitted; explicit
+  // values land directly on render_overrides keys the GPU side already
+  // consumes (studio_service.py:1080-1092).
+  if (seedMode === "locked" || seedMode === "sequential" || seedMode === "random") {
+    out.seed_mode = seedMode;
+  }
+
+  if (multiCharacterMode === "auto" || multiCharacterMode === "always" || multiCharacterMode === "off") {
+    out.multi_character_mode = multiCharacterMode;
+  }
+
+  if (identityLock === "on") out.identity_lock = true;
+  else if (identityLock === "off") out.identity_lock = false;
+
+  if (
+    faceLockMode === "img2img"
+    || faceLockMode === "ip_adapter"
+    || faceLockMode === "instantid"
+    || faceLockMode === "both"
+  ) {
+    out.face_lock_mode = faceLockMode;
   }
 
   if (typeof textareaText === "string" && textareaText.trim().length > 0) {

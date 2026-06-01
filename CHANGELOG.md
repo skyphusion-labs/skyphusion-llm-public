@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.59.0
+
+Named render-override knobs migrated from the legacy FastAPI "Make" panel. The planner's "render settings" advanced block now exposes first-class controls for the four pipeline knobs the GPU side (vivijure-serverless / `studio_service.py:1080-1092`) already consumed via `render_overrides` but the Worker had no UI for: `seed_mode`, `multi_character_mode`, `identity_lock`, `face_lock_mode`. The freeform JSON textarea stays as the power-user escape hatch and still wins on key conflict.
+
+### Cross-repo coordination
+
+None. Every promoted key is already accepted by the GPU side; the bump is Worker + planner only. Pre-v0.59 callers (curl, scripts) that omit the new fields keep the v0.58 behavior verbatim.
+
+### Frontend
+
+- `public/planner.html`: 4 new `<select>` controls under "render settings (advanced, optional)" alongside seed / adetailer / lora-scale / consistency. Each defaults to "(use bundle default)" so unset == bundle/GPU default wins; explicit values land on the named `render_overrides.*` key.
+  - **seed mode** → `seed_mode`: `locked` | `sequential` | `random`
+  - **multi-character composite** → `multi_character_mode`: `auto` | `always` | `off`
+  - **identity lock (keyframes)** → `identity_lock`: `true` | `false`
+  - **face lock mode** → `face_lock_mode`: `img2img` | `ip_adapter` | `instantid` | `both`
+- `public/planner.js`: `buildRenderOverrides({...})` extended with the four new branches (each gated by an exact-string match against the accepted value set; anything else, including empty string, is dropped). Both persistence paths updated: `gatherPersistedState` / `restorePersistedState` (in-flight render survives a page refresh) and `gatherProjectPrefs` / `applyProjectPrefs` (per-project dial-in settings).
+
+### Tests
+
+No new unit tests. `buildRenderOverrides` lives in `public/planner.js` and is exercised end-to-end at submit time; the existing pre-v0.59 fields had no tests either. 464/464 still passing, type-check clean.
+
 ## v0.58.0
 
 Phase 3 of the standalone-LoRA work: render and finalize submits now carry the bindings for cast members whose LoRA was already trained via the `/cast` flow, and the GPU side (vivijure-serverless 0.4.14+) stages the existing `.safetensors` so Stage 1 short-circuits for those slots.

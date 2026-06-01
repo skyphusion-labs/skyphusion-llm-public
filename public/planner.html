@@ -333,6 +333,49 @@
               <option value="strict">strict (locked seed + identity lock + anatomy guards)</option>
             </select>
           </label>
+          <!-- v0.59.0: named knobs migrated from the legacy studio_api
+               "Make" panel. Each maps to a render_overrides.* key the
+               GPU side (studio_service.py:1080-1092) already consumes.
+               Leaving any control at its "(use bundle default)" entry
+               omits the key from render_overrides so the bundle / GPU
+               config wins, matching the seed / adetailer / lora-scale
+               / consistency pattern above. -->
+          <label class="planner-field">
+            <span>seed mode</span>
+            <select id="planner-seed-mode">
+              <option value="">(use bundle default)</option>
+              <option value="locked">locked (same seed every shot)</option>
+              <option value="sequential">sequential (seed + shot index)</option>
+              <option value="random">random (fresh per shot)</option>
+            </select>
+          </label>
+          <label class="planner-field">
+            <span>multi-character composite</span>
+            <select id="planner-multi-character">
+              <option value="">(use bundle default)</option>
+              <option value="auto">auto (composite when 2+ slots in shot)</option>
+              <option value="always">always (composite every multi-slot shot)</option>
+              <option value="off">off (single gen even for multi-slot shots)</option>
+            </select>
+          </label>
+          <label class="planner-field">
+            <span>identity lock (keyframes)</span>
+            <select id="planner-identity-lock">
+              <option value="">(use bundle default)</option>
+              <option value="on">on</option>
+              <option value="off">off</option>
+            </select>
+          </label>
+          <label class="planner-field">
+            <span>face lock mode</span>
+            <select id="planner-face-lock-mode">
+              <option value="">(use bundle default)</option>
+              <option value="img2img">img2img (lightest, lowest VRAM)</option>
+              <option value="ip_adapter">ip_adapter</option>
+              <option value="instantid">instantid</option>
+              <option value="both">both (img2img + ip_adapter, heaviest)</option>
+            </select>
+          </label>
         </div>
         <details class="planner-overrides-raw-details">
           <summary class="planner-overrides-summary">raw JSON overrides (wins on conflict)</summary>

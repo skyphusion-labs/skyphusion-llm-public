@@ -1490,6 +1490,10 @@ interface RenderSubmitRequest {
   // default_trigger (string), probe_lora_scale (0..2), base_seed
   // (int), allow_warn (bool).
   qualityGateOverrides?: unknown;
+  // v0.72.0: consistency + video_consistency overrides routed to
+  // vivijure-serverless 0.4.28+.
+  consistencyOverrides?: unknown;
+  videoConsistencyOverrides?: unknown;
 }
 
 async function handleRenderSubmit(request: Request, env: Env): Promise<Response> {
@@ -1640,6 +1644,15 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
     qualityGateOverrides:
       body.qualityGateOverrides && typeof body.qualityGateOverrides === "object"
         ? (body.qualityGateOverrides as RenderSubmitArgs["qualityGateOverrides"])
+        : undefined,
+    // v0.72.0: optional consistency + video_consistency overrides.
+    consistencyOverrides:
+      body.consistencyOverrides && typeof body.consistencyOverrides === "object"
+        ? (body.consistencyOverrides as RenderSubmitArgs["consistencyOverrides"])
+        : undefined,
+    videoConsistencyOverrides:
+      body.videoConsistencyOverrides && typeof body.videoConsistencyOverrides === "object"
+        ? (body.videoConsistencyOverrides as RenderSubmitArgs["videoConsistencyOverrides"])
         : undefined,
   };
 
@@ -2304,6 +2317,8 @@ async function handleFinalizeSubmit(
   let bodyLoraTrainOverrides: RenderSubmitArgs["loraTrainOverrides"] | undefined;
   let bodyMultiCharacterOverrides: RenderSubmitArgs["multiCharacterOverrides"] | undefined;
   let bodyQualityGateOverrides: RenderSubmitArgs["qualityGateOverrides"] | undefined;
+  let bodyConsistencyOverrides: RenderSubmitArgs["consistencyOverrides"] | undefined;
+  let bodyVideoConsistencyOverrides: RenderSubmitArgs["videoConsistencyOverrides"] | undefined;
   try {
     const ct = (request.headers.get("content-type") || "").toLowerCase();
     if (ct.includes("application/json")) {
@@ -2313,6 +2328,8 @@ async function handleFinalizeSubmit(
         loraTrainOverrides?: unknown;
         multiCharacterOverrides?: unknown;
         qualityGateOverrides?: unknown;
+        consistencyOverrides?: unknown;
+        videoConsistencyOverrides?: unknown;
       };
       if (typeof parsed?.audioKey === "string" && parsed.audioKey.length > 0) {
         bodyAudioKey = parsed.audioKey;
@@ -2337,6 +2354,20 @@ async function handleFinalizeSubmit(
         && !Array.isArray(parsed.qualityGateOverrides)
       ) {
         bodyQualityGateOverrides = parsed.qualityGateOverrides as RenderSubmitArgs["qualityGateOverrides"];
+      }
+      if (
+        parsed?.consistencyOverrides
+        && typeof parsed.consistencyOverrides === "object"
+        && !Array.isArray(parsed.consistencyOverrides)
+      ) {
+        bodyConsistencyOverrides = parsed.consistencyOverrides as RenderSubmitArgs["consistencyOverrides"];
+      }
+      if (
+        parsed?.videoConsistencyOverrides
+        && typeof parsed.videoConsistencyOverrides === "object"
+        && !Array.isArray(parsed.videoConsistencyOverrides)
+      ) {
+        bodyVideoConsistencyOverrides = parsed.videoConsistencyOverrides as RenderSubmitArgs["videoConsistencyOverrides"];
       }
       if (parsed?.castLoras !== undefined) {
         if (
@@ -2450,6 +2481,10 @@ async function handleFinalizeSubmit(
     // v0.70.0: same for quality_gate overrides (vivijure-serverless
     // 0.4.25+).
     qualityGateOverrides: bodyQualityGateOverrides,
+    // v0.72.0: same for consistency + video_consistency overrides
+    // (vivijure-serverless 0.4.28+).
+    consistencyOverrides: bodyConsistencyOverrides,
+    videoConsistencyOverrides: bodyVideoConsistencyOverrides,
   });
   if (!result.ok) {
     return json(

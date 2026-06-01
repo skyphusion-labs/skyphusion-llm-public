@@ -497,6 +497,71 @@
             <code>config.yaml</code> defaults.
           </p>
         </details>
+        <!-- v0.72.0: consistency + video_consistency block overrides that
+             vivijure-serverless 0.4.28+ accepts. These configure module-
+             level defaults, not the per-render preferences which v0.59.0's
+             first-class controls above already cover. -->
+        <details class="planner-overrides-raw-details">
+          <summary class="planner-overrides-summary">consistency + chaining (advanced)</summary>
+          <div class="planner-overrides-fields">
+            <label class="planner-field">
+              <span>strict mode default</span>
+              <select id="planner-cons-strict">
+                <option value="">(use pod default: true)</option>
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>chain denoising (pod default 0.24)</span>
+              <input id="planner-cons-chain-denoising" type="number" min="0" max="1" step="0.01" placeholder="0.24" />
+            </label>
+            <label class="planner-field">
+              <span>keyframe suffix (free text)</span>
+              <input id="planner-cons-kf-suffix" type="text" maxlength="512" placeholder="same face and costume, single clear subject" />
+            </label>
+            <label class="planner-field">
+              <span>motion suffix (free text)</span>
+              <input id="planner-cons-motion-suffix" type="text" maxlength="512" placeholder="subtle natural motion, preserve face and outfit..." />
+            </label>
+            <label class="planner-field">
+              <span>chain scenes</span>
+              <select id="planner-vc-chain-scenes">
+                <option value="">(use pod default: true)</option>
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>regenerate keyframe each shot</span>
+              <select id="planner-vc-regen-kf">
+                <option value="">(use pod default: true)</option>
+                <option value="true">true</option>
+                <option value="false">false (reuse prior shot's last frame)</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>movie-mode motion suffix</span>
+              <select id="planner-vc-motion-suffix-movie">
+                <option value="">(use pod default: true)</option>
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>IP-Adapter scale (pod default 0.62)</span>
+              <input id="planner-vc-ip-scale" type="number" min="0" max="2" step="0.01" placeholder="0.62" />
+            </label>
+          </div>
+          <p class="planner-overrides-hint">
+            forwarded as <code>consistency_overrides</code> +
+            <code>video_consistency_overrides</code>. these set the pod's
+            module-level defaults that affect chain logic, IP-Adapter
+            cross-shot identity, and the motion-prompt suffix. leave
+            fields blank to use the pod's <code>config.yaml</code>
+            defaults.
+          </p>
+        </details>
         <!-- v0.71.0: render-output + Wan inference knobs that vivijure-
              serverless 0.4.27+ accepts as flat render_overrides keys. -->
         <details class="planner-overrides-raw-details">

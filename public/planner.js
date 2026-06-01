@@ -603,6 +603,59 @@ function buildCastLoraSubmit() {
   return out;
 }
 
+// v0.72.0: consistency block overrides from the advanced disclosure.
+// Same drop-on-empty / off-the-wire-when-empty pattern.
+function buildConsistencyOverrides() {
+  const readStr = (sel) => {
+    const el = $(sel);
+    return el ? (el.value || "").trim() : "";
+  };
+  const readNum = (sel) => {
+    const raw = readStr(sel);
+    if (!raw) return undefined;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const out = {};
+  const strict = readStr("#planner-cons-strict");
+  if (strict === "true") out.default_strict = true;
+  else if (strict === "false") out.default_strict = false;
+  const cd = readNum("#planner-cons-chain-denoising");
+  if (cd !== undefined && cd >= 0 && cd <= 1) out.chain_denoising = cd;
+  const kfs = readStr("#planner-cons-kf-suffix");
+  if (kfs && kfs.length <= 512) out.keyframe_suffix = kfs;
+  const ms = readStr("#planner-cons-motion-suffix");
+  if (ms && ms.length <= 512) out.motion_suffix = ms;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// v0.72.0: video_consistency block overrides.
+function buildVideoConsistencyOverrides() {
+  const readStr = (sel) => {
+    const el = $(sel);
+    return el ? (el.value || "").trim() : "";
+  };
+  const readNum = (sel) => {
+    const raw = readStr(sel);
+    if (!raw) return undefined;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const out = {};
+  const cs = readStr("#planner-vc-chain-scenes");
+  if (cs === "true") out.chain_scenes = true;
+  else if (cs === "false") out.chain_scenes = false;
+  const rk = readStr("#planner-vc-regen-kf");
+  if (rk === "true") out.regenerate_keyframe_each_shot = true;
+  else if (rk === "false") out.regenerate_keyframe_each_shot = false;
+  const msm = readStr("#planner-vc-motion-suffix-movie");
+  if (msm === "true") out.motion_suffix_movie = true;
+  else if (msm === "false") out.motion_suffix_movie = false;
+  const ips = readNum("#planner-vc-ip-scale");
+  if (ips !== undefined && ips >= 0 && ips <= 2) out.ip_adapter_scale = ips;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 // v0.70.0: read the seven quality-gate inputs in the advanced block.
 // Same drop-on-empty pattern as the other override builders.
 function buildQualityGateOverrides() {
@@ -2637,6 +2690,11 @@ async function submitRender() {
   // v0.70.0: lora_quality_gate overrides.
   const qgOverrides = buildQualityGateOverrides();
   if (qgOverrides) reqBody.qualityGateOverrides = qgOverrides;
+  // v0.72.0: consistency + video_consistency overrides.
+  const consOverrides = buildConsistencyOverrides();
+  if (consOverrides) reqBody.consistencyOverrides = consOverrides;
+  const vconsOverrides = buildVideoConsistencyOverrides();
+  if (vconsOverrides) reqBody.videoConsistencyOverrides = vconsOverrides;
 
   let resp = null;
   let data = null;

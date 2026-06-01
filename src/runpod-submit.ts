@@ -62,6 +62,10 @@ export interface RenderSubmitArgs {
   // serverless 0.4.25+'s lora_quality_gate.set_overrides; gate_cfg()
   // merges these over config.yaml's loras.quality_gate block.
   qualityGateOverrides?: QualityGateOverrides;
+  // v0.72.0: consistency block override (vivijure-serverless 0.4.28+).
+  consistencyOverrides?: ConsistencyOverrides;
+  // v0.72.0: video_consistency block override (vivijure-serverless 0.4.28+).
+  videoConsistencyOverrides?: VideoConsistencyOverrides;
 }
 
 export interface LoraTrainOverrides {
@@ -100,6 +104,61 @@ export interface QualityGateOverrides {
   // When true the render proceeds even on verdict="fail". When false
   // a hard fail blocks the render.
   allow_warn?: boolean;
+}
+
+// v0.72.0: matching consistency block from config.yaml. Routes through to
+// vivijure-serverless 0.4.28+'s consistency.set_overrides. All optional.
+export interface ConsistencyOverrides {
+  // When true, the renderer flips into a stricter mode (locked seed,
+  // identity_lock on, anatomy guards on, fewer regens). Matches the
+  // consistency_mode="strict" preset from v0.59.0's render_overrides.
+  default_strict?: boolean;
+  // Cast portrait gets applied to keyframes when true (uses an IP-Adapter
+  // for cross-shot face consistency).
+  identity_lock?: boolean;
+  // "locked" / "sequential" / "random". When omitted the pod uses the
+  // consistency block's seed_mode (which already defaults locked).
+  seed_mode?: "locked" | "sequential" | "random";
+  // "img2img" | "ip_adapter" | "instantid" | "both". Same union as the
+  // top-level face_lock_mode override that v0.59.0 already exposed; this
+  // is the consistency-block-level version which the chain logic reads.
+  face_lock_mode?: "img2img" | "ip_adapter" | "instantid" | "both";
+  // Hard-pin the consistency profile to a specific quality tier
+  // ("draft"|"standard"|"final"). Pod default "standard".
+  quality_tier?: "draft" | "standard" | "final";
+  // Denoise strength when chaining a previous shot's last frame into the
+  // next shot's keyframe gen. Lower = more carryover of the prior shot.
+  // 0..1; pod default 0.24.
+  chain_denoising?: number;
+  // String appended to the keyframe prompt to remind SDXL about identity
+  // (face + costume) coherence. Free-form; pod default "same face and
+  // costume, single clear subject".
+  keyframe_suffix?: string;
+  // String appended to the motion prompt for Wan I2V to encourage
+  // stable identity through animation. Pod default "subtle natural
+  // motion, preserve face and outfit, stable identity, no morphing,
+  // temporal consistency".
+  motion_suffix?: string;
+}
+
+// v0.72.0: matching video_consistency block. Same shape contract.
+export interface VideoConsistencyOverrides {
+  // Chain shots in render order (previous shot's last frame becomes the
+  // next shot's keyframe init). Pod default true.
+  chain_scenes?: boolean;
+  // Regenerate the SDXL keyframe at the start of every shot vs reusing
+  // the previous shot's last frame. Pod default true.
+  regenerate_keyframe_each_shot?: boolean;
+  // Append the consistency.motion_suffix to the Wan I2V prompt on every
+  // shot (movie-mode behavior). Pod default true.
+  motion_suffix_movie?: boolean;
+  // Per-block override of identity_lock (the consistency block also has
+  // one; the video_consistency one wins for the chain logic). Pod
+  // default true.
+  identity_lock?: boolean;
+  // IP-Adapter strength on the chained-portrait gen. 0..1; pod default
+  // 0.62.
+  ip_adapter_scale?: number;
 }
 
 // v0.69.0: matching multi_character config that the pod previously read
@@ -148,6 +207,9 @@ export interface RenderJobInput {
   multi_character_overrides?: MultiCharacterOverrides;
   // v0.70.0: lora_quality_gate overrides (vivijure-serverless 0.4.25+).
   quality_gate_overrides?: QualityGateOverrides;
+  // v0.72.0: consistency / video_consistency overrides (0.4.28+).
+  consistency_overrides?: ConsistencyOverrides;
+  video_consistency_overrides?: VideoConsistencyOverrides;
 }
 
 // v0.41.0: per-shot SDXL keyframe regeneration. The Worker derives the
@@ -199,6 +261,9 @@ export interface FinalizeArgs {
   multiCharacterOverrides?: MultiCharacterOverrides;
   // v0.70.0: same quality_gate overrides as RenderSubmitArgs.
   qualityGateOverrides?: QualityGateOverrides;
+  // v0.72.0: same consistency / video_consistency overrides.
+  consistencyOverrides?: ConsistencyOverrides;
+  videoConsistencyOverrides?: VideoConsistencyOverrides;
 }
 
 export interface FinalizeJobInput {
@@ -214,6 +279,8 @@ export interface FinalizeJobInput {
   lora_train_overrides?: LoraTrainOverrides;
   multi_character_overrides?: MultiCharacterOverrides;
   quality_gate_overrides?: QualityGateOverrides;
+  consistency_overrides?: ConsistencyOverrides;
+  video_consistency_overrides?: VideoConsistencyOverrides;
 }
 
 // v0.57.0: standalone LoRA training. The cast manager UI on /cast
@@ -342,6 +409,11 @@ export function buildSubmitPayload(args: RenderSubmitArgs): { input: RenderJobIn
   // v0.70.0: lora_quality_gate overrides. Same wire-omit rule.
   const qgo = normalizeQualityGateOverrides(args.qualityGateOverrides);
   if (qgo) input.quality_gate_overrides = qgo;
+  // v0.72.0: consistency + video_consistency overrides.
+  const co = normalizeConsistencyOverrides(args.consistencyOverrides);
+  if (co) input.consistency_overrides = co;
+  const vco = normalizeVideoConsistencyOverrides(args.videoConsistencyOverrides);
+  if (vco) input.video_consistency_overrides = vco;
   return { input };
 }
 
@@ -382,6 +454,10 @@ export function buildFinalizePayload(args: FinalizeArgs): { input: FinalizeJobIn
   if (mcoF) input.multi_character_overrides = mcoF;
   const qgoF = normalizeQualityGateOverrides(args.qualityGateOverrides);
   if (qgoF) input.quality_gate_overrides = qgoF;
+  const coF = normalizeConsistencyOverrides(args.consistencyOverrides);
+  if (coF) input.consistency_overrides = coF;
+  const vcoF = normalizeVideoConsistencyOverrides(args.videoConsistencyOverrides);
+  if (vcoF) input.video_consistency_overrides = vcoF;
   return { input };
 }
 
@@ -424,6 +500,56 @@ export function normalizeLoraTrainOverrides(
     if (typeof v === "number" && Number.isFinite(v) && v > 0) {
       out[k] = v;
     }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// v0.72.0: normalize consistency overrides. Per-field unions /ranges.
+export function normalizeConsistencyOverrides(
+  raw: ConsistencyOverrides | undefined,
+): ConsistencyOverrides | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: ConsistencyOverrides = {};
+  if (typeof raw.default_strict === "boolean") out.default_strict = raw.default_strict;
+  if (typeof raw.identity_lock === "boolean") out.identity_lock = raw.identity_lock;
+  if (raw.seed_mode === "locked" || raw.seed_mode === "sequential" || raw.seed_mode === "random") {
+    out.seed_mode = raw.seed_mode;
+  }
+  if (
+    raw.face_lock_mode === "img2img" || raw.face_lock_mode === "ip_adapter"
+    || raw.face_lock_mode === "instantid" || raw.face_lock_mode === "both"
+  ) {
+    out.face_lock_mode = raw.face_lock_mode;
+  }
+  if (raw.quality_tier === "draft" || raw.quality_tier === "standard" || raw.quality_tier === "final") {
+    out.quality_tier = raw.quality_tier;
+  }
+  if (typeof raw.chain_denoising === "number" && Number.isFinite(raw.chain_denoising) && raw.chain_denoising >= 0 && raw.chain_denoising <= 1) {
+    out.chain_denoising = raw.chain_denoising;
+  }
+  if (typeof raw.keyframe_suffix === "string" && raw.keyframe_suffix.length <= 512) {
+    out.keyframe_suffix = raw.keyframe_suffix;
+  }
+  if (typeof raw.motion_suffix === "string" && raw.motion_suffix.length <= 512) {
+    out.motion_suffix = raw.motion_suffix;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// v0.72.0: normalize video_consistency overrides.
+export function normalizeVideoConsistencyOverrides(
+  raw: VideoConsistencyOverrides | undefined,
+): VideoConsistencyOverrides | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: VideoConsistencyOverrides = {};
+  if (typeof raw.chain_scenes === "boolean") out.chain_scenes = raw.chain_scenes;
+  if (typeof raw.regenerate_keyframe_each_shot === "boolean") {
+    out.regenerate_keyframe_each_shot = raw.regenerate_keyframe_each_shot;
+  }
+  if (typeof raw.motion_suffix_movie === "boolean") out.motion_suffix_movie = raw.motion_suffix_movie;
+  if (typeof raw.identity_lock === "boolean") out.identity_lock = raw.identity_lock;
+  if (typeof raw.ip_adapter_scale === "number" && Number.isFinite(raw.ip_adapter_scale) && raw.ip_adapter_scale >= 0 && raw.ip_adapter_scale <= 2) {
+    out.ip_adapter_scale = raw.ip_adapter_scale;
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }

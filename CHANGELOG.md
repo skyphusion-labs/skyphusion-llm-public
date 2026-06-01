@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.72.0
+
+Phase 5 of the worker-pod config pull. `consistency.*` (8 keys) and `video_consistency.*` (5 keys) become routable from the web Worker via two new optional submit-body fields. Pod side landed in vivijure-serverless 0.4.28.
+
+### Backend
+
+- `src/runpod-submit.ts`: new `ConsistencyOverrides` + `VideoConsistencyOverrides` interfaces, `normalizeConsistencyOverrides` + `normalizeVideoConsistencyOverrides` validators. Per-key unions + ranges; both builders + Args types + JobInputs carry the fields.
+- `src/index.ts`: `RenderSubmitRequest` accepts both; `handleRenderSubmit` and `handleFinalizeSubmit` read them and forward through.
+
+### Frontend
+
+- `public/planner.html`: new "consistency + chaining (advanced)" disclosure with eight controls (strict mode default, chain denoising, keyframe suffix, motion suffix, chain scenes, regenerate keyframe each shot, movie-mode motion suffix, IP-Adapter scale). Other keys that overlap with existing first-class controls (identity_lock, seed_mode, face_lock_mode, quality_tier) stay accessible via the raw-JSON textarea to avoid double-UI.
+- `public/planner.js`: `buildConsistencyOverrides()` + `buildVideoConsistencyOverrides()` read + validate, attach to the submit body alongside the other override builders.
+
+### Tests
+
+464/464 still passing, type-check clean.
+
 ## v0.71.0
 
 Phase 4 of the worker-pod config pull. Five render-output and Wan-inference knobs become first-class fields in the planner's advanced render block instead of hiding behind the raw-JSON textarea. Pod side landed in vivijure-serverless 0.4.27 (which made the previously-hardcoded `KEYFRAME_SDXL_SIZE` and friends payload-routable).

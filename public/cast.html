@@ -14,12 +14,23 @@
 </head>
 <body class="cast-body">
   <main class="cast-layout">
+    <!-- v0.66.0: shared Vivijure topbar. -->
+    <header class="wv-topbar">
+      <a class="wv-topbar-logo" href="/" aria-label="Vivijure home">
+        <span class="wv-topbar-logo-wave">Wave</span><span class="wv-topbar-logo-vryn">vryn</span>
+      </a>
+      <nav class="wv-topbar-nav" aria-label="primary">
+        <a href="/cast.html" class="is-active">cast</a>
+        <a href="/planner.html">storyboard planner</a>
+        <a href="/">chat</a>
+      </nav>
+      <button id="wv-topbar-user" type="button" class="wv-topbar-user" title="signed-in user (User Options coming)">
+        <span class="wv-topbar-user-dot" aria-hidden="true"></span>
+        <span id="wv-topbar-user-email" class="wv-topbar-user-email wv-topbar-user-empty">loading…</span>
+      </button>
+    </header>
     <header class="cast-header">
       <h1>cast</h1>
-      <nav class="cast-header-nav">
-        <a href="/planner.html" class="cast-back">storyboard planner</a>
-        <a href="/" class="cast-back">&larr; chat</a>
-      </nav>
     </header>
 
     <section class="cast-list-pane">
@@ -151,6 +162,7 @@
     </section>
   </main>
 
+  <script src="/topbar.js"></script>
   <script src="/cast.js"></script>
 </body>
 </html>

@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.66.0
+
+Shared Vivijure topbar across the planner and cast pages. Brings the legacy `Wave` + `vryn` wordmark forward (the styled-text logo from the legacy FastAPI app's `vivijure-runpod/static/index.html`, gradient + cyan glow preserved) and gives every page a single header chrome with logo, page nav, and signed-in user pill. The pill is wrapped in a `<button>` so future User Options (preferences, sign-out, theme) can hang off it without revisiting markup.
+
+### Backend
+
+- `src/index.ts`: new `GET /api/whoami` returning `{user: getUserEmail(request)}`. Tiny route so the topbar can populate without pulling /api/models' full 38-model payload or /api/cast's full list just to read the user email.
+
+### Frontend
+
+- `public/styles.css`: new `.wv-topbar` block at the bottom (sticky, blurred background, grid-of-3 layout) plus matching `.wv-topbar-logo` with the Wave (gradient) + vryn (white + cyan glow) wordmark from the legacy CSS, ported byte-for-byte on the gradient and glow values.
+- `public/topbar.js` (new, framework-free, ~25 lines): fetches /api/whoami once per page load and writes the email into `#wv-topbar-user-email`. Fails open: a transport error leaves the pill in `(offline)` state but the page still works because Cloudflare Access already gated the request before this code ran.
+- `public/planner.html` + `public/cast.html`: drop the bespoke page headers in favor of the shared `.wv-topbar`, with the relevant page nav-link marked `is-active`. Existing inner page headers (`#cast-list-pane` etc.) are unchanged.
+
+464/464 still passing; topbar.js syntax-checks.
+
 ## v0.65.0
 
 Training-set generator model picker. Pre-v0.65 the /cast training-image generator hardcoded `@cf/black-forest-labs/flux-2-dev` based on a stale comment claiming Dev was the only @cf multi-reference model in the catalog. Empirical test against `/api/chat` proved both FLUX 2 Klein variants (9B frontier + 4B faster) accept the attached portrait and identity-condition on it the same way Dev does, with a coherent likeness of the source character coming out. This cost us a fallback option during the smoke test when the FLUX 2 Dev gateway was returning 502s and the training set kept failing partway through. (nano-banana-pro and gpt-image-1.5 also accept the attachment but IGNORE it for identity, so they are NOT surfaced here even though /api/chat would happily return a generic young-person image from them.)

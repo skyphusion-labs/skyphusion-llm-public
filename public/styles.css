@@ -3834,3 +3834,109 @@ textarea:focus {
 .cast-gen-status.is-loading { color: var(--accent); }
 .cast-gen-status.is-success { color: rgba(80, 200, 120, 0.95); }
 .cast-gen-status.is-error { color: var(--error); }
+
+/* ---------- v0.66.0: shared Vivijure topbar ---------- */
+/* Brings the legacy Vivijure wordmark forward and gives every page (planner,
+   cast, future ones) a single header chrome: logo on the left, page-nav in
+   the middle, signed-in user pill on the right. The pill is a button so we
+   can hang a User Options menu off it later (preferences, sign-out, etc.)
+   without re-doing the layout. */
+.wv-topbar {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 0.75rem 1.5rem;
+  background: linear-gradient(180deg, rgba(24, 26, 32, 0.96) 0%, rgba(15, 17, 21, 0.88) 100%);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+.wv-topbar-logo {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.05em;
+  font-weight: 800;
+  font-size: 1.35rem;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  white-space: nowrap;
+}
+.wv-topbar-logo-wave {
+  background: linear-gradient(120deg, #5eb8ff 0%, #3d9eff 45%, #8b6cff 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.wv-topbar-logo-vryn {
+  color: var(--fg);
+  text-shadow: 0 0 28px rgba(61, 158, 255, 0.25);
+}
+.wv-topbar-nav {
+  display: flex;
+  gap: 0.25rem;
+  align-items: center;
+}
+.wv-topbar-nav a {
+  color: var(--fg-dim);
+  text-decoration: none;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.875rem;
+  border-radius: 6px;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.wv-topbar-nav a:hover {
+  color: var(--fg);
+  background: rgba(122, 162, 247, 0.08);
+}
+.wv-topbar-nav a.is-active {
+  color: var(--fg);
+  background: rgba(122, 162, 247, 0.14);
+}
+.wv-topbar-user {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-elev);
+  color: var(--fg-dim);
+  font-size: 0.8125rem;
+  cursor: default; /* will become pointer once the User Options menu lands */
+  transition: border-color 0.15s ease, color 0.15s ease;
+  max-width: 18rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wv-topbar-user:hover {
+  border-color: var(--accent);
+  color: var(--fg);
+}
+.wv-topbar-user-dot {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: rgba(80, 200, 120, 0.95);
+  flex-shrink: 0;
+}
+.wv-topbar-user-email {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wv-topbar-user-empty {
+  opacity: 0.55;
+  font-style: italic;
+}
+@media (max-width: 720px) {
+  .wv-topbar { padding: 0.6rem 0.875rem; gap: 0.875rem; }
+  .wv-topbar-nav a { padding: 0.35rem 0.5rem; }
+  .wv-topbar-user { max-width: 9.5rem; }
+}

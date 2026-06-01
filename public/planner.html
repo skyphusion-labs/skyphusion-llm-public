@@ -14,12 +14,24 @@
 </head>
 <body class="planner-body">
   <main class="planner-layout">
+    <!-- v0.66.0: shared Vivijure topbar. Logo wordmark on the left, page
+         nav in the middle, signed-in user pill on the right. -->
+    <header class="wv-topbar">
+      <a class="wv-topbar-logo" href="/" aria-label="Vivijure home">
+        <span class="wv-topbar-logo-wave">Wave</span><span class="wv-topbar-logo-vryn">vryn</span>
+      </a>
+      <nav class="wv-topbar-nav" aria-label="primary">
+        <a href="/cast.html">cast</a>
+        <a href="/planner.html" class="is-active">storyboard planner</a>
+        <a href="/">chat</a>
+      </nav>
+      <button id="wv-topbar-user" type="button" class="wv-topbar-user" title="signed-in user (User Options coming)">
+        <span class="wv-topbar-user-dot" aria-hidden="true"></span>
+        <span id="wv-topbar-user-email" class="wv-topbar-user-email wv-topbar-user-empty">loading…</span>
+      </button>
+    </header>
     <header class="planner-header">
       <h1>storyboard planner</h1>
-      <nav class="planner-header-nav">
-        <a href="/cast.html" class="planner-back">cast</a>
-        <a href="/" class="planner-back">&larr; chat</a>
-      </nav>
     </header>
 
     <!-- v0.34.1: render history. Loaded on page open from /api/storyboard/renders.
@@ -446,6 +458,7 @@
     </section>
   </main>
 
+  <script src="/topbar.js"></script>
   <script src="/planner.js"></script>
 </body>
 </html>

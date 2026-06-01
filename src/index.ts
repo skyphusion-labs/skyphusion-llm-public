@@ -391,6 +391,13 @@ export default {
     if (url.pathname === "/api/models" && request.method === "GET") {
       return json({ models: MODELS, user: getUserEmail(request) });
     }
+    // v0.66.0: lightweight "who is this Cloudflare-Access JWT" endpoint so
+    // page chrome (the shared Vivijure topbar's user pill) can populate
+    // itself without pulling /api/models' full 38-model payload or /api/cast
+    // just for the email.
+    if (url.pathname === "/api/whoami" && request.method === "GET") {
+      return json({ user: getUserEmail(request) });
+    }
     if (url.pathname === "/api/chat" && request.method === "POST") {
       return handleChat(request, env, ctx);
     }

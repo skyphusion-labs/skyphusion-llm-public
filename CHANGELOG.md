@@ -1,5 +1,46 @@
 # Changelog
 
+## v0.46.0
+
+Persisted cast manager. New `/cast` page (cast.html + cast.js) plus an `/api/cast` REST surface lets a character (name, bible text, portrait, multi-image training-ref set) be drawn once and reused across every storyboard. Replaces the inline-only cast-slot model the planner had, where characters were transient form fields that vanished after each render submit.
+
+This PR is the persistence + CRUD + standalone-page slice. The planner still uses its inline cast-slot UI today; switching the planner to read from the persisted cast is a follow-up PR (kept scoped so this lands without sprawl).
+
+### Why
+
+Today the planner takes name + bible inline on every submit and stages refs to ephemeral R2 keys. A user who runs five projects with the same Kira has to retype her bible and re-upload her training refs five times. The legacy vivijure-serverless FastAPI UI had per-project cast slots (A-D); this is the upgrade to global per-user cast that survives across projects, since reuse is the normal case, not the exception.
+
+### Backend
+
+- `schema.sql`: new `cast_members` table mirroring the projects pattern (user_email scoping, per-user unique slug, ISO TEXT timestamps). `ref_keys_json` defaults to `'[]'` so a fresh row has a well-formed JSON empty array without a NULL check at the read site.
+- `src/cast-db.ts` (new): typed helpers + `slugifyCharacter` + `allocateCastSlug`. Mirrors src/renders-db.ts shape: pure-row interface, user_email in every WHERE, no cross-user leak path.
+- `src/index.ts`: `/api/cast` (GET, POST), `/api/cast/:id` (GET, PATCH, DELETE), `/api/cast/:id/portrait` (POST, DELETE), `/api/cast/:id/refs` (POST), `/api/cast/:id/refs/:key` (DELETE). The PATCH writes to `cast_members` directly; DELETE cleans up R2 objects under `cast/<id>/...` best-effort after the row delete commits.
+- Portrait upload accepts two body shapes: raw image bytes (the simple drag/drop path), and `{from_chat_artifact: "out/<uuid>.png"}` which copies an existing chat-side artifact from env.R2 to env.R2_RENDERS with the same ownership check used elsewhere. This is the "use the portrait I just generated via /api/chat with an image model" path; no GPU spend required.
+
+### Frontend
+
+- `public/cast.html`, `public/cast.js`, plus styles appended to `public/styles.css`. Hand-rolled vanilla JS matching the planner.js / app.js idiom (no framework, no bundler).
+- Two-column layout: sidebar list (name + portrait thumb) + editor pane (name input, bible textarea, portrait drag/drop with image preview, refs grid with per-thumbnail remove). One-pane fallback under 720px.
+- Nav links added: index.html sidebar gets a "cast" link next to "storyboard planner"; planner.html header gets a "cast" link.
+
+### Storage layout
+
+R2_RENDERS bucket:
+- `cast/<id>/portrait.<ext>` for the canonical portrait.
+- `cast/<id>/refs/<uuid>.<ext>` for each training-ref image.
+
+Both with customMetadata.user_email so the existing /api/artifact ownership check authorizes the user back to their own bytes. The bundle assembler can read these directly at render time; no cross-bucket copy needed.
+
+### Tests
+
+- `tests/cast-db.test.ts`: 7 unit tests for `slugifyCharacter` (lowercase, punctuation, whitespace runs, diacritics, empty / all-punctuation fallback, digit preservation). DB-touching helpers are exercised via dev smoke until / unless we add @cloudflare/vitest-pool-workers for D1-bound integration tests.
+
+### What is NOT in this PR
+
+- Planner rewiring: planner.js still takes inline cast slots. Switching it to "pick from existing cast" is a follow-up PR so this one lands clean.
+- LoRA training kickoff and status (GPU-side action; separate scope).
+- Per-scene editing on a project's storyboard (next major surface from the legacy gap analysis).
+
 ## v0.45.0
 
 Lock state actually gates finalize. v0.42.0 shipped the lock pin as metadata-only ("the GPU runs Wan I2V over every shot regardless"); v0.45.0 makes it load-bearing. When the user has locked any shots in a keyframes-only preview, clicking finalize now restricts the I2V pass + silent-MP4 assembly to ONLY those shots. The unlocked shots are skipped: they get no clip and they do not appear in the final movie. When nothing is locked, the GPU runs the existing all-scenes flow (v0.42.0 back-compat).

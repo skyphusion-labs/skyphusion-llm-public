@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>cast - skyphusion-llm</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+  <link rel="icon" href="/favicon-16.png" type="image/png" sizes="16x16">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#0E1730">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body class="cast-body">
+  <main class="cast-layout">
+    <header class="cast-header">
+      <h1>cast</h1>
+      <nav class="cast-header-nav">
+        <a href="/planner.html" class="cast-back">storyboard planner</a>
+        <a href="/" class="cast-back">&larr; chat</a>
+      </nav>
+    </header>
+
+    <section class="cast-list-pane">
+      <header class="cast-list-header">
+        <h2 class="cast-stage-title">your cast</h2>
+        <button id="cast-new-btn" type="button" class="cast-new-btn">+ new character</button>
+      </header>
+      <div id="cast-list-status" class="cast-list-status"></div>
+      <ul id="cast-list" class="cast-list"></ul>
+    </section>
+
+    <section id="cast-editor" class="cast-editor" hidden>
+      <header class="cast-editor-header">
+        <input id="cast-name" type="text" class="cast-name-input" placeholder="character name" />
+        <span id="cast-slug" class="cast-slug" title="stable URL slug; does not change when you rename"></span>
+        <button id="cast-save-btn" type="button" class="cast-save-btn" disabled>save changes</button>
+      </header>
+
+      <label class="cast-field">
+        <span>character bible</span>
+        <textarea id="cast-bible" rows="8" placeholder="describe the character: face, hair, body, wardrobe, signature props, mood. this is fed to SDXL keyframe gen and LoRA training."></textarea>
+      </label>
+
+      <section class="cast-portrait-pane">
+        <header class="cast-section-header">
+          <h3>portrait</h3>
+          <p class="cast-section-hint">the canonical hero image. used as the SDXL start image for keyframes.</p>
+        </header>
+        <div id="cast-portrait-wrap" class="cast-portrait-wrap">
+          <img id="cast-portrait-img" class="cast-portrait-img" alt="" hidden />
+          <div id="cast-portrait-empty" class="cast-portrait-empty">no portrait yet</div>
+        </div>
+        <div class="cast-portrait-actions">
+          <label class="cast-upload-btn">
+            upload image
+            <input id="cast-portrait-file" type="file" accept="image/png,image/jpeg,image/webp" hidden />
+          </label>
+          <button id="cast-portrait-clear" type="button" class="cast-secondary-btn" disabled>clear</button>
+        </div>
+      </section>
+
+      <section class="cast-refs-pane">
+        <header class="cast-section-header">
+          <h3>training references</h3>
+          <p class="cast-section-hint">multi-image set for LoRA training (4-8 portrait variants is typical).</p>
+        </header>
+        <ul id="cast-refs-list" class="cast-refs-list"></ul>
+        <label class="cast-upload-btn">
+          add reference image
+          <input id="cast-ref-file" type="file" accept="image/png,image/jpeg,image/webp" hidden />
+        </label>
+      </section>
+
+      <footer class="cast-editor-footer">
+        <button id="cast-delete-btn" type="button" class="cast-danger-btn">delete this character</button>
+      </footer>
+    </section>
+
+    <section id="cast-editor-empty" class="cast-editor-empty">
+      <p>pick a character on the left, or create a new one.</p>
+    </section>
+  </main>
+
+  <script src="/cast.js"></script>
+</body>
+</html>

@@ -270,3 +270,46 @@ CREATE INDEX IF NOT EXISTS renders_by_user
 
 CREATE INDEX IF NOT EXISTS renders_by_user_status
   ON renders(user_email, status);
+
+-- ---------- Persisted cast (v0.46.0) ----------
+--
+-- One row per persisted character, scoped per user_email. Survives across
+-- storyboards / renders so a Kira drawn once is reusable in every project.
+--
+-- bible is free-form text the GPU pipeline passes to SDXL keyframe / LoRA
+-- training as the character description.
+--
+-- portrait_key / portrait_mime point at one image in R2_RENDERS (the same
+-- bucket the GPU worker reads from), so the bundle assembler can use the
+-- portrait as the cast slot's start image without a cross-bucket copy.
+-- The convention is keys under `cast/<id>/portrait.<ext>`; the route
+-- handler also accepts a JSON {from_chat_artifact: key} payload that
+-- copies bytes from env.R2 (the chat-side bucket where /api/chat with an
+-- image model writes its output_artifact) into env.R2_RENDERS.
+--
+-- ref_keys_json is a JSON array of {key, mime} for the multi-image
+-- training-ref set (typically 4-8 portrait variants used to train the
+-- character LoRA). Keys are under `cast/<id>/refs/<uuid>.<ext>`. Empty
+-- array = no refs yet.
+--
+-- slug is per-user (allocateSlug pattern); renaming a character does not
+-- shift the slug, so any in-flight references stay valid.
+
+CREATE TABLE IF NOT EXISTS cast_members (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_email      TEXT NOT NULL,
+  slug            TEXT NOT NULL,
+  name            TEXT NOT NULL,
+  bible           TEXT,
+  portrait_key    TEXT,
+  portrait_mime   TEXT,
+  ref_keys_json   TEXT NOT NULL DEFAULT '[]',
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_cast_user
+  ON cast_members(user_email, created_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cast_slug_user
+  ON cast_members(user_email, slug);

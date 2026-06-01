@@ -24,6 +24,11 @@ import { MODELS } from "./models";
 import type { Env } from "./env";
 import { isRendersKey } from "./r2-routing";
 import { parseDataUrl, base64ToBytes, bytesToBase64, extFromMime } from "./utils";
+import {
+  listCastForUser, getCastById, createCast, updateCast, deleteCast,
+  setPortrait as castSetPortrait, clearPortrait as castClearPortrait,
+  addRef as castAddRef, removeRef as castRemoveRef,
+} from "./cast-db";
 import { aiRun, aiLogId } from "./ai-binding";
 import { extractOutput, extractUsage, detectProviderFailure, extractProxiedImageUrl } from "./output-extract";
 import { chunkText } from "./chunking";
@@ -402,6 +407,36 @@ export default {
     const rf = url.pathname.match(/^\/api\/storyboard\/renders\/(\d+)\/finalize$/);
     if (rf && request.method === "POST") {
       return handleFinalizeSubmit(request, env, rf[1]);
+    }
+    // v0.46.0: persisted cast (replaces the inline-only cast-slot model).
+    // One row per character per user_email; survives across storyboards
+    // so a character drawn once is reusable. Portraits + training refs
+    // land in R2_RENDERS under cast/<id>/... so the bundle assembler can
+    // pick them up by key without a cross-bucket copy at render time.
+    if (url.pathname === "/api/cast" && request.method === "GET") {
+      return handleCastList(request, env);
+    }
+    if (url.pathname === "/api/cast" && request.method === "POST") {
+      return handleCastCreate(request, env);
+    }
+    const castOne = url.pathname.match(/^\/api\/cast\/(\d+)$/);
+    if (castOne) {
+      if (request.method === "GET") return handleCastGet(request, env, castOne[1]);
+      if (request.method === "PATCH") return handleCastPatch(request, env, castOne[1]);
+      if (request.method === "DELETE") return handleCastDelete(request, env, castOne[1]);
+    }
+    const castPortrait = url.pathname.match(/^\/api\/cast\/(\d+)\/portrait$/);
+    if (castPortrait) {
+      if (request.method === "POST") return handleCastPortraitUpload(request, env, castPortrait[1]);
+      if (request.method === "DELETE") return handleCastPortraitClear(request, env, castPortrait[1]);
+    }
+    const castRefs = url.pathname.match(/^\/api\/cast\/(\d+)\/refs$/);
+    if (castRefs && request.method === "POST") {
+      return handleCastRefAdd(request, env, castRefs[1]);
+    }
+    const castRefOne = url.pathname.match(/^\/api\/cast\/(\d+)\/refs\/(.+)$/);
+    if (castRefOne && request.method === "DELETE") {
+      return handleCastRefRemove(request, env, castRefOne[1], decodeURIComponent(castRefOne[2]));
     }
     // v0.32.0: poll one render job by its RunPod-issued id.
     // v0.33.1: DELETE cancels the same job via RunPod's POST /cancel.
@@ -1660,6 +1695,243 @@ async function handleFinalizeSubmit(
     project: row.project,
     user: userEmail,
   });
+}
+
+// ---------- /api/cast (v0.46.0) ----------
+//
+// Persisted cast members, scoped per user_email via Cloudflare Access.
+// Routes are thin wrappers around src/cast-db.ts helpers; this layer
+// owns request parsing, ownership checks (404 on miss-or-not-owned),
+// R2 storage layout, and R2 cleanup on delete.
+//
+// Storage layout in env.R2_RENDERS:
+//   cast/<id>/portrait.<ext>
+//   cast/<id>/refs/<uuid>.<ext>
+//
+// Both carry customMetadata.user_email so the existing /api/artifact
+// ownership check authorizes the user back to their own bytes.
+
+const CAST_IMAGE_MIME_RE = /^image\/(png|jpe?g|webp)$/i;
+const CAST_MAX_BYTES = 16 * 1024 * 1024;
+
+async function handleCastList(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const rows = await listCastForUser(env, userEmail);
+  return json({ cast: rows, user: userEmail });
+}
+
+async function handleCastCreate(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  let body: { name?: unknown; bible?: unknown };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  if (!name) return json({ error: "name required" }, { status: 400 });
+  const bible =
+    body.bible === undefined || body.bible === null
+      ? null
+      : typeof body.bible === "string"
+      ? body.bible
+      : null;
+  const row = await createCast(env, userEmail, { name, bible });
+  return json({ cast: row });
+}
+
+async function handleCastGet(request: Request, env: Env, idStr: string): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const id = Number(idStr);
+  if (!Number.isInteger(id) || id <= 0) return json({ error: "invalid id" }, { status: 400 });
+  const row = await getCastById(env, id, userEmail);
+  if (!row) return json({ error: "cast not found" }, { status: 404 });
+  return json({ cast: row });
+}
+
+async function handleCastPatch(request: Request, env: Env, idStr: string): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const id = Number(idStr);
+  if (!Number.isInteger(id) || id <= 0) return json({ error: "invalid id" }, { status: 400 });
+  let body: { name?: unknown; bible?: unknown };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  const patch: { name?: string; bible?: string | null } = {};
+  if (body.name !== undefined) {
+    if (typeof body.name !== "string" || !body.name.trim()) {
+      return json({ error: "name must be a non-empty string" }, { status: 400 });
+    }
+    patch.name = body.name.trim();
+  }
+  if (body.bible !== undefined) {
+    patch.bible = body.bible === null ? null : String(body.bible);
+  }
+  const row = await updateCast(env, id, userEmail, patch);
+  if (!row) return json({ error: "cast not found" }, { status: 404 });
+  return json({ cast: row });
+}
+
+async function handleCastDelete(request: Request, env: Env, idStr: string): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const id = Number(idStr);
+  if (!Number.isInteger(id) || id <= 0) return json({ error: "invalid id" }, { status: 400 });
+  const row = await deleteCast(env, id, userEmail);
+  if (!row) return json({ error: "cast not found" }, { status: 404 });
+  // R2 cleanup. Best-effort; failures here leave dangling objects but
+  // the DB row is already gone, which is the user-visible state.
+  const cleanupKeys = [
+    ...(row.portrait_key ? [row.portrait_key] : []),
+    ...row.ref_keys.map((r) => r.key),
+  ];
+  for (const k of cleanupKeys) {
+    try { await env.R2_RENDERS.delete(k); } catch { /* ignore */ }
+  }
+  return json({ deleted: row });
+}
+
+async function handleCastPortraitUpload(
+  request: Request,
+  env: Env,
+  idStr: string,
+): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const id = Number(idStr);
+  if (!Number.isInteger(id) || id <= 0) return json({ error: "invalid id" }, { status: 400 });
+  const cur = await getCastById(env, id, userEmail);
+  if (!cur) return json({ error: "cast not found" }, { status: 404 });
+
+  const contentType = (request.headers.get("content-type") || "").toLowerCase();
+
+  // JSON body: copy from an existing chat-side artifact key
+  // ({from_chat_artifact: "out/<uuid>.png"}). Source bucket is env.R2
+  // (where /api/chat with an image model writes its output_artifact);
+  // destination is env.R2_RENDERS where the bundle assembler reads.
+  if (contentType.startsWith("application/json")) {
+    let body: { from_chat_artifact?: unknown };
+    try { body = await request.json(); } catch { return json({ error: "Invalid JSON" }, { status: 400 }); }
+    const srcKey = typeof body.from_chat_artifact === "string" ? body.from_chat_artifact : "";
+    if (!srcKey) return json({ error: "from_chat_artifact required" }, { status: 400 });
+    const obj = await env.R2.get(srcKey);
+    if (!obj) return json({ error: `source artifact not found: ${srcKey}` }, { status: 404 });
+    if (obj.customMetadata?.user_email !== userEmail) {
+      return json({ error: "source artifact not owned by this user" }, { status: 403 });
+    }
+    const mime = obj.httpMetadata?.contentType || "image/png";
+    if (!CAST_IMAGE_MIME_RE.test(mime)) {
+      return json({ error: `source mime ${mime} not allowed (png/jpeg/webp only)` }, { status: 400 });
+    }
+    const bytes = new Uint8Array(await obj.arrayBuffer());
+    if (bytes.length > CAST_MAX_BYTES) {
+      return json({ error: "source image too large (16 MB max)" }, { status: 413 });
+    }
+    // Replace any prior portrait BEFORE writing the new one so a failed
+    // write does not leave two portraits referenced.
+    if (cur.portrait_key) {
+      try { await env.R2_RENDERS.delete(cur.portrait_key); } catch { /* ignore */ }
+    }
+    const key = `cast/${id}/portrait.${extFromMime(mime)}`;
+    await env.R2_RENDERS.put(key, bytes, {
+      httpMetadata: { contentType: mime },
+      customMetadata: { user_email: userEmail },
+    });
+    const row = await castSetPortrait(env, id, userEmail, key, mime);
+    return json({ cast: row });
+  }
+
+  // Binary upload: raw image bytes in the request body.
+  if (!CAST_IMAGE_MIME_RE.test(contentType)) {
+    return json(
+      { error: `content-type must be image/png, image/jpeg, or image/webp (got ${contentType || "<missing>"})` },
+      { status: 400 },
+    );
+  }
+  const buf = await request.arrayBuffer();
+  if (buf.byteLength === 0) return json({ error: "empty body" }, { status: 400 });
+  if (buf.byteLength > CAST_MAX_BYTES) {
+    return json({ error: "image too large (16 MB max)" }, { status: 413 });
+  }
+  if (cur.portrait_key) {
+    try { await env.R2_RENDERS.delete(cur.portrait_key); } catch { /* ignore */ }
+  }
+  const key = `cast/${id}/portrait.${extFromMime(contentType)}`;
+  await env.R2_RENDERS.put(key, new Uint8Array(buf), {
+    httpMetadata: { contentType },
+    customMetadata: { user_email: userEmail },
+  });
+  const row = await castSetPortrait(env, id, userEmail, key, contentType);
+  return json({ cast: row });
+}
+
+async function handleCastPortraitClear(
+  request: Request,
+  env: Env,
+  idStr: string,
+): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const id = Number(idStr);
+  if (!Number.isInteger(id) || id <= 0) return json({ error: "invalid id" }, { status: 400 });
+  const cur = await getCastById(env, id, userEmail);
+  if (!cur) return json({ error: "cast not found" }, { status: 404 });
+  if (cur.portrait_key) {
+    try { await env.R2_RENDERS.delete(cur.portrait_key); } catch { /* ignore */ }
+  }
+  const row = await castClearPortrait(env, id, userEmail);
+  return json({ cast: row });
+}
+
+async function handleCastRefAdd(
+  request: Request,
+  env: Env,
+  idStr: string,
+): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const id = Number(idStr);
+  if (!Number.isInteger(id) || id <= 0) return json({ error: "invalid id" }, { status: 400 });
+  const cur = await getCastById(env, id, userEmail);
+  if (!cur) return json({ error: "cast not found" }, { status: 404 });
+  const contentType = (request.headers.get("content-type") || "").toLowerCase();
+  if (!CAST_IMAGE_MIME_RE.test(contentType)) {
+    return json(
+      { error: `content-type must be image/png, image/jpeg, or image/webp (got ${contentType || "<missing>"})` },
+      { status: 400 },
+    );
+  }
+  const buf = await request.arrayBuffer();
+  if (buf.byteLength === 0) return json({ error: "empty body" }, { status: 400 });
+  if (buf.byteLength > CAST_MAX_BYTES) {
+    return json({ error: "image too large (16 MB max)" }, { status: 413 });
+  }
+  const key = `cast/${id}/refs/${crypto.randomUUID()}.${extFromMime(contentType)}`;
+  await env.R2_RENDERS.put(key, new Uint8Array(buf), {
+    httpMetadata: { contentType },
+    customMetadata: { user_email: userEmail },
+  });
+  const row = await castAddRef(env, id, userEmail, { key, mime: contentType });
+  return json({ cast: row });
+}
+
+async function handleCastRefRemove(
+  request: Request,
+  env: Env,
+  idStr: string,
+  refKey: string,
+): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const id = Number(idStr);
+  if (!Number.isInteger(id) || id <= 0) return json({ error: "invalid id" }, { status: 400 });
+  // Ownership of the ref is implied by the cast row's ownership; the DB
+  // helper returns the unmodified row if the key was not part of the set,
+  // so we treat a no-op as 404 to keep the caller honest about the key.
+  const result = await castRemoveRef(env, id, userEmail, refKey);
+  if (!result.row) return json({ error: "cast not found" }, { status: 404 });
+  if (!result.removedKey) {
+    return json({ error: "ref key not in this cast member's set" }, { status: 404 });
+  }
+  try { await env.R2_RENDERS.delete(result.removedKey); } catch { /* ignore */ }
+  return json({ cast: result.row });
 }
 
 // ---------- Chat (text generation, multimodal in) ----------

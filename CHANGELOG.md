@@ -1,5 +1,48 @@
 # Changelog
 
+## v0.43.0
+
+Render settings as first-class UI fields. The render-stage `render overrides (advanced)` collapsible used to be a freeform JSON textarea; v0.43.0 promotes the four most-tweaked fields to discoverable inputs (seed, adetailer face fix on keyframes, lora scale, consistency mode) and keeps the textarea below them as the power-user escape hatch. Empty / "use bundle default" entries are omitted from `render_overrides` so the bundle's own defaults win; explicit values land on the wire as the structured object. Textarea content wins on key conflict with the structured fields.
+
+### Why
+
+v0.39.1's gap analysis vs the legacy `studio_api.py` UI flagged the render-settings panel as the largest remaining surface mismatch. The textarea hint listed common keys but a user had to remember the exact field names + acceptable values, and a typo silently 400'd the render submit. Surfacing seed / lora_scale / consistency_mode / adetailer as labeled inputs means a user can land on those settings without consulting the docs, and validation messages now name the field that failed (`lora scale must be a number between 0.0 and 1.5`).
+
+The four fields chosen were the legacy UI's "render-time" tuning knobs: seed (reproducibility), adetailer (anatomy / face fix on SDXL output), lora scale (character identity strength), consistency mode (locked seed + identity lock + anatomy guards). The other legacy knobs (motion engine picker, cloud API keys, multi-character mode) are not in scope: we're Wan-only by design, cloud keys do not apply to the serverless model, and multi-character is auto-detected from cast size.
+
+### What
+
+- `public/planner.html`: the `<details class="planner-overrides-details">` panel now contains:
+  - `.planner-overrides-fields` block with four labeled inputs: seed (number + randomize button), adetailer face fix (select: `(use bundle default)` / `on` / `off`), lora scale (number, 0.0-1.5), consistency mode (select: `(use bundle default)` / `off` / `standard` / `strict (locked seed + identity lock + anatomy guards)`).
+  - A nested `<details class="planner-overrides-raw-details">` for the raw JSON textarea, marked `(wins on conflict)` so the precedence is explicit.
+- `public/planner.js`:
+  - `buildRenderOverrides({ seedText, adetailer, loraScaleText, consistency, textareaText })` (new, pure): merges the structured inputs + parsed textarea into one object. Empty / "use bundle default" inputs are omitted. Validates seed is an integer (throws `seed must be an integer` on `1.5` or `"abc"`), lora_scale is a finite number in `[0, 1.5]` (throws `lora scale must be a number between 0.0 and 1.5` on `-1` or `2`). Textarea is parsed as JSON and merged last so it wins on key conflict. Throws `raw JSON textarea is invalid: <reason>` on bad JSON or `raw JSON textarea must be a JSON object` on a non-object value.
+  - `submitRender` swaps the old textarea-only parse for a `buildRenderOverrides` call; on error it sets the render-stage status to the thrown message and focuses the textarea only when the message mentions JSON / textarea (so a seed / lora_scale validation error lands in the status bar without grabbing focus).
+  - Empty `renderOverrides` (no structured fields set + empty textarea) returns `{}`; submit gates `reqBody.renderOverrides` on `Object.keys(...).length > 0` so the wire stays clean.
+  - `collectRenderStageState` + `restoreRenderStagePanel` extend to persist each of the four new fields by their raw input string (`seedText`, `adetailer`, `loraScaleText`, `consistency`). Any non-empty restored field auto-opens the outer details panel so a reload does not bury the carried-across state inside a collapsed panel.
+  - New `#planner-seed-randomize` button generates a fresh 32-bit unsigned int into the seed input + triggers `persistSoon`.
+  - `readVal(selector)` tiny helper centralizes the empty-string fallback so adding a fifth structured field is a single edit instead of three.
+- `public/styles.css`:
+  - `.planner-overrides-fields` flex column with 10px gap.
+  - Field inputs share the monospace + dark background + 1px border treatment so the structured panel reads as one cohesive surface.
+  - `.planner-overrides-row` for the seed input + randomize button flex pair; `.planner-overrides-secondary` for the randomize button itself (subdued, accent on hover).
+  - `.planner-overrides-raw-details` gets a 1px top border so the nested panel is visibly separated from the structured fields.
+
+### Behavior notes
+
+- **Precedence on key conflict**: structured fields fill `render_overrides` first; textarea content (if present) is `Object.assign`ed on top, so a textarea `{"seed": 100}` wins over a structured `seed: 42`. This matches the user's likely intent: structured fields are the curated UX, textarea is the explicit escape hatch.
+- **Persistence**: each field's raw input string survives a page refresh via the existing v0.38.0 localStorage stash. The randomize button writes the new value AND persists immediately (no debounce; this is a single-click event the user expects to round-trip across a reload).
+- **Empty = no override**: a select left on `(use bundle default)` does NOT send `adetailer_keyframes: false` (which would be an explicit override). Same for the other three fields. This is the "do nothing" state and lets the bundle's `studio_prefs.json` (and the GPU config defaults under it) win.
+- **Tests**: no new test cases for `buildRenderOverrides` (it lives in `planner.js`, browser-only; we do not stand up a DOM test pool for the planner JS). The function is small and the contract is exercised end-to-end by every render submit. Total 370/370 unchanged. Typecheck clean.
+
+No backend change. No D1 migration. No cross-repo coordination. Pure frontend.
+
+### Apply
+
+```
+npm run deploy
+```
+
 ## v0.42.1
 
 Inline video player on completed history rows. Any row with `status: "COMPLETED"` and an `output_key` (silent MP4 produced) now renders a `<video controls>` element in the expanded view, sitting between the keyframe strip and the finalize row. Visual order is meta -> stills -> motion -> finalize, so the user can scrub a row from concept to finished movie without leaving the planner page.

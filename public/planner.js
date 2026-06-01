@@ -177,10 +177,26 @@ function collectRenderStageState() {
     // v0.40.0: persist the checkbox so a refresh-mid-flow does not
     // silently flip an in-progress preview into a full render.
     keyframesOnly: kfOnlyEl ? kfOnlyEl.checked : false,
+    // v0.43.0: persist the structured render-settings fields so a
+    // refresh does not silently flip them back to defaults mid-flow.
+    // Each field stores its raw input string; the restorer writes
+    // them back verbatim, and the submit-time merge re-reads them.
+    seedText: readVal("#planner-seed"),
+    adetailer: readVal("#planner-adetailer"),
+    loraScaleText: readVal("#planner-lora-scale"),
+    consistency: readVal("#planner-consistency"),
     currentProject: renderState.currentProject,
     currentLabel: renderState.currentLabel,
     lastKnownStatus: lastKnownStatusFromPanel(),
   };
+}
+
+// Tiny helper used by both the collector and the restorer for the
+// v0.43.0 structured render-settings fields. Centralized so adding a
+// new field is a single edit instead of three.
+function readVal(selector) {
+  const el = $(selector);
+  return el ? el.value : "";
 }
 
 function lastKnownStatusFromPanel() {
@@ -343,11 +359,35 @@ function restoreRenderStagePanel(saved) {
     if (saved.renderOverridesText.trim().length > 0) {
       const details = $(".planner-overrides-details");
       if (details) details.open = true;
+      const rawDetails = $(".planner-overrides-raw-details");
+      if (rawDetails) rawDetails.open = true;
     }
   }
   // v0.40.0: restore the keyframes-only checkbox.
   const kfOnlyEl = $("#planner-keyframes-only");
   if (kfOnlyEl) kfOnlyEl.checked = !!saved.keyframesOnly;
+  // v0.43.0: restore the structured render-settings fields. Any
+  // non-empty field also opens the outer details panel so the user
+  // can see what was carried across the reload.
+  const restored = [
+    ["#planner-seed", saved.seedText],
+    ["#planner-adetailer", saved.adetailer],
+    ["#planner-lora-scale", saved.loraScaleText],
+    ["#planner-consistency", saved.consistency],
+  ];
+  let anyRestored = false;
+  for (const [sel, val] of restored) {
+    const el = $(sel);
+    if (!el) continue;
+    if (typeof val === "string" && val.length > 0) {
+      el.value = val;
+      anyRestored = true;
+    }
+  }
+  if (anyRestored) {
+    const details = $(".planner-overrides-details");
+    if (details) details.open = true;
+  }
 
   if (!saved.jobId) {
     // Render stage was open but no submit happened. Reveal the stage and
@@ -982,23 +1022,28 @@ async function submitRender() {
     setRenderStatus("no bundleKey; run 'bundle' first", "error");
     return;
   }
-  // v0.35.3: parse the renderOverrides textarea before any other state
-  // mutation so a malformed JSON does not leave the UI mid-flow. Empty
-  // textarea means "no overrides" and is the common path.
+  // v0.35.3 + v0.43.0: build render_overrides from BOTH the structured
+  // fields (seed / adetailer / lora_scale / consistency_mode) and the
+  // raw JSON textarea. Either source can supply any field; on a key
+  // conflict the textarea wins (it is the explicit power-user escape
+  // hatch). buildRenderOverrides throws on a malformed textarea so a
+  // bad JSON does not leave the UI mid-flow.
   let renderOverrides;
-  const overridesText = $("#planner-render-overrides").value.trim();
-  if (overridesText) {
-    try {
-      const parsed = JSON.parse(overridesText);
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error("must be a JSON object, e.g. {\"key\": value}");
-      }
-      renderOverrides = parsed;
-    } catch (err) {
-      setRenderStatus("renderOverrides invalid JSON: " + err.message, "error");
-      $("#planner-render-overrides").focus();
-      return;
+  try {
+    renderOverrides = buildRenderOverrides({
+      seedText: readVal("#planner-seed"),
+      adetailer: readVal("#planner-adetailer"),
+      loraScaleText: readVal("#planner-lora-scale"),
+      consistency: readVal("#planner-consistency"),
+      textareaText: readVal("#planner-render-overrides"),
+    });
+  } catch (err) {
+    setRenderStatus(err.message, "error");
+    if (/JSON|textarea/i.test(err.message)) {
+      const ta = $("#planner-render-overrides");
+      if (ta) ta.focus();
     }
+    return;
   }
   // Stop any prior poll loop before starting a new render.
   if (renderState.pollTimer) {
@@ -1022,7 +1067,13 @@ async function submitRender() {
     bundleKey: bundleState.bundleKey,
     qualityTier,
   };
-  if (renderOverrides) reqBody.renderOverrides = renderOverrides;
+  // v0.43.0: buildRenderOverrides returns {} when nothing is set, so
+  // gate on key count rather than truthiness; an empty object would
+  // otherwise round-trip as `render_overrides: {}` and the Worker
+  // would drop it anyway, but skipping it here keeps the wire clean.
+  if (renderOverrides && Object.keys(renderOverrides).length > 0) {
+    reqBody.renderOverrides = renderOverrides;
+  }
   if (keyframesOnly) reqBody.keyframesOnly = true;
 
   let resp = null;
@@ -1955,6 +2006,67 @@ function pollRegenJob(regenKey) {
     });
 }
 
+// v0.43.0: merge the structured render-settings inputs + the raw JSON
+// textarea into one render_overrides object. Empty / "default" inputs
+// are omitted (so the bundle's own defaults win), explicit values are
+// included, and the textarea wins on any key collision. Pure for
+// testability; throws Error on malformed JSON so the caller can keep
+// its mid-flow status / focus contract.
+//
+// Field name semantics match the GPU side (vivijure-serverless):
+//   seed: integer
+//   adetailer_keyframes: boolean
+//   lora_scale: float in [0, 1.5]
+//   consistency_mode: 'off' | 'standard' | 'strict'
+function buildRenderOverrides({
+  seedText,
+  adetailer,
+  loraScaleText,
+  consistency,
+  textareaText,
+}) {
+  const out = {};
+
+  if (typeof seedText === "string" && seedText.trim().length > 0) {
+    const n = Number(seedText.trim());
+    if (!Number.isFinite(n) || !Number.isInteger(n)) {
+      throw new Error("seed must be an integer");
+    }
+    out.seed = n;
+  }
+
+  if (adetailer === "on") out.adetailer_keyframes = true;
+  else if (adetailer === "off") out.adetailer_keyframes = false;
+
+  if (typeof loraScaleText === "string" && loraScaleText.trim().length > 0) {
+    const n = Number(loraScaleText.trim());
+    if (!Number.isFinite(n) || n < 0 || n > 1.5) {
+      throw new Error("lora scale must be a number between 0.0 and 1.5");
+    }
+    out.lora_scale = n;
+  }
+
+  if (consistency === "off" || consistency === "standard" || consistency === "strict") {
+    out.consistency_mode = consistency;
+  }
+
+  if (typeof textareaText === "string" && textareaText.trim().length > 0) {
+    let parsed;
+    try {
+      parsed = JSON.parse(textareaText.trim());
+    } catch (err) {
+      throw new Error("raw JSON textarea is invalid: " + err.message);
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error('raw JSON textarea must be a JSON object, e.g. {"key": value}');
+    }
+    // Textarea wins on conflict (explicit power-user override).
+    Object.assign(out, parsed);
+  }
+
+  return out;
+}
+
 // v0.42.0: toggle a single shot's lock state on a row. Optimistic:
 // mutates row.locked_shots locally so the next buildHistoryRow shows
 // the new state before the PATCH round-trip lands; on PATCH failure
@@ -2570,6 +2682,28 @@ document.addEventListener("DOMContentLoaded", () => {
   // render-stage form fields.
   const kfOnlyEl = $("#planner-keyframes-only");
   if (kfOnlyEl) kfOnlyEl.addEventListener("change", persistSoon);
+  // v0.43.0: persist the structured render-settings fields. Each
+  // listens for the appropriate event (input on text + number,
+  // change on selects).
+  const seedEl = $("#planner-seed");
+  if (seedEl) seedEl.addEventListener("input", persistSoon);
+  const adetailerEl = $("#planner-adetailer");
+  if (adetailerEl) adetailerEl.addEventListener("change", persistSoon);
+  const loraScaleEl = $("#planner-lora-scale");
+  if (loraScaleEl) loraScaleEl.addEventListener("input", persistSoon);
+  const consistencyEl = $("#planner-consistency");
+  if (consistencyEl) consistencyEl.addEventListener("change", persistSoon);
+  // v0.43.0: randomize-seed button. Fills the seed input with a fresh
+  // 32-bit unsigned int and triggers persistSoon so the value survives
+  // a reload before the next render submission.
+  const randomizeBtn = $("#planner-seed-randomize");
+  if (randomizeBtn && seedEl) {
+    randomizeBtn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      seedEl.value = String(Math.floor(Math.random() * 0x1_0000_0000));
+      persistSoon();
+    });
+  }
   $("#planner-plan").addEventListener("click", plan);
   $("#planner-reprompt").addEventListener("click", repromptWithErrors);
   $("#planner-bundle-btn").addEventListener("click", bundleNow);

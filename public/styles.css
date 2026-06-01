@@ -2108,6 +2108,74 @@ textarea:focus {
   margin-bottom: 8px;
 }
 
+/* v0.43.0: structured render-settings field grid sits above the raw
+   JSON textarea inside the same details panel. Stacked vertically so
+   long select labels do not wrap awkwardly. */
+.planner-overrides-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.planner-overrides-fields .planner-field span {
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+.planner-overrides-fields input[type="number"],
+.planner-overrides-fields select {
+  width: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+  font-size: 13px;
+}
+
+/* The seed input + randomize button live in a flex row so the button
+   sits to the right of the number field. */
+.planner-overrides-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.planner-overrides-row input[type="number"] {
+  flex: 1 1 auto;
+}
+
+.planner-overrides-secondary {
+  background: var(--bg-elev2);
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.planner-overrides-secondary:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Nested raw-JSON details inside the structured panel. Slightly
+   subdued so the structured fields above are the primary surface. */
+.planner-overrides-raw-details {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.planner-overrides-raw-details .planner-overrides-summary {
+  font-size: 12px;
+}
+
 #planner-render-overrides {
   width: 100%;
   background: var(--bg);

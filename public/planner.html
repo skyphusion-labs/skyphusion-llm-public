@@ -148,19 +148,57 @@
         <input id="planner-keyframes-only" type="checkbox" />
         <span>render keyframes only (preview before generating motion)</span>
       </label>
-      <!-- v0.35.3: optional per-shot Wan / SDXL parameter overrides as JSON. -->
+      <!-- v0.35.3 + v0.43.0: render settings panel. Structured fields up
+           top (seed, adetailer, lora scale, consistency mode), raw JSON
+           textarea at the bottom as the power-user escape hatch. Any
+           field left empty / "default" is omitted from render_overrides
+           so the bundle's own defaults win; an explicit value (or any
+           value in the textarea) overrides. Textarea values win on key
+           conflict with the structured fields. -->
       <details class="planner-overrides-details">
-        <summary class="planner-overrides-summary">render overrides (advanced, optional)</summary>
-        <textarea id="planner-render-overrides" rows="4" placeholder='{"wan_inference_steps": 12, "seed": 424242}' spellcheck="false"></textarea>
-        <p class="planner-overrides-hint">
-          optional JSON object merged into the render payload sent to the GPU
-          worker. fields override the bundle's storyboard / config defaults
-          for this render only (the bundle's storyboard.yaml is untouched).
-          common keys: <code>wan_inference_steps</code> (int),
-          <code>wan_num_frames</code> (int), <code>seed</code> (int),
-          <code>style_prefix</code> (string). leave empty for the bundle's
-          defaults.
-        </p>
+        <summary class="planner-overrides-summary">render settings (advanced, optional)</summary>
+        <div class="planner-overrides-fields">
+          <label class="planner-field">
+            <span>seed</span>
+            <div class="planner-overrides-row">
+              <input id="planner-seed" type="number" inputmode="numeric" placeholder="(random per render)" />
+              <button id="planner-seed-randomize" type="button" class="planner-overrides-secondary">randomize</button>
+            </div>
+          </label>
+          <label class="planner-field">
+            <span>adetailer face fix on keyframes</span>
+            <select id="planner-adetailer">
+              <option value="">(use bundle default)</option>
+              <option value="on">on</option>
+              <option value="off">off</option>
+            </select>
+          </label>
+          <label class="planner-field">
+            <span>lora scale (character identity strength; typical 0.6 to 1.0)</span>
+            <input id="planner-lora-scale" type="number" step="0.05" min="0" max="1.5" placeholder="0.85 (GPU default)" />
+          </label>
+          <label class="planner-field">
+            <span>consistency mode</span>
+            <select id="planner-consistency">
+              <option value="">(use bundle default)</option>
+              <option value="off">off</option>
+              <option value="standard">standard</option>
+              <option value="strict">strict (locked seed + identity lock + anatomy guards)</option>
+            </select>
+          </label>
+        </div>
+        <details class="planner-overrides-raw-details">
+          <summary class="planner-overrides-summary">raw JSON overrides (wins on conflict)</summary>
+          <textarea id="planner-render-overrides" rows="3" placeholder='{"wan_inference_steps": 12, "wan_num_frames": 33}' spellcheck="false"></textarea>
+          <p class="planner-overrides-hint">
+            optional JSON object merged into the render payload sent to the GPU
+            worker. fields here override the bundle's storyboard / config
+            defaults for this render only AND win over the structured fields
+            above on any key conflict. common keys not exposed above:
+            <code>wan_inference_steps</code> (int), <code>wan_num_frames</code> (int),
+            <code>style_prefix</code> (string). leave empty for no extra overrides.
+          </p>
+        </details>
       </details>
       <div class="planner-actions">
         <button id="planner-render-btn" type="button" class="planner-primary">render</button>

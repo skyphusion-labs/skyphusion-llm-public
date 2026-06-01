@@ -13,22 +13,26 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body class="cast-body">
+  <!-- v0.66.0: shared Vivijure topbar. Pulled OUT of <main class="cast-layout">
+       in v0.67.1 because cast-layout is a CSS Grid with explicit
+       grid-template-areas; an unassigned grid item lands in the implicit
+       row BELOW the named rows, which sent the topbar to the bottom of the
+       page. Sibling-of-main keeps the sticky top: 0 behavior intact. -->
+  <header class="wv-topbar">
+    <a class="wv-topbar-logo" href="/" aria-label="Vivijure home">
+      <span class="wv-topbar-logo-wave">Wave</span><span class="wv-topbar-logo-vryn">vryn</span>
+    </a>
+    <nav class="wv-topbar-nav" aria-label="primary">
+      <a href="/cast.html" class="is-active">cast</a>
+      <a href="/planner.html">storyboard planner</a>
+      <a href="/">chat</a>
+    </nav>
+    <button id="wv-topbar-user" type="button" class="wv-topbar-user" title="signed-in user (User Options coming)">
+      <span class="wv-topbar-user-dot" aria-hidden="true"></span>
+      <span id="wv-topbar-user-email" class="wv-topbar-user-email wv-topbar-user-empty">loading…</span>
+    </button>
+  </header>
   <main class="cast-layout">
-    <!-- v0.66.0: shared Vivijure topbar. -->
-    <header class="wv-topbar">
-      <a class="wv-topbar-logo" href="/" aria-label="Vivijure home">
-        <span class="wv-topbar-logo-wave">Wave</span><span class="wv-topbar-logo-vryn">vryn</span>
-      </a>
-      <nav class="wv-topbar-nav" aria-label="primary">
-        <a href="/cast.html" class="is-active">cast</a>
-        <a href="/planner.html">storyboard planner</a>
-        <a href="/">chat</a>
-      </nav>
-      <button id="wv-topbar-user" type="button" class="wv-topbar-user" title="signed-in user (User Options coming)">
-        <span class="wv-topbar-user-dot" aria-hidden="true"></span>
-        <span id="wv-topbar-user-email" class="wv-topbar-user-email wv-topbar-user-empty">loading…</span>
-      </button>
-    </header>
     <header class="cast-header">
       <h1>cast</h1>
     </header>

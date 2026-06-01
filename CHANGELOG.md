@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.67.1
+
+Hot-fix for v0.66.0's shared topbar: on the cast page the Vivijure logo rendered at the BOTTOM of the page instead of the top. Root cause: `.cast-layout` is a CSS Grid with an explicit `grid-template-areas: "header header" / "list editor"`, and the `<header class="wv-topbar">` had no `grid-area` assigned so it auto-placed into the implicit row below the named rows.
+
+Fix: pull the topbar OUT of `<main>` and make it a body-level sibling. Sticky `top: 0` still pins it to the top of the viewport. Done on both cast.html and planner.html for consistency; on planner this also frees the topbar from the 960px `.planner-layout` max-width so the blur background spans the full viewport.
+
+464/464 still passing.
+
 ## v0.67.0
 
 Planner page layout cleanup. Recent renders moved to the bottom of the page so the live workflow (project -> plan -> ... -> render) sits at the top and history is a reference area below it, not the first thing the user scrolls past on every load. Stage-title numbering ("1. plan", "1a. refine via chat", "2. assemble bundle", "3. render", etc.) dropped - the visual order on the page already conveys the sequence and the numbering looked dated next to the new topbar chrome.

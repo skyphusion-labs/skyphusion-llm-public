@@ -13,23 +13,28 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body class="planner-body">
+  <!-- v0.66.0: shared Vivijure topbar. Logo wordmark on the left, page nav in
+       the middle, signed-in user pill on the right.
+       v0.67.1: sibling-of-main rather than inside-main so the topbar's blur
+       background spans the full viewport width instead of being clipped to
+       the 960px .planner-layout container. (Also matches the fix needed on
+       the cast page where the grid-template-areas was sending it to the
+       page bottom.) -->
+  <header class="wv-topbar">
+    <a class="wv-topbar-logo" href="/" aria-label="Vivijure home">
+      <span class="wv-topbar-logo-wave">Wave</span><span class="wv-topbar-logo-vryn">vryn</span>
+    </a>
+    <nav class="wv-topbar-nav" aria-label="primary">
+      <a href="/cast.html">cast</a>
+      <a href="/planner.html" class="is-active">storyboard planner</a>
+      <a href="/">chat</a>
+    </nav>
+    <button id="wv-topbar-user" type="button" class="wv-topbar-user" title="signed-in user (User Options coming)">
+      <span class="wv-topbar-user-dot" aria-hidden="true"></span>
+      <span id="wv-topbar-user-email" class="wv-topbar-user-email wv-topbar-user-empty">loading…</span>
+    </button>
+  </header>
   <main class="planner-layout">
-    <!-- v0.66.0: shared Vivijure topbar. Logo wordmark on the left, page
-         nav in the middle, signed-in user pill on the right. -->
-    <header class="wv-topbar">
-      <a class="wv-topbar-logo" href="/" aria-label="Vivijure home">
-        <span class="wv-topbar-logo-wave">Wave</span><span class="wv-topbar-logo-vryn">vryn</span>
-      </a>
-      <nav class="wv-topbar-nav" aria-label="primary">
-        <a href="/cast.html">cast</a>
-        <a href="/planner.html" class="is-active">storyboard planner</a>
-        <a href="/">chat</a>
-      </nav>
-      <button id="wv-topbar-user" type="button" class="wv-topbar-user" title="signed-in user (User Options coming)">
-        <span class="wv-topbar-user-dot" aria-hidden="true"></span>
-        <span id="wv-topbar-user-email" class="wv-topbar-user-email wv-topbar-user-empty">loading…</span>
-      </button>
-    </header>
     <header class="planner-header">
       <h1>storyboard planner</h1>
     </header>

@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.41.1
+
+In-flight regen jobs survive a page refresh. `historyState.regenJobs` is now serialized into the existing localStorage stash on every `.set()` / `.delete()`, and `restorePersistedState()` rehydrates the Map + resumes polling for each surviving entry. The button comes back disabled with `regen...`, the thumbnail with its warn-tinted outline, and the poll picks up from wherever the GPU job is at without the user noticing the reload happened.
+
+### Why
+
+v0.41.0 shipped per-shot regen but kept the in-flight state in memory only. A reload between submit and the COMPLETED poll stranded the regen: the button was reset, the polling was lost, and the thumbnail never refreshed. The user would have to manually click `regen` again on a job that was probably going to finish on its own anyway. This commit closes that loop with the same persistence machinery v0.38.0 already uses for the rest of the form state.
+
+### What
+
+- `collectRegenJobs()` (new, pure): `Array.from(historyState.regenJobs.entries())`. Map -> array of `[key, value]` pairs so JSON.stringify round-trips it cleanly. Added to `savePersistedState`'s snapshot.
+- `restoreRegenJobs(saved)` (new): rebuilds the Map from the persisted entries, dropping malformed entries silently (defensive: a corrupted stash shouldn't crash startup). Each surviving entry triggers `pollRegenJob(key)` to resume the poll loop.
+- Age cap: `REGEN_RESTORE_MAX_AGE_MS = 6h`. Entries with a `startedAt` older than the cap are dropped on restore (matches roughly the longest plausible regen wall-clock; a regen specifically should be a 30-60s operation, so anything older is almost certainly abandoned or hit RunPod's 24h job TTL). The user can re-click `regen` if they really want to restart a stale one.
+- `regenShot()` calls `savePersistedState()` immediately after the `regenJobs.set()` (skipping the debounce; this is a low-frequency event and we want it durable before the poll's first tick).
+- `pollRegenJob()` calls `savePersistedState()` immediately after the `regenJobs.delete()` on terminal status so a reload mid-tick does not re-poll a finished job.
+
+No GPU side change. No Worker side change. Pure frontend persistence. Tests 357/357 (same as v0.41.0; the new persistence code is exercised through the existing regen flow, no dedicated unit tests since it touches `localStorage` and the polling fetch).
+
+### Apply
+
+```
+npm run deploy
+```
+
 ## v0.41.0
 
 Per-shot SDXL keyframe regeneration. Each thumbnail in the history-row keyframe strip gains a `regen` button (visible only when the row is COMPLETED and has a bundle_key). Click -> confirm -> POST submits a regen job to the vivijure-serverless GPU (0.4.3+), which clears just that shot's keyframe, re-runs SDXL with the existing trained LoRA on the volume, and overwrites the same R2 key the planner already has in D1. The UI polls the job and cache-busts the thumbnail src on COMPLETED so the user sees the new pixels in place. No new R2 keys, no new D1 rows; the originating render's row keeps its existing `keyframes_json` array.

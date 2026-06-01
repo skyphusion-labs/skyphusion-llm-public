@@ -89,6 +89,12 @@ function savePersistedState() {
       bundleStage: collectBundleStageState(),
       renderStage: collectRenderStageState(),
       historyFilters: { ...historyState.filters },
+      // v0.41.1: persist in-flight regen jobs so a page refresh resumes
+      // polling instead of stranding the regen + leaving the button
+      // disabled. Map serialization is Array.from(entries); the value
+      // is already a plain object (jobId, kfKey, shotId, rowId,
+      // startedAt) so JSON.stringify round-trips it cleanly.
+      regenJobs: collectRegenJobs(),
       savedAt: Math.floor(Date.now() / 1000),
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
@@ -97,6 +103,13 @@ function savePersistedState() {
     // a save failure does not block the user's planning flow.
     console.warn("savePersistedState failed:", err);
   }
+}
+
+// v0.41.1: serialize historyState.regenJobs to an array of [key, value]
+// pairs. JSON does not preserve Map identity, so we round-trip via the
+// canonical entries representation. Pure for testability.
+function collectRegenJobs() {
+  return Array.from(historyState.regenJobs.entries());
 }
 
 function loadPersistedState() {
@@ -198,7 +211,47 @@ function restorePersistedState() {
   // Render stage + reattach an SSE stream for in-flight renders.
   if (stash.renderStage) restoreRenderStagePanel(stash.renderStage);
 
+  // v0.41.1: restore in-flight regen jobs and resume polling. Drop
+  // entries older than the cap so a regen abandoned across a long
+  // gap (or one whose RunPod job TTL has expired) does not keep
+  // polling forever.
+  if (Array.isArray(stash.regenJobs)) restoreRegenJobs(stash.regenJobs);
+
   return stash;
+}
+
+// v0.41.1: rebuild historyState.regenJobs from the persisted entries
+// array, then kick off polling for each surviving entry. Entries older
+// than REGEN_RESTORE_MAX_AGE_MS are dropped (matches the rough upper
+// bound on a render's wall-clock duration; RunPod's job TTL is 24h but
+// a regen specifically is supposed to be a 30-60s operation, so any
+// entry older than ~6h is almost certainly abandoned).
+const REGEN_RESTORE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+
+function restoreRegenJobs(saved) {
+  const now = Date.now();
+  historyState.regenJobs.clear();
+  for (const entry of saved) {
+    if (!Array.isArray(entry) || entry.length !== 2) continue;
+    const [key, state] = entry;
+    if (typeof key !== "string" || !state || typeof state !== "object") continue;
+    if (typeof state.jobId !== "string" || state.jobId.length === 0) continue;
+    if (typeof state.kfKey !== "string" || state.kfKey.length === 0) continue;
+    if (typeof state.shotId !== "string" || state.shotId.length === 0) continue;
+    const startedAt = typeof state.startedAt === "number" ? state.startedAt : 0;
+    if (startedAt && now - startedAt > REGEN_RESTORE_MAX_AGE_MS) continue;
+    historyState.regenJobs.set(key, {
+      jobId: state.jobId,
+      kfKey: state.kfKey,
+      shotId: state.shotId,
+      rowId: state.rowId,
+      startedAt: startedAt || now,
+    });
+    // Resume polling. pollRegenJob reads the latest state from the
+    // Map each tick, so a race with a subsequent set / delete is
+    // resolved at next poll boundary.
+    pollRegenJob(key);
+  }
 }
 
 function restoreHistoryFilters(saved) {
@@ -1751,6 +1804,10 @@ async function regenShot(row, kf, btnEl, imgEl) {
     rowId: row.id,
     startedAt: Date.now(),
   });
+  // v0.41.1: snapshot the new entry to localStorage immediately so a
+  // page refresh between here and the poll's terminal tick resumes
+  // polling instead of stranding the regen.
+  savePersistedState();
   pollRegenJob(regenKey);
 }
 
@@ -1789,6 +1846,9 @@ function pollRegenJob(regenKey) {
         '.planner-history-keyframe-regen[data-shot-id="' + cssEscape(state.shotId) + '"]',
       );
       historyState.regenJobs.delete(regenKey);
+      // v0.41.1: clear the stashed entry on terminal status so a
+      // subsequent reload does not try to re-poll a finished job.
+      savePersistedState();
       if (status === "COMPLETED") {
         if (img) {
           img.src = "/api/artifact/" + state.kfKey + "?v=" + Date.now();

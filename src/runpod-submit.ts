@@ -48,6 +48,19 @@ export interface RenderSubmitArgs {
   // v0.58.0: pretrained-LoRA passthrough. Resolved by the route from a
   // body-side {slot: cast_id} map; keys are R2 paths under loras/...
   pretrainedLoras?: Record<string, string>;
+  // v0.68.0: LoRA training overrides. Routes through to vivijure-
+  // serverless 0.4.19+'s run_training_subprocess so the user can dial
+  // hyperparams without an image rebuild. Unset/empty fields fall back
+  // to the pod's config.yaml defaults.
+  loraTrainOverrides?: LoraTrainOverrides;
+}
+
+export interface LoraTrainOverrides {
+  steps?: number;
+  learning_rate?: number;
+  rank?: number;
+  resolution?: number;
+  timeout_seconds?: number;
 }
 
 // What the vivijure-serverless rp_handler.py reads off the job input. Field
@@ -64,6 +77,10 @@ export interface RenderJobInput {
   // stage to skip Stage 1 training. Resolved server-side from cast
   // bindings against cast_members rows the user owns.
   pretrained_loras?: Record<string, string>;
+  // v0.68.0: LoRA training hyperparam overrides (vivijure-serverless
+  // 0.4.19+). Sent over the wire only when non-empty so older pods
+  // (which ignore unknown keys) keep working.
+  lora_train_overrides?: LoraTrainOverrides;
 }
 
 // v0.41.0: per-shot SDXL keyframe regeneration. The Worker derives the
@@ -109,6 +126,8 @@ export interface FinalizeArgs {
   audioKey?: string;
   // v0.58.0: same pretrained-LoRA passthrough as RenderSubmitArgs.
   pretrainedLoras?: Record<string, string>;
+  // v0.68.0: same LoRA training overrides as RenderSubmitArgs.
+  loraTrainOverrides?: LoraTrainOverrides;
 }
 
 export interface FinalizeJobInput {
@@ -121,6 +140,7 @@ export interface FinalizeJobInput {
   process_shot_ids?: string[];
   audio_key?: string;
   pretrained_loras?: Record<string, string>;
+  lora_train_overrides?: LoraTrainOverrides;
 }
 
 // v0.57.0: standalone LoRA training. The cast manager UI on /cast
@@ -136,6 +156,10 @@ export interface TrainLoraArgs {
   // Must start with "loras/" (the worker validates the prefix so a
   // misbehaving client cannot redirect writes elsewhere in the bucket).
   loraDestKey: string;
+  // v0.68.0: same LoRA training hyperparam overrides as the render
+  // path. Lets the cast manager's "train LoRA" button iterate on
+  // steps / lr / rank / resolution / timeout without an image rebuild.
+  loraTrainOverrides?: LoraTrainOverrides;
 }
 
 export interface TrainLoraJobInput {
@@ -144,6 +168,7 @@ export interface TrainLoraJobInput {
   bundle_key: string;
   user_email?: string;
   lora_dest_key: string;
+  lora_train_overrides?: LoraTrainOverrides;
 }
 
 // RunPod queue-based job status. The platform uses these literal strings
@@ -217,6 +242,23 @@ export function buildSubmitPayload(args: RenderSubmitArgs): { input: RenderJobIn
   if (typeof args.audioKey === "string" && args.audioKey.length > 0) {
     input.audio_key = args.audioKey;
   }
+  // v0.68.0 hot-fix: buildSubmitPayload was missing the pretrained_loras
+  // pass-through that buildFinalizePayload already had. That meant the
+  // v0.58.0 castLoras feature populated the route's response envelope
+  // (pretrainedSlots) but the wire body never carried the actual
+  // {slot: r2_key} map, so the GPU never staged the LoRAs and Stage 1
+  // re-trained from scratch every time. Identified during the post-
+  // 0.4.16 smoke-test investigation - we were chasing
+  // _stage_pretrained_loras silently failing on the GPU when the bug
+  // was that the field never reached it.
+  if (args.pretrainedLoras && Object.keys(args.pretrainedLoras).length > 0) {
+    input.pretrained_loras = { ...args.pretrainedLoras };
+  }
+  // v0.68.0: LoRA training hyperparam overrides. Empty/missing stays off
+  // the wire so pre-0.4.19 pods (which ignore unknown keys anyway) see
+  // no diff.
+  const lto = normalizeLoraTrainOverrides(args.loraTrainOverrides);
+  if (lto) input.lora_train_overrides = lto;
   return { input };
 }
 
@@ -251,6 +293,8 @@ export function buildFinalizePayload(args: FinalizeArgs): { input: FinalizeJobIn
   if (args.pretrainedLoras && Object.keys(args.pretrainedLoras).length > 0) {
     input.pretrained_loras = { ...args.pretrainedLoras };
   }
+  const ltoF = normalizeLoraTrainOverrides(args.loraTrainOverrides);
+  if (ltoF) input.lora_train_overrides = ltoF;
   return { input };
 }
 
@@ -267,7 +311,32 @@ export function buildTrainLoraPayload(args: TrainLoraArgs): { input: TrainLoraJo
   if (typeof args.userEmail === "string" && args.userEmail.length > 0) {
     input.user_email = args.userEmail;
   }
+  const lto = normalizeLoraTrainOverrides(args.loraTrainOverrides);
+  if (lto) input.lora_train_overrides = lto;
   return { input };
+}
+
+// v0.68.0: drop empty / non-positive entries before sending. The pod's
+// _parse_lora_train_overrides accepts an empty object but we'd rather
+// omit it entirely from the wire so older pods (no knowledge of the
+// field) see the same bytes they always did. Only positive finite
+// numbers are kept; everything else is silently dropped (clientside is
+// best-effort - the pod also validates).
+export function normalizeLoraTrainOverrides(
+  raw: LoraTrainOverrides | undefined,
+): LoraTrainOverrides | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: LoraTrainOverrides = {};
+  const keys: Array<keyof LoraTrainOverrides> = [
+    "steps", "learning_rate", "rank", "resolution", "timeout_seconds",
+  ];
+  for (const k of keys) {
+    const v = raw[k];
+    if (typeof v === "number" && Number.isFinite(v) && v > 0) {
+      out[k] = v;
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 // v0.41.0: pure builder for the per-shot regen RunPod payload. Mirrors

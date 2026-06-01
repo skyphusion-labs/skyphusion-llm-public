@@ -603,6 +603,32 @@ function buildCastLoraSubmit() {
   return out;
 }
 
+// v0.68.0: read the four LoRA-training inputs in the advanced block and
+// shape them into the wire object the Worker expects. Empty/non-numeric
+// fields are dropped so the pod's config.yaml defaults apply. Returns
+// undefined when nothing was overridden (caller skips the key entirely
+// to keep the submit body minimal).
+function buildLoraTrainOverrides() {
+  const readNum = (sel) => {
+    const el = $(sel);
+    if (!el) return undefined;
+    const raw = (el.value || "").trim();
+    if (!raw) return undefined;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  };
+  const out = {};
+  const steps = readNum("#planner-lora-steps");
+  if (steps !== undefined) out.steps = Math.round(steps);
+  const lr = readNum("#planner-lora-lr");
+  if (lr !== undefined) out.learning_rate = lr;
+  const rank = readNum("#planner-lora-rank");
+  if (rank !== undefined) out.rank = Math.round(rank);
+  const res = readNum("#planner-lora-resolution");
+  if (res !== undefined) out.resolution = Math.round(res);
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function bindSlotToCast(slot, castId) {
   const cast = findCastById(castId);
   if (!cast) return;
@@ -2529,6 +2555,11 @@ async function submitRender() {
   // ready-slot pre-check short-circuits training for them.
   const castLoraSubmit = buildCastLoraSubmit();
   if (Object.keys(castLoraSubmit).length > 0) reqBody.castLoras = castLoraSubmit;
+  // v0.68.0: collect any LoRA training hyperparam overrides the user set
+  // in the advanced block. Pure numeric coercion; empty / non-numeric
+  // inputs are dropped so the pod's config.yaml defaults win.
+  const loraTrainOverrides = buildLoraTrainOverrides();
+  if (loraTrainOverrides) reqBody.loraTrainOverrides = loraTrainOverrides;
 
   let resp = null;
   let data = null;

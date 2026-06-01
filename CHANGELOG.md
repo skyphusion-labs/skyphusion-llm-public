@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.68.0
+
+Phase 1 of the worker-pod config pull. LoRA training hyperparams (steps, learning_rate, rank, resolution, timeout_seconds) become routable from the web Worker to the GPU pod via a new `lora_train_overrides` wire field. Pod side landed in vivijure-serverless 0.4.19. Web-Worker side this version: types, builders, route handlers, and a small UI block in the planner's advanced render-settings.
+
+**Also includes a critical hot-fix:** `buildSubmitPayload` was missing the `pretrained_loras` pass-through that `buildFinalizePayload` already had. The `castLoras` -> resolver -> args path populated the response envelope (`pretrainedSlots`) but the wire body never carried the actual `{slot: r2_key}` map, so the GPU's `_stage_pretrained_loras` short-circuit never fired and Stage 1 re-trained every time. Found while plumbing the new override field through.
+
+### Backend
+
+- `src/runpod-submit.ts`: new `LoraTrainOverrides` interface, optional `loraTrainOverrides` on `RenderSubmitArgs` / `FinalizeArgs` / `TrainLoraArgs`. `normalizeLoraTrainOverrides` drops non-positive / non-finite values clientside before they hit the wire. Builders (`buildSubmitPayload`, `buildFinalizePayload`, `buildTrainLoraPayload`) all forward the normalized map; `buildSubmitPayload` also picks up the missing `pretrained_loras` pass-through.
+- `src/index.ts`: `RenderSubmitRequest` accepts `loraTrainOverrides`; `handleRenderSubmit`, `handleFinalizeSubmit`, `handleCastTrainLora` all read it out of the request body and forward through to the submit args. Bad shape (non-object, array) silently drops to undefined - the builder normalizer is the second line of defense.
+
+### Frontend
+
+- `public/planner.html`: new "LoRA training (advanced)" disclosure inside the existing render-settings advanced block, with four number inputs: steps / learning_rate / rank / resolution. Each shows the pod default in its placeholder so an empty field is obviously "use the default".
+- `public/planner.js`: `buildLoraTrainOverrides()` reads the four inputs, coerces to positive finite numbers, returns undefined when nothing is set. Attached to the submit body alongside `castLoras` and `audioKey`.
+
+### Tests
+
+464/464 still passing, type-check clean. UI is behavior-tested manually in browser (no vitest for planner.js form reads yet, matching existing convention).
+
 ## v0.67.1
 
 Hot-fix for v0.66.0's shared topbar: on the cast page the Vivijure logo rendered at the BOTTOM of the page instead of the top. Root cause: `.cast-layout` is a CSS Grid with an explicit `grid-template-areas: "header header" / "list editor"`, and the `<header class="wv-topbar">` had no `grid-area` assigned so it auto-placed into the implicit row below the named rows.

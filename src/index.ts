@@ -1470,6 +1470,13 @@ interface RenderSubmitRequest {
   // 'ready' and lora_key is set. Anything else is dropped and surfaced
   // back in the response so the UI can warn the caller.
   castLoras?: unknown;
+  // v0.68.0: LoRA training hyperparam overrides routed to vivijure-
+  // serverless 0.4.19+'s lora_train.run_training_subprocess. Recognized
+  // keys: steps (int), learning_rate (float), rank (int), resolution
+  // (int), timeout_seconds (int). normalizeLoraTrainOverrides on the
+  // submit builder drops any non-positive / non-finite values so a UI
+  // typo doesn't reach the pod.
+  loraTrainOverrides?: unknown;
 }
 
 async function handleRenderSubmit(request: Request, env: Env): Promise<Response> {
@@ -1603,6 +1610,13 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
     audioKey: gpuAudioKey,
     // v0.58.0: pretrained-LoRA passthrough (resolved above).
     pretrainedLoras,
+    // v0.68.0: optional LoRA training hyperparam overrides. Reshape +
+    // type-coerce happens inside normalizeLoraTrainOverrides on the
+    // builder; a malformed body field just gets stripped on the wire.
+    loraTrainOverrides:
+      body.loraTrainOverrides && typeof body.loraTrainOverrides === "object"
+        ? (body.loraTrainOverrides as RenderSubmitArgs["loraTrainOverrides"])
+        : undefined,
   };
 
   const result = await submitRenderJob(env, args);
@@ -2263,12 +2277,24 @@ async function handleFinalizeSubmit(
   // as the render-submit route; read out of the same body slot.
   let bodyAudioKey: string | null = null;
   let bodyCastLoras: CastLoraBindings | undefined;
+  let bodyLoraTrainOverrides: RenderSubmitArgs["loraTrainOverrides"] | undefined;
   try {
     const ct = (request.headers.get("content-type") || "").toLowerCase();
     if (ct.includes("application/json")) {
-      const parsed = (await request.json()) as { audioKey?: unknown; castLoras?: unknown };
+      const parsed = (await request.json()) as {
+        audioKey?: unknown;
+        castLoras?: unknown;
+        loraTrainOverrides?: unknown;
+      };
       if (typeof parsed?.audioKey === "string" && parsed.audioKey.length > 0) {
         bodyAudioKey = parsed.audioKey;
+      }
+      if (
+        parsed?.loraTrainOverrides
+        && typeof parsed.loraTrainOverrides === "object"
+        && !Array.isArray(parsed.loraTrainOverrides)
+      ) {
+        bodyLoraTrainOverrides = parsed.loraTrainOverrides as RenderSubmitArgs["loraTrainOverrides"];
       }
       if (parsed?.castLoras !== undefined) {
         if (
@@ -2373,6 +2399,9 @@ async function handleFinalizeSubmit(
       : undefined,
     audioKey: gpuAudioKey,
     pretrainedLoras,
+    // v0.68.0: forward the body's LoRA training overrides through to the
+    // GPU (vivijure-serverless 0.4.19+).
+    loraTrainOverrides: bodyLoraTrainOverrides,
   });
   if (!result.ok) {
     return json(
@@ -2843,6 +2872,22 @@ async function handleCastTrainLora(
   if (!Number.isInteger(id) || id <= 0) {
     return json({ error: "invalid id" }, { status: 400 });
   }
+  // v0.68.0: optional body field forwarded to the GPU side's training
+  // subprocess so the cast manager's UI can dial steps / LR / etc.
+  let bodyLoraTrainOverrides: import("./runpod-submit").LoraTrainOverrides | undefined;
+  try {
+    const ct = (request.headers.get("content-type") || "").toLowerCase();
+    if (ct.includes("application/json")) {
+      const parsed = (await request.json()) as { loraTrainOverrides?: unknown };
+      if (
+        parsed?.loraTrainOverrides
+        && typeof parsed.loraTrainOverrides === "object"
+        && !Array.isArray(parsed.loraTrainOverrides)
+      ) {
+        bodyLoraTrainOverrides = parsed.loraTrainOverrides as import("./runpod-submit").LoraTrainOverrides;
+      }
+    }
+  } catch { /* empty body is fine */ }
   const cast = await getCastById(env, id, userEmail);
   if (!cast) return json({ error: "cast not found" }, { status: 404 });
   if (cast.lora_status === "training") {
@@ -2893,6 +2938,8 @@ async function handleCastTrainLora(
     bundleKey: bundleResult.bundleKey,
     userEmail,
     loraDestKey,
+    // v0.68.0: training hyperparam overrides from the request body.
+    loraTrainOverrides: bodyLoraTrainOverrides,
   });
   if (!submit.ok) {
     return json({ error: submit.error }, { status: 502 });

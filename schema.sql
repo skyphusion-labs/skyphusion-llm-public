@@ -313,3 +313,38 @@ CREATE INDEX IF NOT EXISTS idx_cast_user
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_cast_slug_user
   ON cast_members(user_email, slug);
+
+-- ---------- Storyboard projects (v0.53.0) ----------
+--
+-- One row per persisted storyboard project per user_email. Holds the
+-- name, optional per-project preferences (default model, quality tier,
+-- BPM, beatsPerShot, cast bindings, etc. as JSON), and a snapshot of
+-- the last saved storyboard so a project can be reopened to its prior
+-- state across sessions / browsers. The planner UI's "(no project) |
+-- <projects> | + new" picker reads from this table.
+--
+-- prefs_json is a free-form JSON object; the planner serializes
+-- whatever it wants to persist. Schema is intentionally loose so future
+-- planner-side knobs do not require schema migrations.
+--
+-- last_storyboard_json holds the most recent storyboard JSON
+-- (StoryboardValidated shape, same as the plan response). Updated when
+-- the user clicks "save to project"; not auto-persisted, so the loaded
+-- state is always something the user explicitly chose to keep.
+
+CREATE TABLE IF NOT EXISTS storyboard_projects (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_email          TEXT NOT NULL,
+  slug                TEXT NOT NULL,
+  name                TEXT NOT NULL,
+  prefs_json          TEXT NOT NULL DEFAULT '{}',
+  last_storyboard_json TEXT,
+  created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_sbprojects_user
+  ON storyboard_projects(user_email, created_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sbprojects_slug_user
+  ON storyboard_projects(user_email, slug);

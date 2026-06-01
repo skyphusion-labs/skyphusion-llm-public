@@ -59,6 +59,12 @@ const planState = {
   beatsPerShot: 4,
   // Workflow tracking for an in-flight MiniMax Music job.
   pendingMusicChatId: null,
+  // v0.53.0: persisted storyboard projects. projectCatalog is the
+  // user's project list fetched from /api/storyboard/projects on page
+  // load. activeProjectId is the picker's current selection (null =
+  // transient mode, the pre-v0.53 default).
+  projectCatalog: [],
+  activeProjectId: null,
 };
 
 const bundleState = {
@@ -206,6 +212,8 @@ function collectPlanResultState() {
     bpm: planState.bpm,
     beatsPerShot: planState.beatsPerShot,
     pendingMusicChatId: planState.pendingMusicChatId,
+    // v0.53.0: persist the active project id so a tab reopen reselects.
+    activeProjectId: planState.activeProjectId,
   };
 }
 
@@ -406,6 +414,10 @@ function restorePlanResultPanel(saved) {
     ? saved.pendingMusicChatId : null;
   showAudioSection();
   if (planState.pendingMusicChatId) resumeMusicPolling();
+  // v0.53.0: stash the active project id; the picker's options are
+  // populated after loadProjects resolves, and we reselect there.
+  planState.activeProjectId = typeof saved.activeProjectId === "number"
+    ? saved.activeProjectId : null;
 }
 
 function restoreBundleStagePanel(savedBundle, savedPlanResult) {
@@ -716,6 +728,238 @@ function collectCast() {
     characters.push({ slot, name, bible });
   }
   return characters;
+}
+
+// ---------- Project picker + markers export (v0.53.0) ----------
+
+async function loadProjects() {
+  try {
+    const resp = await fetch("/api/storyboard/projects");
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const data = await resp.json();
+    planState.projectCatalog = Array.isArray(data.projects) ? data.projects : [];
+  } catch (err) {
+    console.warn("loadProjects failed; planner project picker stays empty:", err);
+    planState.projectCatalog = [];
+  }
+  renderProjectPicker();
+}
+
+function findProject(id) {
+  if (!id) return null;
+  return planState.projectCatalog.find((p) => p.id === id) || null;
+}
+
+function setProjectStatus(text, kind) {
+  const el = $("#planner-project-status");
+  if (!el) return;
+  el.textContent = text || "";
+  el.className = "planner-status" + (kind ? " planner-" + kind : "");
+}
+
+function renderProjectPicker() {
+  const sel = $("#planner-project-picker");
+  if (!sel) return;
+  const current = planState.activeProjectId ? String(planState.activeProjectId) : "";
+  sel.innerHTML = "";
+  const optNone = document.createElement("option");
+  optNone.value = "";
+  optNone.textContent = "(no project - transient)";
+  sel.appendChild(optNone);
+  for (const p of planState.projectCatalog) {
+    const opt = document.createElement("option");
+    opt.value = String(p.id);
+    opt.textContent = p.name;
+    sel.appendChild(opt);
+  }
+  sel.value = current;
+  refreshProjectButtonGates();
+}
+
+function refreshProjectButtonGates() {
+  const hasActive = !!planState.activeProjectId;
+  const hasStoryboard = !!planState.storyboard;
+  const saveBtn = $("#planner-project-save");
+  if (saveBtn) saveBtn.disabled = !(hasActive && hasStoryboard);
+  const delBtn = $("#planner-project-delete");
+  if (delBtn) delBtn.disabled = !hasActive;
+}
+
+function applyProjectPrefs(prefs) {
+  if (!prefs || typeof prefs !== "object") return;
+  // Selectively pull known fields from the prefs object. The Worker
+  // accepts arbitrary keys so the planner can add more here without a
+  // schema change.
+  if (typeof prefs.modelId === "string") {
+    const sel = $("#planner-model");
+    if (sel) sel.value = prefs.modelId;
+  }
+  if (typeof prefs.bpm === "number" && prefs.bpm > 0) {
+    planState.bpm = prefs.bpm;
+    const el = $("#planner-bpm");
+    if (el) el.value = String(prefs.bpm);
+  }
+  if (typeof prefs.beatsPerShot === "number" && prefs.beatsPerShot > 0) {
+    planState.beatsPerShot = prefs.beatsPerShot;
+    const el = $("#planner-beats-per-shot");
+    if (el) el.value = String(prefs.beatsPerShot);
+  }
+  if (typeof prefs.brief === "string") {
+    const el = $("#planner-brief");
+    if (el) el.value = prefs.brief;
+  }
+}
+
+function gatherProjectPrefs() {
+  const modelEl = $("#planner-model");
+  const briefEl = $("#planner-brief");
+  return {
+    modelId: modelEl ? modelEl.value : undefined,
+    brief: briefEl ? briefEl.value : undefined,
+    bpm: planState.bpm,
+    beatsPerShot: planState.beatsPerShot,
+  };
+}
+
+async function selectProject(id) {
+  planState.activeProjectId = id || null;
+  const p = findProject(id);
+  if (p) {
+    setProjectStatus("loaded " + p.name, "success");
+    applyProjectPrefs(p.prefs);
+    if (p.last_storyboard) {
+      planState.storyboard = p.last_storyboard;
+      planState.originalStoryboard = JSON.parse(JSON.stringify(p.last_storyboard));
+      planState.refineHistory = [];
+      $("#planner-output").hidden = false;
+      $("#planner-output-state").textContent = "ok";
+      $("#planner-output-state").className = "planner-output-state planner-success";
+      $("#planner-errors").hidden = true;
+      $("#planner-result").hidden = false;
+      $("#planner-raw").hidden = true;
+      $("#planner-json").textContent = JSON.stringify(p.last_storyboard, null, 2);
+      try {
+        const r = await fetch("/api/storyboard/yaml", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ storyboard: p.last_storyboard }),
+        });
+        const d = await r.json();
+        if (r.ok && d.yaml) $("#planner-yaml").textContent = d.yaml;
+      } catch { /* yaml refresh is best-effort */ }
+      renderSceneEditor(p.last_storyboard);
+      showRefineSection();
+      showAudioSection();
+    }
+  } else {
+    setProjectStatus("", "");
+  }
+  refreshProjectButtonGates();
+  persistSoon();
+}
+
+async function newProject() {
+  const name = window.prompt("project name?");
+  if (!name || !name.trim()) return;
+  try {
+    const resp = await fetch("/api/storyboard/projects", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: name.trim(), prefs: gatherProjectPrefs() }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || "HTTP " + resp.status);
+    planState.projectCatalog.unshift(data.project);
+    renderProjectPicker();
+    await selectProject(data.project.id);
+  } catch (err) {
+    window.alert("create failed: " + err.message);
+  }
+}
+
+async function saveStoryboardToProject() {
+  const id = planState.activeProjectId;
+  if (!id || !planState.storyboard) return;
+  try {
+    setProjectStatus("saving...", "loading");
+    // Update prefs first (so a re-load picks up the current form
+    // settings), then save the storyboard snapshot.
+    await fetch("/api/storyboard/projects/" + id, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prefs: gatherProjectPrefs() }),
+    });
+    const resp = await fetch("/api/storyboard/projects/" + id + "/storyboard", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ storyboard: planState.storyboard }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || "HTTP " + resp.status);
+    const idx = planState.projectCatalog.findIndex((p) => p.id === id);
+    if (idx >= 0) planState.projectCatalog[idx] = data.project;
+    setProjectStatus("saved", "success");
+  } catch (err) {
+    setProjectStatus("save failed: " + err.message, "error");
+  }
+}
+
+async function deleteActiveProject() {
+  const id = planState.activeProjectId;
+  if (!id) return;
+  const p = findProject(id);
+  if (!p) return;
+  if (!window.confirm("delete project '" + p.name + "'? this does not delete render history.")) return;
+  try {
+    const resp = await fetch("/api/storyboard/projects/" + id, { method: "DELETE" });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    planState.projectCatalog = planState.projectCatalog.filter((x) => x.id !== id);
+    planState.activeProjectId = null;
+    renderProjectPicker();
+    setProjectStatus("deleted", "success");
+  } catch (err) {
+    setProjectStatus("delete failed: " + err.message, "error");
+  }
+}
+
+async function exportMarkers() {
+  if (!planState.storyboard) {
+    window.alert("plan a storyboard first");
+    return;
+  }
+  const fmtEl = $("#planner-markers-format");
+  const format = fmtEl ? fmtEl.value : "premiere_csv";
+  try {
+    const resp = await fetch("/api/storyboard/markers", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ storyboard: planState.storyboard, format }),
+    });
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      throw new Error(data.error || "HTTP " + resp.status);
+    }
+    const blob = await resp.blob();
+    const cd = resp.headers.get("content-disposition") || "";
+    const m = cd.match(/filename="?([^"]+)"?/);
+    const filename = m ? m[1] : "markers.csv";
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    window.alert("export failed: " + err.message);
+  }
+}
+
+// Expose pure helpers for vitest.
+if (typeof window !== "undefined") {
+  window.__plannerHelpers = window.__plannerHelpers || {};
+  window.__plannerHelpers.gatherProjectPrefs = gatherProjectPrefs;
 }
 
 // ---------- Refinement chat (v0.50.0) ----------
@@ -3767,6 +4011,22 @@ document.addEventListener("DOMContentLoaded", () => {
     renderCastPickerOptions();
     applyRestoredCastBindings();
   });
+  // v0.53.0: load the project catalog + reselect any persisted active
+  // project. The picker is always visible; loading the project's last
+  // storyboard happens inside selectProject().
+  loadProjects().then(() => {
+    if (planState.activeProjectId) {
+      const sel = $("#planner-project-picker");
+      if (sel) sel.value = String(planState.activeProjectId);
+      // Only re-apply prefs (not re-load the storyboard) on restore so
+      // we do not overwrite any in-flight transient edits with stale
+      // saved state. The user re-selects from the dropdown if they
+      // want the saved storyboard back.
+      const p = findProject(planState.activeProjectId);
+      if (p) applyProjectPrefs(p.prefs);
+      refreshProjectButtonGates();
+    }
+  });
   loadHistory();
   initNotifications();
   // v0.49.0: scene editor discard button. The button itself is in
@@ -3801,6 +4061,20 @@ document.addEventListener("DOMContentLoaded", () => {
   if (audioClear) audioClear.addEventListener("click", clearAudio);
   const snapBtn = $("#planner-snap-btn");
   if (snapBtn) snapBtn.addEventListener("click", snapAllScenes);
+  // v0.53.0: project picker + markers export.
+  const projPick = $("#planner-project-picker");
+  if (projPick) projPick.addEventListener("change", () => {
+    const v = projPick.value;
+    selectProject(v ? Number(v) : null);
+  });
+  const projNew = $("#planner-project-new");
+  if (projNew) projNew.addEventListener("click", newProject);
+  const projSave = $("#planner-project-save");
+  if (projSave) projSave.addEventListener("click", saveStoryboardToProject);
+  const projDel = $("#planner-project-delete");
+  if (projDel) projDel.addEventListener("click", deleteActiveProject);
+  const markersBtn = $("#planner-markers-export");
+  if (markersBtn) markersBtn.addEventListener("click", exportMarkers);
   const bpmEl = $("#planner-bpm");
   if (bpmEl) bpmEl.addEventListener("change", () => {
     const v = Number(bpmEl.value);

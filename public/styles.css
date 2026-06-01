@@ -3641,3 +3641,53 @@ textarea:focus {
 @media (max-width: 720px) {
   .planner-audio-timing { grid-template-columns: 1fr; }
 }
+
+/* v0.53.0: project picker + markers export. */
+
+.planner-project {
+  padding: 12px 16px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.planner-project-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.planner-project-row {
+  display: flex;
+  gap: 12px;
+  align-items: end;
+  flex-wrap: wrap;
+}
+
+.planner-project-row .planner-field { margin: 0; flex: 1; min-width: 200px; }
+
+.planner-project-row select {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.planner-toolbar-spacer { flex: 1; }
+
+.planner-toolbar-select {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-family: inherit;
+  font-size: 12px;
+}

@@ -30,6 +30,11 @@ import {
   setPortrait as castSetPortrait, clearPortrait as castClearPortrait,
   addRef as castAddRef, removeRef as castRemoveRef,
 } from "./cast-db";
+import {
+  listProjectsForUser, getProjectById, createProject, updateProjectMeta,
+  setLastStoryboard, deleteProject,
+} from "./storyboard-projects-db";
+import { emitMarkers, type MarkersFormat } from "./markers";
 import { aiRun, aiLogId } from "./ai-binding";
 import { extractOutput, extractUsage, detectProviderFailure, extractProxiedImageUrl } from "./output-extract";
 import { chunkText } from "./chunking";
@@ -399,6 +404,31 @@ export default {
     // uses. Pure compute, no D1 or R2 access.
     if (url.pathname === "/api/storyboard/yaml" && request.method === "POST") {
       return handleStoryboardYaml(request);
+    }
+    // v0.53.0: NLE markers export. Pure compute over a posted storyboard;
+    // returns text/csv with a Content-Disposition that downloads in the
+    // browser.
+    if (url.pathname === "/api/storyboard/markers" && request.method === "POST") {
+      return handleStoryboardMarkers(request);
+    }
+    // v0.53.0: persisted storyboard projects (separate from chat projects).
+    // List, create, get one, patch (name / prefs), save the last storyboard
+    // snapshot, delete.
+    if (url.pathname === "/api/storyboard/projects" && request.method === "GET") {
+      return handleProjectsList(request, env);
+    }
+    if (url.pathname === "/api/storyboard/projects" && request.method === "POST") {
+      return handleProjectsCreate(request, env);
+    }
+    const projOne = url.pathname.match(/^\/api\/storyboard\/projects\/(\d+)$/);
+    if (projOne) {
+      if (request.method === "GET") return handleProjectsGet(request, env, projOne[1]);
+      if (request.method === "PATCH") return handleProjectsPatch(request, env, projOne[1]);
+      if (request.method === "DELETE") return handleProjectsDelete(request, env, projOne[1]);
+    }
+    const projSb = url.pathname.match(/^\/api\/storyboard\/projects\/(\d+)\/storyboard$/);
+    if (projSb && request.method === "POST") {
+      return handleProjectsSaveStoryboard(request, env, projSb[1]);
     }
     // v0.50.0: iterative refinement on a planned storyboard. Stateless from
     // the model's view: each request ships {model, storyboard, message} and
@@ -870,6 +900,135 @@ async function handleAudioUpload(request: Request, env: Env): Promise<Response> 
     customMetadata: { user_email: userEmail },
   });
   return json({ key, mime, size: buf.byteLength, user: userEmail });
+}
+
+// ---------- /api/storyboard/markers (v0.53.0) ----------
+//
+// POST {storyboard, format: "premiere_csv" | "resolve_csv", fps?: number}.
+// Returns the marker file as a text body with a Content-Disposition that
+// downloads in the browser. Pure compute; no D1 or R2.
+
+async function handleStoryboardMarkers(request: Request): Promise<Response> {
+  let body: { storyboard?: unknown; format?: unknown; fps?: unknown };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  if (body.storyboard === undefined || body.storyboard === null) {
+    return json({ error: "storyboard required" }, { status: 400 });
+  }
+  const validation = validateStoryboard(body.storyboard);
+  if (!validation.ok) {
+    return json({ ok: false, errors: validation.errors }, { status: 400 });
+  }
+  const format = (typeof body.format === "string" ? body.format : "premiere_csv") as MarkersFormat;
+  if (format !== "premiere_csv" && format !== "resolve_csv") {
+    return json({ error: `format must be 'premiere_csv' or 'resolve_csv' (got ${format})` }, { status: 400 });
+  }
+  const fps = typeof body.fps === "number" && body.fps > 0 ? body.fps : 24;
+  const result = emitMarkers(validation.value, format, fps);
+  return new Response(result.body, {
+    status: 200,
+    headers: {
+      "content-type": result.contentType,
+      "content-disposition": `attachment; filename="${result.filename}"`,
+    },
+  });
+}
+
+// ---------- /api/storyboard/projects (v0.53.0) ----------
+//
+// Persisted storyboard projects scoped per user_email. Mirrors the cast
+// CRUD shape: name + free-form prefs JSON + a snapshot of the last
+// saved storyboard so a tab close and reopen restores the planner.
+
+async function handleProjectsList(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const rows = await listProjectsForUser(env, userEmail);
+  return json({ projects: rows, user: userEmail });
+}
+
+async function handleProjectsCreate(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  let body: { name?: unknown; prefs?: unknown };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  if (!name) return json({ error: "name required" }, { status: 400 });
+  const prefs =
+    body.prefs !== undefined && typeof body.prefs === "object" && body.prefs !== null && !Array.isArray(body.prefs)
+      ? (body.prefs as Record<string, unknown>)
+      : {};
+  const row = await createProject(env, userEmail, { name, prefs });
+  return json({ project: row });
+}
+
+async function handleProjectsGet(request: Request, env: Env, idStr: string): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const id = Number(idStr);
+  if (!Number.isInteger(id) || id <= 0) return json({ error: "invalid id" }, { status: 400 });
+  const row = await getProjectById(env, id, userEmail);
+  if (!row) return json({ error: "project not found" }, { status: 404 });
+  return json({ project: row });
+}
+
+async function handleProjectsPatch(request: Request, env: Env, idStr: string): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const id = Number(idStr);
+  if (!Number.isInteger(id) || id <= 0) return json({ error: "invalid id" }, { status: 400 });
+  let body: { name?: unknown; prefs?: unknown };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  const patch: { name?: string; prefs?: Record<string, unknown> } = {};
+  if (body.name !== undefined) {
+    if (typeof body.name !== "string" || !body.name.trim()) {
+      return json({ error: "name must be a non-empty string" }, { status: 400 });
+    }
+    patch.name = body.name.trim();
+  }
+  if (body.prefs !== undefined) {
+    if (typeof body.prefs !== "object" || body.prefs === null || Array.isArray(body.prefs)) {
+      return json({ error: "prefs must be an object" }, { status: 400 });
+    }
+    patch.prefs = body.prefs as Record<string, unknown>;
+  }
+  const row = await updateProjectMeta(env, id, userEmail, patch);
+  if (!row) return json({ error: "project not found" }, { status: 404 });
+  return json({ project: row });
+}
+
+async function handleProjectsSaveStoryboard(request: Request, env: Env, idStr: string): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const id = Number(idStr);
+  if (!Number.isInteger(id) || id <= 0) return json({ error: "invalid id" }, { status: 400 });
+  let body: { storyboard?: unknown };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  if (body.storyboard === undefined || body.storyboard === null) {
+    return json({ error: "storyboard required" }, { status: 400 });
+  }
+  const row = await setLastStoryboard(env, id, userEmail, body.storyboard);
+  if (!row) return json({ error: "project not found" }, { status: 404 });
+  return json({ project: row });
+}
+
+async function handleProjectsDelete(request: Request, env: Env, idStr: string): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const id = Number(idStr);
+  if (!Number.isInteger(id) || id <= 0) return json({ error: "invalid id" }, { status: 400 });
+  const row = await deleteProject(env, id, userEmail);
+  if (!row) return json({ error: "project not found" }, { status: 404 });
+  return json({ deleted: row });
 }
 
 // ---------- /api/storyboard/refine (v0.50.0) ----------

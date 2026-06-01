@@ -48,6 +48,28 @@
       <ul id="planner-history-list" class="planner-history-list"></ul>
     </section>
 
+    <!-- v0.53.0: persisted project picker. Optional; planner still works
+         transient (no project picked). Picking a project loads its prefs +
+         last saved storyboard; "save to project" stashes the current
+         storyboard back into the picked project. -->
+    <section class="planner-project">
+      <header class="planner-project-header">
+        <h2 class="planner-stage-title">project</h2>
+        <span id="planner-project-status" class="planner-status"></span>
+      </header>
+      <div class="planner-project-row">
+        <label class="planner-field">
+          <span>active project</span>
+          <select id="planner-project-picker">
+            <option value="">(no project — transient)</option>
+          </select>
+        </label>
+        <button id="planner-project-new" type="button" class="planner-secondary">+ new project</button>
+        <button id="planner-project-save" type="button" class="planner-secondary" disabled>save storyboard to project</button>
+        <button id="planner-project-delete" type="button" class="planner-secondary" disabled>delete project</button>
+      </div>
+    </section>
+
     <section class="planner-form">
       <h2 class="planner-stage-title">1. plan</h2>
 
@@ -132,6 +154,12 @@
       <div class="planner-scenes-toolbar">
         <button id="planner-scenes-discard" type="button" class="planner-secondary" disabled>discard all edits</button>
         <span id="planner-scenes-dirty-badge" class="planner-scenes-dirty" hidden>edited</span>
+        <span class="planner-toolbar-spacer"></span>
+        <select id="planner-markers-format" class="planner-toolbar-select" title="NLE marker format">
+          <option value="premiere_csv">Premiere CSV</option>
+          <option value="resolve_csv">DaVinci Resolve CSV</option>
+        </select>
+        <button id="planner-markers-export" type="button" class="planner-secondary" title="download NLE marker file with one marker per scene">export markers</button>
       </div>
       <ol id="planner-scenes-list" class="planner-scenes-list"></ol>
     </section>

@@ -1,5 +1,58 @@
 # Changelog
 
+## v0.53.0
+
+Two legacy gaps closed in one PR: NLE markers export (one marker per scene, downloads as CSV ready for Premiere or DaVinci Resolve) and persisted storyboard projects (D1-backed, separate from the chat-side projects table). The planner gains a small project picker at the top ("(none) | <projects> | + new") and an "export markers" button in the scene editor toolbar.
+
+### Backend
+
+- `src/markers.ts` (new, pure): `formatTimecode`, `buildMarkers`, `emitPremiereCsv`, `emitResolveCsv`, and `emitMarkers` (returns body + contentType + filename). Cumulative `in/out` times across scenes (uses `target_seconds`, falls back to `clip_seconds`, default 5s). Premiere CSV is tab-separated with a Comment marker type column; Resolve CSV is comma-separated with an act-driven Color column (opening=Blue, rising=Green, turn=Yellow, climax=Red, resolution=Cyan).
+- `src/storyboard-projects-db.ts` (new): D1 helpers mirroring `src/cast-db.ts`. `listProjectsForUser`, `getProjectById`, `createProject`, `updateProjectMeta`, `setLastStoryboard`, `deleteProject`, plus `slugifyProject` + `allocateProjectSlug` for per-user slug uniqueness.
+- `src/index.ts`: new routes
+  - `POST /api/storyboard/markers` — runs `validateStoryboard` then `emitMarkers`; returns the file body with `Content-Disposition: attachment; filename=<title>-<format>-markers.csv`. Pure compute; no D1 or R2.
+  - `GET /api/storyboard/projects` — list user's projects
+  - `POST /api/storyboard/projects` — create with `{name, prefs?}`
+  - `GET /api/storyboard/projects/:id` — get one
+  - `PATCH /api/storyboard/projects/:id` — update `name` and/or `prefs`
+  - `POST /api/storyboard/projects/:id/storyboard` — save a snapshot of the current storyboard as the project's `last_storyboard`
+  - `DELETE /api/storyboard/projects/:id` — remove (returns the deleted row)
+
+### Schema
+
+- `schema.sql`: new `storyboard_projects` table + two indexes (user-scoped chronological + per-user unique slug). Migration delta at `migrations/v0.53.0-projects.sql`.
+
+### Frontend
+
+- `public/planner.html`: new `<section class="planner-project">` above the brief form: dropdown + `+ new project` / `save storyboard to project` / `delete project` buttons. Scene-editor toolbar gets a format picker + `export markers` button.
+- `public/planner.js`: project catalog fetched on page load, picker hydrated, save/load wired. Picking a project pulls in its `prefs` (model id, brief, BPM, beats-per-shot) and, if a `last_storyboard` was saved, loads it into the JSON / YAML / scene-editor panes (with a YAML refresh via `/api/storyboard/yaml`). `activeProjectId` is added to the localStorage stash so a tab reopen reselects the project. Markers export builds a blob, sets `download=<filename>`, clicks an anchor.
+
+### Tests
+
+15 new vitest tests:
+
+- `formatTimecode` — zero, fractional frames, minute/hour rollover, non-24 fps, invalid inputs
+- `buildMarkers` — cumulative time, act-prefix in description, synthesized scene names, empty input
+- `emitPremiereCsv` / `emitResolveCsv` — header shape, marker type, act-color mapping
+- `emitMarkers` — content-type + filename for both formats
+- `slugifyProject` — basic + empty fallback
+
+422/422 passing, type-check clean, planner.js syntax-checks.
+
+### Deploy
+
+Apply the D1 delta first:
+
+```bash
+npx wrangler d1 execute skyphusion-llm --remote --file=migrations/v0.53.0-projects.sql
+npm run deploy
+```
+
+### What is NOT in this PR
+
+- Per-project preflight / dial-in routes (the legacy had `POST /preflight` to validate render readiness; this PR ships persistence + prefs but not the pre-render validation surface). Tracked.
+- Render history rows pinned to a project (current `renders` table has a `project: TEXT` column, but it is a slug string from the bundle key, not a foreign key into `storyboard_projects`). Joining the two is a follow-up; would surface "filter render history by project" in the planner.
+- Project-scoped cast bindings (the v0.48.0 cast-binding feature persists in localStorage; v0.53.0 prefs could carry them but the planner does not write them yet).
+
 ## v0.52.0
 
 Closes the audio loop end-to-end. v0.51.0 shipped the audio + beat-snap surface (generate / upload / snap on the planner). v0.4.11 on the GPU side accepts an `audio_key` job field and muxes via `export_film(with_audio=True)`. v0.52.0 wires the two together: the planner now passes `planState.audioKey` to both the render-submit and finalize routes, and the Worker cross-bucket-copies MiniMax-generated tracks into the GPU's bucket before submit so the GPU's R2 client can resolve them.

@@ -317,3 +317,134 @@ describe("needsAudioCrossBucketCopy", () => {
     expect(needsAudioCrossBucketCopy("foo/out/audio.mp3")).toBe(false);
   });
 });
+
+// v0.53.0: markers export. Pure helpers in src/markers.ts (no env / D1).
+import { formatTimecode, buildMarkers, emitPremiereCsv, emitResolveCsv, emitMarkers } from "../src/markers";
+import { slugifyProject } from "../src/storyboard-projects-db";
+
+describe("formatTimecode", () => {
+  it("renders zero as 00:00:00:00", () => {
+    expect(formatTimecode(0, 24)).toBe("00:00:00:00");
+  });
+
+  it("rounds frames at 24 fps", () => {
+    expect(formatTimecode(1, 24)).toBe("00:00:01:00");
+    expect(formatTimecode(0.5, 24)).toBe("00:00:00:12");
+  });
+
+  it("handles minute + hour rollover", () => {
+    expect(formatTimecode(60, 24)).toBe("00:01:00:00");
+    expect(formatTimecode(3600, 24)).toBe("01:00:00:00");
+    expect(formatTimecode(3661, 24)).toBe("01:01:01:00");
+  });
+
+  it("respects non-24 fps", () => {
+    expect(formatTimecode(1, 30)).toBe("00:00:01:00");
+    expect(formatTimecode(0.5, 30)).toBe("00:00:00:15");
+  });
+
+  it("falls back on invalid inputs", () => {
+    expect(formatTimecode(-1, 24)).toBe("00:00:00:00");
+    expect(formatTimecode(Infinity, 24)).toBe("00:00:00:00");
+    expect(formatTimecode(1, 0)).toBe("00:00:01:00"); // fps falls back to 24
+  });
+});
+
+describe("buildMarkers", () => {
+  const sb = {
+    title: "test",
+    clip_seconds: 5,
+    scenes: [
+      { id: "shot_01", prompt: "wide", target_seconds: 4, act: "opening" },
+      { id: "shot_02", prompt: "close", target_seconds: 3 },
+      { id: "shot_03", prompt: "fight", act: "turn" },
+    ],
+  };
+
+  it("computes cumulative in/out times across scenes", () => {
+    const m = buildMarkers(sb);
+    expect(m).toHaveLength(3);
+    expect(m[0].inSeconds).toBe(0);
+    expect(m[0].outSeconds).toBe(4);
+    expect(m[1].inSeconds).toBe(4);
+    expect(m[1].outSeconds).toBe(7);
+    expect(m[2].inSeconds).toBe(7);
+    // shot_03 has no target_seconds -> falls back to clip_seconds (5)
+    expect(m[2].outSeconds).toBe(12);
+  });
+
+  it("emits scene id + act + prompt in description", () => {
+    const m = buildMarkers(sb);
+    expect(m[0].name).toBe("shot_01");
+    expect(m[0].description).toBe("[opening] wide");
+    expect(m[2].description).toBe("[turn] fight");
+  });
+
+  it("synthesizes a name when scene id is missing", () => {
+    const m = buildMarkers({ scenes: [{ prompt: "x", target_seconds: 1 }] });
+    expect(m[0].name).toBe("scene_01");
+  });
+
+  it("returns empty array when scenes are missing", () => {
+    expect(buildMarkers({})).toEqual([]);
+  });
+});
+
+describe("emitPremiereCsv / emitResolveCsv", () => {
+  const sb = {
+    title: "test",
+    scenes: [
+      { id: "shot_01", prompt: "wide establishing", target_seconds: 4, act: "opening" },
+      { id: "shot_02", prompt: "close-up", target_seconds: 3 },
+    ],
+  };
+
+  it("Premiere CSV uses tab-separated header + Comment marker type", () => {
+    const out = emitPremiereCsv(sb, 24);
+    const lines = out.trim().split("\n");
+    expect(lines[0]).toBe("Marker Name\tDescription\tIn\tOut\tDuration\tMarker Type");
+    expect(lines[1].split("\t")[0]).toBe("shot_01");
+    expect(lines[1].split("\t").pop()).toBe("Comment");
+  });
+
+  it("Resolve CSV uses comma-separated header + color column", () => {
+    const out = emitResolveCsv(sb, 24);
+    const lines = out.trim().split("\n");
+    expect(lines[0]).toBe("#,Color,Name,Time");
+    // shot_01 act=opening -> Blue
+    expect(lines[1].split(",")[1]).toBe("Blue");
+    // shot_02 no act -> Blue default
+    expect(lines[2].split(",")[1]).toBe("Blue");
+  });
+
+  it("Resolve CSV picks act-specific colors", () => {
+    const out = emitResolveCsv({
+      title: "x",
+      scenes: [
+        { id: "a", prompt: "p", target_seconds: 1, act: "climax" },
+        { id: "b", prompt: "p", target_seconds: 1, act: "turn" },
+      ],
+    });
+    const lines = out.trim().split("\n");
+    expect(lines[1].split(",")[1]).toBe("Red");
+    expect(lines[2].split(",")[1]).toBe("Yellow");
+  });
+
+  it("emitMarkers returns the right contentType + filename", () => {
+    const a = emitMarkers(sb, "premiere_csv");
+    expect(a.contentType).toBe("text/csv; charset=utf-8");
+    expect(a.filename).toBe("test-premiere-markers.csv");
+    const b = emitMarkers(sb, "resolve_csv");
+    expect(b.filename).toBe("test-resolve-markers.csv");
+  });
+});
+
+describe("slugifyProject", () => {
+  it("lowercases and dashes a normal name", () => {
+    expect(slugifyProject("Cherry Pie")).toBe("cherry-pie");
+  });
+  it("falls back to 'project' on empty", () => {
+    expect(slugifyProject("")).toBe("project");
+    expect(slugifyProject("---")).toBe("project");
+  });
+});

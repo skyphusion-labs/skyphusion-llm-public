@@ -725,6 +725,131 @@
             v0.4.7 multi-subject coherence fix.
           </p>
         </details>
+        <!-- v0.75.0: production.adetailer sub-block (vivijure-serverless
+             0.4.31+). Controls the hand/face inpaint refinement pass
+             that runs after the SDXL keyframe; turning off can save
+             noticeable time per scene at the cost of artifacts. -->
+        <details class="planner-overrides-raw-details">
+          <summary class="planner-overrides-summary">adetailer hand/face fix (advanced)</summary>
+          <div class="planner-overrides-fields">
+            <label class="planner-field">
+              <span>adetailer enabled</span>
+              <select id="planner-ad-enabled">
+                <option value="">(use pod default: true)</option>
+                <option value="true">true</option>
+                <option value="false">false (skip the inpaint pass)</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>fix hands</span>
+              <select id="planner-ad-fix-hands">
+                <option value="">(use pod default: true)</option>
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>fix face</span>
+              <select id="planner-ad-fix-face">
+                <option value="">(use pod default: true)</option>
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>max regions (pod default 3)</span>
+              <input id="planner-ad-max-regions" type="number" min="1" max="8" step="1" placeholder="3" />
+            </label>
+            <label class="planner-field">
+              <span>bbox padding (pod default 0.15)</span>
+              <input id="planner-ad-bbox-pad" type="number" min="0" max="1" step="0.01" placeholder="0.15" />
+            </label>
+            <label class="planner-field">
+              <span>inpaint strength (pod default 0.4)</span>
+              <input id="planner-ad-inpaint-strength" type="number" min="0" max="1" step="0.01" placeholder="0.4" />
+            </label>
+            <label class="planner-field">
+              <span>hand confidence floor (pod default 0.35)</span>
+              <input id="planner-ad-hand-confidence" type="number" min="0" max="1" step="0.01" placeholder="0.35" />
+            </label>
+          </div>
+          <p class="planner-overrides-hint">
+            forwarded as <code>adetailer_overrides</code>. controls the
+            post-SDXL inpaint pass on detected hand / face regions.
+            disabling entirely is the fastest win when iterating on
+            composition; lower <code>inpaint_strength</code> preserves
+            more of the original pixels.
+          </p>
+        </details>
+        <!-- v0.75.0: wan_diffusion block (vivijure-serverless 0.4.31+).
+             The Wan I2V/T2V model + inference knobs. Distinct from the
+             flat wan_inference_steps render_overrides keys above, which
+             are tier-derived per shot; these override the base config. -->
+        <details class="planner-overrides-raw-details">
+          <summary class="planner-overrides-summary">Wan diffusion model + inference (advanced)</summary>
+          <div class="planner-overrides-fields">
+            <label class="planner-field">
+              <span>T2V model id (pod default Wan-AI/Wan2.1-T2V-1.3B-Diffusers)</span>
+              <input id="planner-wd-t2v-model-id" type="text" maxlength="256" placeholder="Wan-AI/Wan2.1-T2V-1.3B-Diffusers" />
+            </label>
+            <label class="planner-field">
+              <span>I2V model id (pod default Wan-AI/Wan2.1-I2V-14B-480P-Diffusers)</span>
+              <input id="planner-wd-i2v-model-id" type="text" maxlength="256" placeholder="Wan-AI/Wan2.1-I2V-14B-480P-Diffusers" />
+            </label>
+            <label class="planner-field">
+              <span>use I2V when start image present</span>
+              <select id="planner-wd-use-i2v">
+                <option value="">(use pod default: true)</option>
+                <option value="true">true</option>
+                <option value="false">false (force T2V)</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>num_frames (pod default 33)</span>
+              <input id="planner-wd-num-frames" type="number" min="1" max="256" step="1" placeholder="33" />
+            </label>
+            <label class="planner-field">
+              <span>max_frames (pod default 121)</span>
+              <input id="planner-wd-max-frames" type="number" min="1" max="256" step="1" placeholder="121" />
+            </label>
+            <label class="planner-field">
+              <span>Wan fps (pod default 16)</span>
+              <input id="planner-wd-fps" type="number" min="1" max="120" step="1" placeholder="16" />
+            </label>
+            <label class="planner-field">
+              <span>inference_steps (pod default 16)</span>
+              <input id="planner-wd-inference-steps" type="number" min="1" max="64" step="1" placeholder="16" />
+            </label>
+            <label class="planner-field">
+              <span>guidance_scale (pod default 5.0)</span>
+              <input id="planner-wd-guidance-scale" type="number" min="0" max="30" step="0.1" placeholder="5.0" />
+            </label>
+            <label class="planner-field">
+              <span>flow_shift (pod default 5.0)</span>
+              <input id="planner-wd-flow-shift" type="number" min="0" max="30" step="0.1" placeholder="5.0" />
+            </label>
+            <label class="planner-field">
+              <span>CPU offload</span>
+              <select id="planner-wd-cpu-offload">
+                <option value="">(use pod default: true)</option>
+                <option value="true">true (lower VRAM, slower)</option>
+                <option value="false">false (faster, more VRAM)</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>seconds per shot (pod default 5.0)</span>
+              <input id="planner-wd-seconds-per-shot" type="number" min="0.5" max="60" step="0.1" placeholder="5.0" />
+            </label>
+          </div>
+          <p class="planner-overrides-hint">
+            forwarded as <code>wan_diffusion_overrides</code>. these
+            override the base <code>wan_diffusion</code> block in
+            <code>config.yaml</code>. the flat <code>wan_inference_steps</code>
+            / <code>wan_num_frames</code> render_overrides above still
+            win when both are set since they apply after the quality
+            tier's per-shot adjustment.
+          </p>
+        </details>
         <details class="planner-overrides-raw-details">
           <summary class="planner-overrides-summary">raw JSON overrides (wins on conflict)</summary>
           <textarea id="planner-render-overrides" rows="3" placeholder='{"wan_inference_steps": 12, "wan_num_frames": 33}' spellcheck="false"></textarea>

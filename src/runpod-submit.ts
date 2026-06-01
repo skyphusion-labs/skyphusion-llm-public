@@ -73,6 +73,10 @@ export interface RenderSubmitArgs {
   characterGenerationOverrides?: CharacterGenerationOverrides;
   // v0.74.0: face_lock + instantid (vivijure-serverless 0.4.30+).
   faceLockOverrides?: FaceLockOverrides;
+  // v0.75.0: production.adetailer sub-block + wan_diffusion block
+  // (vivijure-serverless 0.4.31+).
+  adetailerOverrides?: AdetailerOverrides;
+  wanDiffusionOverrides?: WanDiffusionOverrides;
 }
 
 export interface LoraTrainOverrides {
@@ -111,6 +115,63 @@ export interface QualityGateOverrides {
   // When true the render proceeds even on verdict="fail". When false
   // a hard fail blocks the render.
   allow_warn?: boolean;
+}
+
+// v0.75.0: production.adetailer sub-block - the hand/face inpaint
+// pass that runs after the SDXL keyframe. Routes through to vivijure-
+// serverless 0.4.31+'s adetailer_fix.set_overrides; adetailer_cfg()
+// merges these over config.yaml's production.adetailer block.
+export interface AdetailerOverrides {
+  // Master switch for the adetailer hand/face fix pass.
+  enabled?: boolean;
+  // When true, scan keyframes for malformed hands and inpaint them.
+  fix_hands?: boolean;
+  // When true, scan keyframes for face artifacts and inpaint them.
+  fix_face?: boolean;
+  // Cap on detected regions to fix per keyframe. Pod default 3; higher
+  // = more passes per image (slower but catches more artifacts).
+  max_regions?: number;     // int 1..8
+  // Padding multiplier around each detected bbox before inpaint.
+  // 0..1 typical; higher = more context for inpaint coherence.
+  bbox_pad?: number;        // float 0..1
+  // SDXL inpaint denoising strength on the patch. 0..1; higher =
+  // more aggressive rewrite, lower = preserve more of the original.
+  inpaint_strength?: number;
+  // Detector confidence floor before a region is treated as a hand.
+  // 0..1; lower = catches subtle malformations, higher = fewer
+  // false positives.
+  hand_confidence?: number;
+}
+
+// v0.75.0: wan_diffusion block - Wan 2.1 I2V/T2V model + inference
+// knobs. Routes through to vivijure-serverless 0.4.31+'s in-place
+// mutation of core.CONFIG["wan_diffusion"] (same approach as the
+// Phase 4 render constants).
+export interface WanDiffusionOverrides {
+  // Default T2V model. Pod default Wan-AI/Wan2.1-T2V-1.3B-Diffusers.
+  t2v_model_id?: string;
+  // Default I2V model. Pod default Wan-AI/Wan2.1-I2V-14B-480P-Diffusers.
+  i2v_model_id?: string;
+  // When true and a keyframe is provided, the renderer uses I2V; else T2V.
+  use_i2v_when_start_image?: boolean;
+  // Frames per Wan shot. Pod default 33 (~2s at 16fps).
+  num_frames?: number;      // int 1..256
+  // Hard ceiling on Wan's per-shot frame count. Pod default 121.
+  max_frames?: number;      // int 1..256
+  // Wan video frame rate. Pod default 16.
+  fps?: number;             // int 1..120
+  // Wan inference steps per shot. Pod default 16. Higher = slower
+  // but cleaner motion.
+  num_inference_steps?: number; // int 1..64
+  // Wan CFG guidance. Pod default 5.0. 0..30 typical.
+  guidance_scale?: number;
+  // Wan flow-matching shift. Pod default 5.0.
+  flow_shift?: number;
+  // Offload the Wan pipeline to CPU between shots to save VRAM. Pod default true.
+  cpu_offload?: boolean;
+  // Target seconds per shot used to derive num_frames if no shot
+  // duration is specified. Pod default 5.0.
+  seconds_per_shot?: number;
 }
 
 // v0.74.0: matching face_lock block from config.yaml. Routes through to
@@ -277,6 +338,9 @@ export interface RenderJobInput {
   character_generation_overrides?: CharacterGenerationOverrides;
   // v0.74.0: face_lock + instantid (0.4.30+).
   face_lock_overrides?: FaceLockOverrides;
+  // v0.75.0: adetailer + wan_diffusion (0.4.31+).
+  adetailer_overrides?: AdetailerOverrides;
+  wan_diffusion_overrides?: WanDiffusionOverrides;
 }
 
 // v0.41.0: per-shot SDXL keyframe regeneration. The Worker derives the
@@ -337,6 +401,9 @@ export interface FinalizeArgs {
   characterGenerationOverrides?: CharacterGenerationOverrides;
   // v0.74.0: same face_lock override.
   faceLockOverrides?: FaceLockOverrides;
+  // v0.75.0: same adetailer + wan_diffusion overrides as RenderSubmitArgs.
+  adetailerOverrides?: AdetailerOverrides;
+  wanDiffusionOverrides?: WanDiffusionOverrides;
 }
 
 export interface FinalizeJobInput {
@@ -358,6 +425,8 @@ export interface FinalizeJobInput {
   image_prompting_overrides?: ImagePromptingOverrides;
   character_generation_overrides?: CharacterGenerationOverrides;
   face_lock_overrides?: FaceLockOverrides;
+  adetailer_overrides?: AdetailerOverrides;
+  wan_diffusion_overrides?: WanDiffusionOverrides;
 }
 
 // v0.57.0: standalone LoRA training. The cast manager UI on /cast
@@ -501,6 +570,11 @@ export function buildSubmitPayload(args: RenderSubmitArgs): { input: RenderJobIn
   // v0.74.0: face_lock + instantid.
   const fl = normalizeFaceLockOverrides(args.faceLockOverrides);
   if (fl) input.face_lock_overrides = fl;
+  // v0.75.0: adetailer + wan_diffusion.
+  const ad = normalizeAdetailerOverrides(args.adetailerOverrides);
+  if (ad) input.adetailer_overrides = ad;
+  const wd = normalizeWanDiffusionOverrides(args.wanDiffusionOverrides);
+  if (wd) input.wan_diffusion_overrides = wd;
   return { input };
 }
 
@@ -553,6 +627,10 @@ export function buildFinalizePayload(args: FinalizeArgs): { input: FinalizeJobIn
   if (cgF) input.character_generation_overrides = cgF;
   const flF = normalizeFaceLockOverrides(args.faceLockOverrides);
   if (flF) input.face_lock_overrides = flF;
+  const adF = normalizeAdetailerOverrides(args.adetailerOverrides);
+  if (adF) input.adetailer_overrides = adF;
+  const wdF = normalizeWanDiffusionOverrides(args.wanDiffusionOverrides);
+  if (wdF) input.wan_diffusion_overrides = wdF;
   return { input };
 }
 
@@ -595,6 +673,71 @@ export function normalizeLoraTrainOverrides(
     if (typeof v === "number" && Number.isFinite(v) && v > 0) {
       out[k] = v;
     }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// v0.75.0: normalize adetailer overrides.
+export function normalizeAdetailerOverrides(
+  raw: AdetailerOverrides | undefined,
+): AdetailerOverrides | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: AdetailerOverrides = {};
+  if (typeof raw.enabled === "boolean") out.enabled = raw.enabled;
+  if (typeof raw.fix_hands === "boolean") out.fix_hands = raw.fix_hands;
+  if (typeof raw.fix_face === "boolean") out.fix_face = raw.fix_face;
+  if (typeof raw.max_regions === "number" && Number.isInteger(raw.max_regions) && raw.max_regions >= 1 && raw.max_regions <= 8) {
+    out.max_regions = raw.max_regions;
+  }
+  if (typeof raw.bbox_pad === "number" && Number.isFinite(raw.bbox_pad) && raw.bbox_pad >= 0 && raw.bbox_pad <= 1) {
+    out.bbox_pad = raw.bbox_pad;
+  }
+  if (typeof raw.inpaint_strength === "number" && Number.isFinite(raw.inpaint_strength) && raw.inpaint_strength >= 0 && raw.inpaint_strength <= 1) {
+    out.inpaint_strength = raw.inpaint_strength;
+  }
+  if (typeof raw.hand_confidence === "number" && Number.isFinite(raw.hand_confidence) && raw.hand_confidence >= 0 && raw.hand_confidence <= 1) {
+    out.hand_confidence = raw.hand_confidence;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// v0.75.0: normalize wan_diffusion overrides. Per-field union / range
+// checks; drops anything that doesn't conform. Pod re-validates.
+export function normalizeWanDiffusionOverrides(
+  raw: WanDiffusionOverrides | undefined,
+): WanDiffusionOverrides | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: WanDiffusionOverrides = {};
+  if (typeof raw.t2v_model_id === "string" && raw.t2v_model_id.length > 0 && raw.t2v_model_id.length <= 256) {
+    out.t2v_model_id = raw.t2v_model_id;
+  }
+  if (typeof raw.i2v_model_id === "string" && raw.i2v_model_id.length > 0 && raw.i2v_model_id.length <= 256) {
+    out.i2v_model_id = raw.i2v_model_id;
+  }
+  if (typeof raw.use_i2v_when_start_image === "boolean") {
+    out.use_i2v_when_start_image = raw.use_i2v_when_start_image;
+  }
+  if (typeof raw.num_frames === "number" && Number.isInteger(raw.num_frames) && raw.num_frames >= 1 && raw.num_frames <= 256) {
+    out.num_frames = raw.num_frames;
+  }
+  if (typeof raw.max_frames === "number" && Number.isInteger(raw.max_frames) && raw.max_frames >= 1 && raw.max_frames <= 256) {
+    out.max_frames = raw.max_frames;
+  }
+  if (typeof raw.fps === "number" && Number.isInteger(raw.fps) && raw.fps >= 1 && raw.fps <= 120) {
+    out.fps = raw.fps;
+  }
+  if (typeof raw.num_inference_steps === "number" && Number.isInteger(raw.num_inference_steps) && raw.num_inference_steps >= 1 && raw.num_inference_steps <= 64) {
+    out.num_inference_steps = raw.num_inference_steps;
+  }
+  if (typeof raw.guidance_scale === "number" && Number.isFinite(raw.guidance_scale) && raw.guidance_scale >= 0 && raw.guidance_scale <= 30) {
+    out.guidance_scale = raw.guidance_scale;
+  }
+  if (typeof raw.flow_shift === "number" && Number.isFinite(raw.flow_shift) && raw.flow_shift >= 0 && raw.flow_shift <= 30) {
+    out.flow_shift = raw.flow_shift;
+  }
+  if (typeof raw.cpu_offload === "boolean") out.cpu_offload = raw.cpu_offload;
+  if (typeof raw.seconds_per_shot === "number" && Number.isFinite(raw.seconds_per_shot) && raw.seconds_per_shot >= 0.5 && raw.seconds_per_shot <= 60) {
+    out.seconds_per_shot = raw.seconds_per_shot;
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }

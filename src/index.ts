@@ -1501,6 +1501,10 @@ interface RenderSubmitRequest {
   characterGenerationOverrides?: unknown;
   // v0.74.0: face_lock + instantid sub-block (vivijure-serverless 0.4.30+).
   faceLockOverrides?: unknown;
+  // v0.75.0: production.adetailer sub-block + wan_diffusion block
+  // (vivijure-serverless 0.4.31+).
+  adetailerOverrides?: unknown;
+  wanDiffusionOverrides?: unknown;
 }
 
 async function handleRenderSubmit(request: Request, env: Env): Promise<Response> {
@@ -1678,6 +1682,15 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
     faceLockOverrides:
       body.faceLockOverrides && typeof body.faceLockOverrides === "object"
         ? (body.faceLockOverrides as RenderSubmitArgs["faceLockOverrides"])
+        : undefined,
+    // v0.75.0: adetailer + wan_diffusion passthrough.
+    adetailerOverrides:
+      body.adetailerOverrides && typeof body.adetailerOverrides === "object"
+        ? (body.adetailerOverrides as RenderSubmitArgs["adetailerOverrides"])
+        : undefined,
+    wanDiffusionOverrides:
+      body.wanDiffusionOverrides && typeof body.wanDiffusionOverrides === "object"
+        ? (body.wanDiffusionOverrides as RenderSubmitArgs["wanDiffusionOverrides"])
         : undefined,
   };
 
@@ -2348,6 +2361,8 @@ async function handleFinalizeSubmit(
   let bodyImagePromptingOverrides: RenderSubmitArgs["imagePromptingOverrides"] | undefined;
   let bodyCharacterGenerationOverrides: RenderSubmitArgs["characterGenerationOverrides"] | undefined;
   let bodyFaceLockOverrides: RenderSubmitArgs["faceLockOverrides"] | undefined;
+  let bodyAdetailerOverrides: RenderSubmitArgs["adetailerOverrides"] | undefined;
+  let bodyWanDiffusionOverrides: RenderSubmitArgs["wanDiffusionOverrides"] | undefined;
   try {
     const ct = (request.headers.get("content-type") || "").toLowerCase();
     if (ct.includes("application/json")) {
@@ -2363,6 +2378,8 @@ async function handleFinalizeSubmit(
         imagePromptingOverrides?: unknown;
         characterGenerationOverrides?: unknown;
         faceLockOverrides?: unknown;
+        adetailerOverrides?: unknown;
+        wanDiffusionOverrides?: unknown;
       };
       if (typeof parsed?.audioKey === "string" && parsed.audioKey.length > 0) {
         bodyAudioKey = parsed.audioKey;
@@ -2429,6 +2446,20 @@ async function handleFinalizeSubmit(
         && !Array.isArray(parsed.faceLockOverrides)
       ) {
         bodyFaceLockOverrides = parsed.faceLockOverrides as RenderSubmitArgs["faceLockOverrides"];
+      }
+      if (
+        parsed?.adetailerOverrides
+        && typeof parsed.adetailerOverrides === "object"
+        && !Array.isArray(parsed.adetailerOverrides)
+      ) {
+        bodyAdetailerOverrides = parsed.adetailerOverrides as RenderSubmitArgs["adetailerOverrides"];
+      }
+      if (
+        parsed?.wanDiffusionOverrides
+        && typeof parsed.wanDiffusionOverrides === "object"
+        && !Array.isArray(parsed.wanDiffusionOverrides)
+      ) {
+        bodyWanDiffusionOverrides = parsed.wanDiffusionOverrides as RenderSubmitArgs["wanDiffusionOverrides"];
       }
       if (parsed?.castLoras !== undefined) {
         if (
@@ -2553,6 +2584,9 @@ async function handleFinalizeSubmit(
     characterGenerationOverrides: bodyCharacterGenerationOverrides,
     // v0.74.0: face_lock + instantid passthrough (vivijure-serverless 0.4.30+).
     faceLockOverrides: bodyFaceLockOverrides,
+    // v0.75.0: adetailer + wan_diffusion passthrough (vivijure-serverless 0.4.31+).
+    adetailerOverrides: bodyAdetailerOverrides,
+    wanDiffusionOverrides: bodyWanDiffusionOverrides,
   });
   if (!result.ok) {
     return json(

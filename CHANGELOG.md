@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.75.0
+
+Phase 8 of the worker-pod config pull. Two more config.yaml blocks become routable from the web Worker: `production.adetailer.*` (7 keys; the hand/face inpaint refinement pass) and `wan_diffusion.*` (11 keys; the Wan I2V / T2V model + inference knobs). Pod side landed in vivijure-serverless 0.4.31.
+
+### Backend
+
+- `src/runpod-submit.ts`: `AdetailerOverrides` and `WanDiffusionOverrides` interfaces + `normalizeAdetailerOverrides` / `normalizeWanDiffusionOverrides` with per-field union / range / length-cap validation. Both Args + JobInput types carry the new fields; all three builders forward them.
+- `src/index.ts`: `RenderSubmitRequest` accepts `adetailerOverrides` and `wanDiffusionOverrides`; both render and finalize handlers read them and forward through.
+
+### Frontend
+
+- `public/planner.html`: two new disclosures, "adetailer hand/face fix (advanced)" (7 controls) and "Wan diffusion model + inference (advanced)" (11 controls). The wan_diffusion block is distinct from the flat `wan_inference_steps` / `wan_num_frames` `render_overrides` keys above it; the flat keys still win on key conflict since they apply after the quality tier's per-shot adjustment.
+- `public/planner.js`: `buildAdetailerOverrides()` and `buildWanDiffusionOverrides()` read + validate, attach alongside the other override builders.
+
+### Tests
+
+464/464 still passing, type-check clean.
+
 ## v0.74.0
 
 Phase 7 of the worker-pod config pull. `face_lock.*` (5 top-level keys) plus the nested `face_lock.instantid.*` (8 keys) become routable from the web Worker. Pod side landed in vivijure-serverless 0.4.30. Useful for tuning the IP-Adapter / InstantID identity-lock pipeline when per-cast LoRAs aren't dominant enough on their own.

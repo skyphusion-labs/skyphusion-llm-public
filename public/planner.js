@@ -603,6 +603,61 @@ function buildCastLoraSubmit() {
   return out;
 }
 
+// v0.75.0: adetailer overrides from the advanced disclosure.
+function buildAdetailerOverrides() {
+  const $sel = (s) => $(s);
+  const out = {};
+  const en = ($sel("#planner-ad-enabled") || {}).value;
+  if (en === "true") out.enabled = true;
+  else if (en === "false") out.enabled = false;
+  const fh = ($sel("#planner-ad-fix-hands") || {}).value;
+  if (fh === "true") out.fix_hands = true;
+  else if (fh === "false") out.fix_hands = false;
+  const ff = ($sel("#planner-ad-fix-face") || {}).value;
+  if (ff === "true") out.fix_face = true;
+  else if (ff === "false") out.fix_face = false;
+  const mr = parseFloat(($sel("#planner-ad-max-regions") || {}).value || "");
+  if (Number.isInteger(mr) && mr >= 1 && mr <= 8) out.max_regions = mr;
+  const bp = parseFloat(($sel("#planner-ad-bbox-pad") || {}).value || "");
+  if (Number.isFinite(bp) && bp >= 0 && bp <= 1) out.bbox_pad = bp;
+  const is = parseFloat(($sel("#planner-ad-inpaint-strength") || {}).value || "");
+  if (Number.isFinite(is) && is >= 0 && is <= 1) out.inpaint_strength = is;
+  const hc = parseFloat(($sel("#planner-ad-hand-confidence") || {}).value || "");
+  if (Number.isFinite(hc) && hc >= 0 && hc <= 1) out.hand_confidence = hc;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// v0.75.0: wan_diffusion block overrides from the advanced disclosure.
+function buildWanDiffusionOverrides() {
+  const $sel = (s) => $(s);
+  const out = {};
+  const t2v = (($sel("#planner-wd-t2v-model-id") || {}).value || "").trim();
+  if (t2v && t2v.length <= 256) out.t2v_model_id = t2v;
+  const i2v = (($sel("#planner-wd-i2v-model-id") || {}).value || "").trim();
+  if (i2v && i2v.length <= 256) out.i2v_model_id = i2v;
+  const uiv = ($sel("#planner-wd-use-i2v") || {}).value;
+  if (uiv === "true") out.use_i2v_when_start_image = true;
+  else if (uiv === "false") out.use_i2v_when_start_image = false;
+  const nf = parseFloat(($sel("#planner-wd-num-frames") || {}).value || "");
+  if (Number.isInteger(nf) && nf >= 1 && nf <= 256) out.num_frames = nf;
+  const mf = parseFloat(($sel("#planner-wd-max-frames") || {}).value || "");
+  if (Number.isInteger(mf) && mf >= 1 && mf <= 256) out.max_frames = mf;
+  const fps = parseFloat(($sel("#planner-wd-fps") || {}).value || "");
+  if (Number.isInteger(fps) && fps >= 1 && fps <= 120) out.fps = fps;
+  const isteps = parseFloat(($sel("#planner-wd-inference-steps") || {}).value || "");
+  if (Number.isInteger(isteps) && isteps >= 1 && isteps <= 64) out.num_inference_steps = isteps;
+  const gs = parseFloat(($sel("#planner-wd-guidance-scale") || {}).value || "");
+  if (Number.isFinite(gs) && gs >= 0 && gs <= 30) out.guidance_scale = gs;
+  const fs = parseFloat(($sel("#planner-wd-flow-shift") || {}).value || "");
+  if (Number.isFinite(fs) && fs >= 0 && fs <= 30) out.flow_shift = fs;
+  const co = ($sel("#planner-wd-cpu-offload") || {}).value;
+  if (co === "true") out.cpu_offload = true;
+  else if (co === "false") out.cpu_offload = false;
+  const sps = parseFloat(($sel("#planner-wd-seconds-per-shot") || {}).value || "");
+  if (Number.isFinite(sps) && sps >= 0.5 && sps <= 60) out.seconds_per_shot = sps;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 // v0.74.0: face_lock + instantid builder. The instantid sub-block is
 // only attached when the user set at least one of its fields.
 function buildFaceLockOverrides() {
@@ -2770,6 +2825,11 @@ async function submitRender() {
   // v0.74.0: face_lock + instantid.
   const flOverrides = buildFaceLockOverrides();
   if (flOverrides) reqBody.faceLockOverrides = flOverrides;
+  // v0.75.0: adetailer + wan_diffusion overrides.
+  const adOverrides = buildAdetailerOverrides();
+  if (adOverrides) reqBody.adetailerOverrides = adOverrides;
+  const wdOverrides = buildWanDiffusionOverrides();
+  if (wdOverrides) reqBody.wanDiffusionOverrides = wdOverrides;
 
   let resp = null;
   let data = null;

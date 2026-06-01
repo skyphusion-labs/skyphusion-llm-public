@@ -83,6 +83,13 @@ export interface FinalizeArgs {
   qualityTier?: "draft" | "standard" | "final";
   renderOverrides?: Record<string, unknown>;
   userEmail?: string;
+  // v0.45.0: optional shot_id list to restrict the I2V pass + final
+  // assembly to. When non-empty the GPU (vivijure-serverless 0.4.5+)
+  // processes ONLY these shots and assembles the silent MP4 from a
+  // temp manifest filtered to them. When undefined / empty, the GPU
+  // runs the full all-scenes flow (v0.4.4 behavior). Sourced from
+  // the originating row's locked_shots column in the handler.
+  processShotIds?: string[];
 }
 
 export interface FinalizeJobInput {
@@ -92,6 +99,7 @@ export interface FinalizeJobInput {
   quality_tier: "draft" | "standard" | "final";
   render_overrides?: Record<string, unknown>;
   user_email?: string;
+  process_shot_ids?: string[];
 }
 
 // RunPod queue-based job status. The platform uses these literal strings
@@ -177,6 +185,14 @@ export function buildFinalizePayload(args: FinalizeArgs): { input: FinalizeJobIn
   }
   if (typeof args.userEmail === "string" && args.userEmail.length > 0) {
     input.user_email = args.userEmail;
+  }
+  // v0.45.0: only include the shot list when there is at least one
+  // shot to process. An empty array stripped to undefined means "run
+  // the full all-scenes flow" on the GPU side; that matches the
+  // semantic the Worker route surfaces ("if nothing is locked, run
+  // everything").
+  if (Array.isArray(args.processShotIds) && args.processShotIds.length > 0) {
+    input.process_shot_ids = [...args.processShotIds];
   }
   return { input };
 }

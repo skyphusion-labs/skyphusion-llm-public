@@ -1608,12 +1608,21 @@ async function handleFinalizeSubmit(
     );
   }
 
+  // v0.45.0: lock-gated finalize. When the row has any locked_shots,
+  // the GPU restricts the I2V pass + assembly to those shot_ids. When
+  // the column is null / empty, we omit the field and the GPU runs the
+  // full all-scenes flow (v0.42.0 / vivijure 0.4.4 behavior). The
+  // user-facing UX is "if nothing is locked, finalize processes
+  // everything; if some shots are locked, only those make the movie."
   const result = await submitFinalizeJob(env, {
     project: row.project,
     bundleKey: row.bundle_key,
     qualityTier: row.quality_tier as "draft" | "standard" | "final" | undefined,
     renderOverrides: row.render_overrides ?? undefined,
     userEmail,
+    processShotIds: row.locked_shots && row.locked_shots.length > 0
+      ? row.locked_shots
+      : undefined,
   });
   if (!result.ok) {
     return json(

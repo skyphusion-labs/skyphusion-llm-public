@@ -1,5 +1,65 @@
 # Changelog
 
+## v0.45.0
+
+Lock state actually gates finalize. v0.42.0 shipped the lock pin as metadata-only ("the GPU runs Wan I2V over every shot regardless"); v0.45.0 makes it load-bearing. When the user has locked any shots in a keyframes-only preview, clicking finalize now restricts the I2V pass + silent-MP4 assembly to ONLY those shots. The unlocked shots are skipped: they get no clip and they do not appear in the final movie. When nothing is locked, the GPU runs the existing all-scenes flow (v0.42.0 back-compat).
+
+### Why
+
+v0.42.0 shipped the per-shot lock pin and a finalize button but left a noticeable semantic gap: the lock state was decorative, the GPU ran I2V on every shot anyway, and the user had no way to actually exclude a shot they did not approve from the final movie. The natural mental model ("lock = include, unlocked = exclude") is what v0.45.0 implements. Combined with v0.41.0's per-shot regen the loop is finally:
+
+  preview keyframes → regen the bad ones → lock the good ones → finalize a movie of just the locked shots
+
+A user who locks 4 of 6 shots gets a 4-shot movie. The unlocked 2 stay on the volume as keyframes; the user can regen them, lock them, and finalize again (the second finalize would be a separate history row with 6 shots, since locking the formerly-unlocked shots changes the locked set).
+
+### Cross-repo coordination
+
+Needs **vivijure-serverless 0.4.5** on the RunPod endpoint.
+
+GPU side adds:
+
+- `orchestrator.finalize` now accepts an optional `process_shot_ids: list[str]`. Resolves shot_ids → scene_indices via the manifest (raises a clear RuntimeError on unknown shot_ids so a Worker / client typo surfaces before assembly silently drops shots). When non-empty, drives the I2V pass via `core.render_scenes_gen(name, indices)` (the same generator `studio_service._i2v_pass_worker` uses, minus the threading + global state). When None / empty, the existing `_render_worker_body(payload)` all-scenes path runs unchanged.
+- New `_render_selected_indices(name, indices, quality_tier, on_log)` mirrors `_i2v_pass_worker`'s body for the headless path (no `_render_thread` / `_render_lock` bookkeeping; we run blocking on the RunPod job worker).
+- New `_assemble_selected(name, indices)` writes a temp `manifest_finalize.json` filtered to the selected scenes, validates each has a clip on disk (raises a clear error naming the missing shot_id when I2V failed for one), then calls `assemble.assemble_silent(tmp_manifest, output_path)` directly. The original `manifest.json` is left untouched.
+- `rp_handler._handle_finalize` reads `process_shot_ids` from job input, validates it is a list of non-empty strings (400 on bad shape), passes through to `orchestrator.finalize`. Job envelope is unchanged from v0.4.4 (same `output_key`, `seconds`, `state_key`, `keyframes`, `mode: "finalized"`).
+
+Pre-0.4.5 GPU endpoints ignore the new field and run the full all-scenes flow; back-compat is one-directional safe.
+
+### Worker
+
+- `src/runpod-submit.ts`: `FinalizeArgs.processShotIds?: string[]` + `FinalizeJobInput.process_shot_ids?: string[]`. `buildFinalizePayload` includes the field only when non-empty (so an empty array stays off the wire and the GPU does the full all-scenes flow); also clones the input array so a subsequent caller-side mutation does not leak into the built payload.
+- `src/index.ts`: `handleFinalizeSubmit` reads `row.locked_shots` (the same column the PATCH route writes via v0.42.0's lock pin) and forwards as `processShotIds`. When the column is null / empty, the field is omitted; the GPU runs the full all-scenes flow. No new Worker route. No new D1 migration.
+
+### UI
+
+- `public/planner.js`: `finalizeRender(row, btnEl)`'s confirm dialog rewritten to reflect the new semantic. When `lockedCount > 0`, the dialog reads "this will assemble the silent MP4 from N of M keyframes (only the LOCKED shots). Wan I2V + assembly takes roughly X to Y minutes on the final tier. the unlocked shots (M - N) will NOT appear in the final movie. continue?". When nothing is locked, the dialog reads "no shots are locked, so all M keyframes will be included." The minute estimate scales with the processed shot count (5-10 minutes minimum for the assembly overhead; ~4-6 minutes per shot of I2V).
+- `buildHistoryRow`'s finalize-row summary text and `toggleShotLock`'s in-place summary refresh both update to say "(finalize will assemble these only)" / "or finalize as-is to include all", so the user can see at a glance what the next finalize will include without opening the confirm dialog.
+
+### Tests
+
+`tests/runpod-submit.test.ts` gets 3 new cases under the `buildFinalizePayload` describe block:
+
+- `process_shot_ids` included when set and non-empty
+- `process_shot_ids` omitted when undefined / empty (so the wire stays clean)
+- Input array is cloned so a subsequent mutation does not leak into the payload
+
+Total 373 (370 prior + 3 new). Typecheck clean. No D1 migration.
+
+### Behavior notes
+
+- **Single-shot finalize**: locking exactly one shot produces a single-shot movie. The estimate scales accordingly.
+- **All-locked finalize**: locking every shot produces the same output as the v0.42.0 unlocked-default behavior (no shots skipped). The wire payload differs (the field is sent) but the GPU side runs through the same `render_scenes_gen` generator either way.
+- **Locked-but-no-keyframe**: not possible by construction (the lock pin only appears on keyframes that exist). Defensive: the GPU's `orchestrator.finalize` re-checks via `_assemble_selected`'s validation pass and surfaces a clear `shot_id has no clip on disk` error if a clip went missing between lock and finalize.
+- **Re-finalize**: each finalize creates a NEW history row (v0.42.0 behavior). Re-finalizing with a different locked set produces a separate row with the new shot count.
+
+### Apply
+
+```
+npm run deploy
+```
+
+Then push vivijure-serverless 0.4.5 (Jenkins auto-builds on the version-bump commit subject) and bump the RunPod endpoint to the new tag.
+
 ## v0.44.0
 
 Live progress bar + elapsed + ETA on in-flight renders. The render-stage panel grows a `[##########____] 42% · elapsed 5m 12s · eta ~7m 30s` strip between the meta block and the cancel button. The bar fills from the GPU's existing `progress` field (a 0-1 float `render_control.render_fraction()` writes to `render_status.json`); ETA is a linear extrapolation from elapsed-so-far. A 1-second tick timer re-renders the elapsed + ETA text between SSE / poll updates so the counter advances smoothly instead of freezing for 3-8s at a time.

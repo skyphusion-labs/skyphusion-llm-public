@@ -2009,8 +2009,8 @@ function buildHistoryRow(r) {
     const summary = document.createElement("span");
     summary.className = "planner-history-finalize-summary";
     summary.textContent = lockedCount > 0
-      ? lockedCount + " of " + r.keyframes.length + " shots locked"
-      : r.keyframes.length + " keyframes ready; lock the shots you want to keep, then finalize";
+      ? lockedCount + " of " + r.keyframes.length + " shots locked (finalize will assemble these only)"
+      : r.keyframes.length + " keyframes ready; lock the shots you want in the movie, or finalize as-is to include all";
     finalizeRow.appendChild(summary);
     const finalizeBtn = document.createElement("button");
     finalizeBtn.type = "button";
@@ -2289,8 +2289,8 @@ async function toggleShotLock(row, shotId, btnEl) {
     if (summary && Array.isArray(row.keyframes)) {
       const lockedCount = Array.isArray(row.locked_shots) ? row.locked_shots.length : 0;
       summary.textContent = lockedCount > 0
-        ? lockedCount + " of " + row.keyframes.length + " shots locked"
-        : row.keyframes.length + " keyframes ready; lock the shots you want to keep, then finalize";
+        ? lockedCount + " of " + row.keyframes.length + " shots locked (finalize will assemble these only)"
+        : row.keyframes.length + " keyframes ready; lock the shots you want in the movie, or finalize as-is to include all";
     }
   }
 }
@@ -2303,16 +2303,28 @@ async function toggleShotLock(row, shotId, btnEl) {
 async function finalizeRender(row, btnEl) {
   const lockedCount = Array.isArray(row.locked_shots) ? row.locked_shots.length : 0;
   const kfCount = Array.isArray(row.keyframes) ? row.keyframes.length : 0;
+  // v0.45.0: lock state actually gates which shots make it into the
+  // silent MP4. When lockedCount > 0, the GPU restricts I2V + assembly
+  // to those shot_ids only; when 0, the GPU runs the full all-scenes
+  // flow. Confirm dialog reflects the actual behavior so the user
+  // does not end up with a 1-shot movie because they locked one shot
+  // by accident.
+  const processedCount = lockedCount > 0 ? lockedCount : kfCount;
+  const minMinutes = Math.max(5, Math.round(processedCount * 4));
+  const maxMinutes = Math.max(10, Math.round(processedCount * 6));
   const confirmMsg =
     "finalize this preview?\n\n"
-    + "this runs Wan I2V over " + kfCount + " keyframe"
-    + (kfCount === 1 ? "" : "s")
-    + " and assembles the silent MP4. "
-    + "approx 20 to 30 minutes on the final tier.\n\n"
     + (lockedCount > 0
-      ? "you have " + lockedCount + " locked shots; v0.42.0 still runs I2V "
-        + "on every shot regardless of lock state."
-      : "no shots are locked; v0.42.0 does not gate finalize on lock state.");
+      ? "this will assemble the silent MP4 from " + lockedCount + " of "
+        + kfCount + " keyframes (only the LOCKED shots). "
+      : "no shots are locked, so all " + kfCount
+        + " keyframes will be included. ")
+    + "Wan I2V + assembly takes roughly " + minMinutes + " to "
+    + maxMinutes + " minutes on the final tier.\n\n"
+    + (lockedCount > 0 && lockedCount < kfCount
+      ? "the unlocked shots (" + (kfCount - lockedCount)
+        + ") will NOT appear in the final movie. continue?"
+      : "continue?");
   if (!window.confirm(confirmMsg)) return;
 
   btnEl.disabled = true;

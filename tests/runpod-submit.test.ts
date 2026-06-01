@@ -301,6 +301,44 @@ describe("buildFinalizePayload (v0.42.0)", () => {
     });
     expect(out.input.action).toBe("finalize");
   });
+
+  it("includes process_shot_ids when set and non-empty (v0.45.0)", () => {
+    const out = buildFinalizePayload({
+      project: "cherry",
+      bundleKey: "bundles/cherry.tar.gz",
+      processShotIds: ["shot_01", "shot_03", "shot_05"],
+    });
+    expect(out.input.process_shot_ids).toEqual([
+      "shot_01",
+      "shot_03",
+      "shot_05",
+    ]);
+  });
+
+  it("omits process_shot_ids when empty or undefined (v0.45.0)", () => {
+    const out1 = buildFinalizePayload({
+      project: "cherry",
+      bundleKey: "bundles/cherry.tar.gz",
+    });
+    expect("process_shot_ids" in out1.input).toBe(false);
+    const out2 = buildFinalizePayload({
+      project: "cherry",
+      bundleKey: "bundles/cherry.tar.gz",
+      processShotIds: [],
+    });
+    expect("process_shot_ids" in out2.input).toBe(false);
+  });
+
+  it("clones process_shot_ids so subsequent mutations of the input do not bleed (v0.45.0)", () => {
+    const ids = ["shot_01", "shot_02"];
+    const out = buildFinalizePayload({
+      project: "cherry",
+      bundleKey: "bundles/cherry.tar.gz",
+      processShotIds: ids,
+    });
+    ids.push("shot_03");
+    expect(out.input.process_shot_ids).toEqual(["shot_01", "shot_02"]);
+  });
 });
 
 describe("URL builders", () => {

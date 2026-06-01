@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.65.0
+
+Training-set generator model picker. Pre-v0.65 the /cast training-image generator hardcoded `@cf/black-forest-labs/flux-2-dev` based on a stale comment claiming Dev was the only @cf multi-reference model in the catalog. Empirical test against `/api/chat` proved both FLUX 2 Klein variants (9B frontier + 4B faster) accept the attached portrait and identity-condition on it the same way Dev does, with a coherent likeness of the source character coming out. This cost us a fallback option during the smoke test when the FLUX 2 Dev gateway was returning 502s and the training set kept failing partway through. (nano-banana-pro and gpt-image-1.5 also accept the attachment but IGNORE it for identity, so they are NOT surfaced here even though /api/chat would happily return a generic young-person image from them.)
+
+### Frontend
+
+- `public/cast.html`: new `<select id="cast-training-model">` next to the training-set button. Hint updated to drop the stale "(FLUX 2 Dev)" parenthetical and bump the time estimate.
+- `public/cast.js`: `TRAINING_MODEL_ID` hardcode replaced with a `TRAINING_MODELS` list (Klein-9b default, then Klein-4b, then Dev). `ensureTrainingModelOptions()` populates the dropdown lazily on disclosure toggle (same pattern as the existing portrait-gen model picker). `generateTrainingSet` reads the selected model via `getSelectedTrainingModelId()`; missing or unrecognized value falls back to the default.
+
+### Why Klein-9b is the default
+
+In the post-v0.60 smoke test, FLUX-2-Dev hit a string of 502s for ~30 minutes that left two cast members with 7/10 and 2/10 refs (need ≥8). Klein-9b completed cleanly during the same window. Side-by-side identity coherence on the same prompt was comparable. The user can flip back to Dev whenever Dev is healthy.
+
+464/464 still passing; cast.js syntax-checks.
+
 ## v0.64.0
 
 Diversify the LoRA training-image generator's prompt set. Surfaced during the post-v0.60 smoke test of cast-member rendering: the pre-v0.64 `TRAINING_PROMPTS` were 8/10 "portrait, ... clean background" with only minor expression / lighting tweaks, so the 10 generated images came back as near-duplicates. The GPU-side LoRA quality gate scored both smoke-test cast members at ~0 SSIM (well below the 0.28 threshold), and SDXL collapsed the two characters into one fused face on the multi-character keyframe because neither LoRA's identity was anchored strongly enough to override the prompt's "two people" pull.

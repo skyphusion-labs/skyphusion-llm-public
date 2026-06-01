@@ -331,11 +331,28 @@
 
   // ---------- v0.47.0: portrait + training-set generation via /api/chat ----------
 
-  // FLUX 2 Dev is the only @cf multi-reference model in our catalog; the
-  // training-set generator hardcodes it because the reference-conditioning
-  // path is what keeps the 10 outputs consistent with the saved portrait.
-  // The portrait generator accepts any image-gen model.
-  const TRAINING_MODEL_ID = "@cf/black-forest-labs/flux-2-dev";
+  // v0.65.0: The training-set generator needs a model that identity-conditions
+  // on the saved portrait via the attachments path. Empirically (verified
+  // against /api/chat output) the multi-reference behavior is shared across
+  // the FLUX 2 family - both Dev AND the two Klein variants accept the
+  // attached portrait and produce output that locks the subject's identity
+  // (hair color, skin tone, eyes, clothing). nano-banana-pro and
+  // gpt-image-1.5 accept the attachment but IGNORE it for identity, so they
+  // are not surfaced here even though they would otherwise return an image.
+  //
+  // Pre-v0.65 this was hardcoded to flux-2-dev based on a stale catalog
+  // comment claiming Dev was the only multi-reference model. That cost us
+  // the ability to fall back to a Klein variant when the FLUX 2 Dev gateway
+  // was flaking with 502s, which is exactly what happened during the
+  // post-v0.60 smoke test. The picker defaults to Klein-9b (frontier
+  // quality, better gateway availability lately) but the user can switch
+  // back to Dev or down to the faster Klein-4b.
+  const TRAINING_MODELS = [
+    { id: "@cf/black-forest-labs/flux-2-klein-9b", label: "FLUX 2 Klein 9B (frontier, recommended)" },
+    { id: "@cf/black-forest-labs/flux-2-klein-4b", label: "FLUX 2 Klein 4B (faster)" },
+    { id: "@cf/black-forest-labs/flux-2-dev",       label: "FLUX 2 Dev (original multi-reference)" },
+  ];
+  const DEFAULT_TRAINING_MODEL_ID = TRAINING_MODELS[0].id;
   const FLUX2_REF_MAX_DIM = 512;
 
   // 10 training templates spanning orthogonal axes: framing (close-up,
@@ -419,6 +436,25 @@
     const data = await api("/api/models");
     imageModelsCache = (data.models || []).filter((m) => m.type === "image");
     return imageModelsCache;
+  }
+
+  // v0.65.0: populate the training-set model dropdown once at page load.
+  // Pure DOM init - no network fetch needed; the list is static.
+  function ensureTrainingModelOptions() {
+    const sel = $("#cast-training-model");
+    if (!sel || sel.options.length > 0) return;
+    for (const m of TRAINING_MODELS) {
+      const opt = document.createElement("option");
+      opt.value = m.id;
+      opt.textContent = m.label;
+      sel.appendChild(opt);
+    }
+    sel.value = DEFAULT_TRAINING_MODEL_ID;
+  }
+
+  function getSelectedTrainingModelId() {
+    const sel = $("#cast-training-model");
+    return (sel && sel.value) || DEFAULT_TRAINING_MODEL_ID;
   }
 
   async function ensurePortraitGenModelOptions() {
@@ -608,7 +644,7 @@
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            model: TRAINING_MODEL_ID,
+            model: getSelectedTrainingModelId(),
             user_input: promptText,
             attachments: [{ type: "image", mime: "image/png", filename: "portrait.png", data: portraitDataUrl }],
           }),
@@ -684,6 +720,17 @@
     if (portraitDetails) {
       portraitDetails.addEventListener("toggle", () => {
         if (portraitDetails.open) ensurePortraitGenModelOptions();
+      }, { once: false });
+    }
+
+    // v0.65.0: populate the training-set model dropdown the same way (lazy
+    // on the disclosure toggle). The list is static so this is cheap, but
+    // doing it on-demand keeps page-load symmetrical with portrait gen.
+    const trainingDetails = $("#cast-training-block");
+    if (trainingDetails) {
+      ensureTrainingModelOptions();
+      trainingDetails.addEventListener("toggle", () => {
+        if (trainingDetails.open) ensureTrainingModelOptions();
       }, { once: false });
     }
   }

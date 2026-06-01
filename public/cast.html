@@ -100,8 +100,16 @@
 
         <details id="cast-training-block" class="cast-gen-block">
           <summary>generate a 10-image training set</summary>
-          <p class="cast-section-hint">uses the saved portrait as a reference plus 10 standard pose / framing prompts (FLUX 2 Dev). generates one image at a time so we do not rate-limit; each result auto-saves as a ref. takes about 2-4 minutes total.</p>
+          <p class="cast-section-hint">uses the saved portrait as a reference plus 10 diversified pose / framing / lighting prompts. generates one image at a time so we do not rate-limit; each result auto-saves as a ref. takes about 2-5 minutes total.</p>
           <div id="cast-training-disabled" class="cast-gen-status">save a portrait first to enable this.</div>
+          <!-- v0.65.0: model picker. Klein-9b is the default after empirical
+               verification that it identity-conditions on the reference just
+               like Dev does, and the gateway has had better availability for
+               it during heavy load. -->
+          <label class="cast-gen-field">
+            <span>generator model</span>
+            <select id="cast-training-model"></select>
+          </label>
           <div class="cast-gen-actions">
             <button id="cast-training-btn" type="button" class="cast-upload-btn" disabled>generate 10 training images</button>
             <span id="cast-training-status" class="cast-gen-status"></span>

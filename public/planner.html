@@ -101,6 +101,24 @@
       </div>
     </section>
 
+    <!-- v0.50.0: iterative refinement chat. Lives between plan output and
+         the scene editor. Each turn sends {model, storyboard, message} to
+         /api/storyboard/refine and replaces planState.storyboard with the
+         returned draft. Stateless: chat history is for the user's display,
+         not replayed to the model. Hidden until a plan resolves. -->
+    <section id="planner-refine" class="planner-stage" hidden>
+      <header class="planner-stage-header">
+        <h2 class="planner-stage-title">1a. refine via chat</h2>
+        <span id="planner-refine-status" class="planner-status"></span>
+      </header>
+      <p class="planner-stage-hint">type instructions ("add a fight scene before the ending", "make scene 2 darker", "shorten the opening"). each turn rewrites the storyboard and refreshes the editor + YAML below.</p>
+      <ul id="planner-refine-turns" class="planner-refine-turns"></ul>
+      <div class="planner-refine-input-row">
+        <textarea id="planner-refine-input" class="planner-refine-input" rows="2" placeholder="describe the change..."></textarea>
+        <button id="planner-refine-send" type="button" class="planner-primary">send</button>
+      </div>
+    </section>
+
     <!-- v0.49.0: per-scene editor. Lives between plan output and bundle.
          Mutates planState.storyboard.scenes in-place; debounce-refreshes
          the YAML preview via POST /api/storyboard/yaml. Hidden until a

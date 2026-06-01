@@ -31,6 +31,8 @@ import {
   type PlannerCharacter,
   buildPlanningSystemPrompt,
   buildPlanningUserMessage,
+  buildRefinementSystemPrompt,
+  buildRefinementUserMessage,
   stripJsonFences,
 } from "./planner-prompt";
 
@@ -151,6 +153,131 @@ export async function planStoryboard(
       errors: [
         `model output was not valid JSON: ${message}`,
         `raw output starts with: ${json.slice(0, 200)}`,
+      ],
+      raw: completion,
+      provider,
+      model: args.model,
+      logId,
+    };
+  }
+
+  const validation = validateStoryboard(parsed);
+  if (!validation.ok) {
+    return {
+      ok: false,
+      errors: validation.errors,
+      raw: completion,
+      provider,
+      model: args.model,
+      logId,
+    };
+  }
+
+  return {
+    ok: true,
+    storyboard: validation.value,
+    raw: completion,
+    provider,
+    model: args.model,
+    logId,
+  };
+}
+
+// ---------- Refinement dispatcher (v0.50.0) ----------
+//
+// Mirrors planStoryboard's plumbing (provider dispatch, JSON parse, validation)
+// but builds a different prompt: the system message tells the model to apply
+// ONE delta and preserve everything else, and the user message ships the
+// current storyboard JSON + the new instruction.
+
+export interface RefineStoryboardArgs {
+  storyboard: unknown;
+  message: string;
+  model: string;
+}
+
+export async function refineStoryboard(
+  env: Env,
+  args: RefineStoryboardArgs,
+): Promise<PlanStoryboardResult> {
+  const modelEntry = findPlanningModel(args.model);
+  if (!modelEntry) {
+    return {
+      ok: false,
+      errors: [`model "${args.model}" is not in the planning catalog`],
+      raw: null,
+      provider: null,
+      model: args.model,
+      logId: null,
+    };
+  }
+
+  const provider = plannerProviderFor(modelEntry);
+  const systemPrompt = buildRefinementSystemPrompt();
+  const userMessage = buildRefinementUserMessage(args.storyboard, args.message);
+
+  let result: unknown;
+  let logId: string | null = null;
+
+  try {
+    if (provider === "anthropic") {
+      const messages = [{ role: "user", content: userMessage }];
+      const r = await callAnthropic(env, modelEntry, systemPrompt, messages);
+      result = r.raw;
+      logId = r.logId;
+    } else if (provider === "xai") {
+      const messages = [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMessage },
+      ];
+      const r = await callXai(env, modelEntry, messages);
+      result = r.raw;
+      logId = r.logId;
+    } else {
+      const messages = [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMessage },
+      ];
+      result = await aiRun(env, modelEntry.id, { messages });
+      logId = aiLogId(env);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      ok: false,
+      errors: [`provider call failed: ${message}`],
+      raw: null,
+      provider,
+      model: args.model,
+      logId,
+    };
+  }
+
+  const providerFailure = detectProviderFailure(result);
+  if (providerFailure) {
+    return {
+      ok: false,
+      errors: [`model execution failed: ${providerFailure}`],
+      raw: null,
+      provider,
+      model: args.model,
+      logId,
+    };
+  }
+
+  const completion = extractOutput(result);
+  const jsonStr = stripJsonFences(completion);
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonStr);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      ok: false,
+      errors: [
+        `model output was not valid JSON: ${message}`,
+        `raw output starts with: ${jsonStr.slice(0, 200)}`,
       ],
       raw: completion,
       provider,

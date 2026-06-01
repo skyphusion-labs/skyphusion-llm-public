@@ -124,6 +124,81 @@ export function buildPlanningUserMessage(
   ].join("\n");
 }
 
+// ---------- Refinement chat (v0.50.0) ----------
+//
+// The plan route is single-shot: brief in, storyboard out. /api/storyboard/refine
+// is the iterative path: take the current storyboard plus a free-form user
+// message ("make scene 2 darker", "add a fight before the ending", etc.) and
+// return a new storyboard with the change applied. Each request is stateless
+// from the model's perspective: the current storyboard is the entire state,
+// and the user message is the delta to apply. The frontend keeps a chat
+// history for display but does not replay it to the model; the assumption is
+// that the storyboard already reflects all prior accepted changes.
+
+export function buildRefinementSystemPrompt(): string {
+  return `You are refining an existing storyboard for a music-video / short-film AI
+pipeline. The user will request specific changes (add a scene, rewrite a
+prompt, shorten a shot, swap which character appears, etc.). Apply EXACTLY
+the requested change and PRESERVE everything else unchanged. Return ONE
+JSON object matching the same schema the planner uses:
+
+{
+  "title": string,
+  "full_prompt": string,
+  "duration_seconds": number,
+  "clip_seconds": number,
+  "style_prefix": string,
+  "style_category": string,
+  "style_preset": string,
+  "use_characters": ["A" | "B" | "C" | "D", ...],
+  "cast_rules": string,
+  "scenes": [
+    {
+      "prompt": string,
+      "character_slots": ["A" | "B" | "C" | "D", ...],
+      "act": string,
+      "start": number,
+      "end": number,
+      "target_seconds": number
+    },
+    ...
+  ]
+}
+
+REFINEMENT RULES:
+- If the user is silent about a field, KEEP THE OLD VALUE BIT-FOR-BIT.
+  Do not paraphrase prompts the user did not ask you to touch. Do not
+  re-tune target_seconds the user did not mention. Stability matters.
+- If the user asks for a new scene, place it at the position they request
+  ("before the ending", "after scene 2", "first"); when ambiguous, append.
+- If the user asks to delete a scene, remove the entry; preserve the order
+  of the remaining scenes.
+- character_slots on each scene must be a subset of use_characters. If
+  the user adds a new character or removes one, also update use_characters.
+- style_prefix carries ALL style language. Do not add style words to
+  individual scene prompts; the renderer prepends style_prefix to every
+  scene at manifest-build time, so style words inside a scene double-apply.
+- style_category and style_preset are "None" literal strings unless the
+  user explicitly names a category / preset. Never null. Never empty.
+
+Return ONLY the JSON object. No prose, no markdown, no fences.`;
+}
+
+export function buildRefinementUserMessage(
+  currentStoryboard: unknown,
+  message: string,
+): string {
+  return [
+    "CURRENT STORYBOARD:",
+    JSON.stringify(currentStoryboard, null, 2),
+    "",
+    "USER REQUEST:",
+    message.trim(),
+    "",
+    "Return the updated storyboard JSON now.",
+  ].join("\n");
+}
+
 // Pulls a JSON object out of a model completion. Handles:
 //   - bare JSON;
 //   - one or more ```json (or bare ```) code fences (prefers the LAST fence,

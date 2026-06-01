@@ -196,3 +196,45 @@ describe("storyboard yaml route helpers", () => {
     expect(result.ok).toBe(false);
   });
 });
+
+// v0.50.0: refinement prompt builders. Test the pure helpers so changes
+// to the prompt language are noticed at PR-review time.
+import { buildRefinementSystemPrompt, buildRefinementUserMessage } from "../src/planner-prompt";
+
+describe("refinement prompt builders", () => {
+  it("system prompt includes the preserve-unchanged rule", () => {
+    const sys = buildRefinementSystemPrompt();
+    expect(sys.toLowerCase()).toContain("preserve");
+    expect(sys.toLowerCase()).toMatch(/keep the old value|do not paraphrase/);
+    // Same schema as the planning system prompt, so the JSON shape rules
+    // are still in here.
+    expect(sys).toContain('"title": string');
+    expect(sys).toContain('"scenes":');
+  });
+
+  it("system prompt forbids prose, markdown, and code fences", () => {
+    const sys = buildRefinementSystemPrompt();
+    expect(sys.toLowerCase()).toContain("no prose");
+    expect(sys.toLowerCase()).toContain("no markdown");
+    expect(sys.toLowerCase()).toContain("no fences");
+  });
+
+  it("user message includes the current storyboard JSON + the user request", () => {
+    const sb = { title: "test", scenes: [{ prompt: "wide" }] };
+    const msg = "make scene 1 closer";
+    const built = buildRefinementUserMessage(sb, msg);
+    expect(built).toContain("CURRENT STORYBOARD:");
+    expect(built).toContain('"title": "test"');
+    expect(built).toContain('"prompt": "wide"');
+    expect(built).toContain("USER REQUEST:");
+    expect(built).toContain(msg);
+    expect(built).toContain("Return the updated storyboard JSON now.");
+  });
+
+  it("user message trims leading/trailing whitespace on the user request", () => {
+    const built = buildRefinementUserMessage({}, "   \n  add a fight  \n  ");
+    expect(built).toContain("add a fight");
+    // Should not contain the surrounding whitespace verbatim
+    expect(built).not.toMatch(/USER REQUEST:\n\s+\n/);
+  });
+});

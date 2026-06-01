@@ -37,7 +37,7 @@ import { parseDiscordExport, chunkDiscordMessages } from "./discord";
 import { callAnthropic, callAnthropicStream } from "./providers/anthropic";
 import { callXai, callXaiStream } from "./providers/xai";
 import { callBedrockNova, callBedrockNovaStream, callBedrockPegasus } from "./providers/bedrock";
-import { planStoryboard, type PlannerCharacter } from "./planner";
+import { planStoryboard, refineStoryboard, type PlannerCharacter } from "./planner";
 import { findPlanningModel, PLANNING_MODELS } from "./planner-catalog";
 import { serializeStoryboardYaml } from "./planner-yaml";
 import type { SlotId } from "./storyboard-validate";
@@ -366,6 +366,13 @@ export default {
     // uses. Pure compute, no D1 or R2 access.
     if (url.pathname === "/api/storyboard/yaml" && request.method === "POST") {
       return handleStoryboardYaml(request);
+    }
+    // v0.50.0: iterative refinement on a planned storyboard. Stateless from
+    // the model's view: each request ships {model, storyboard, message} and
+    // returns a new validated storyboard. The chat history is a UI concern
+    // on the frontend, not replayed to the model.
+    if (url.pathname === "/api/storyboard/refine" && request.method === "POST") {
+      return handleStoryboardRefine(request, env);
     }
     // v0.31.0: stage one character reference image. Returns the R2 key so
     // multiple images can be referenced from /api/storyboard/bundle without
@@ -767,6 +774,85 @@ async function handleStoryboardPlan(request: Request, env: Env): Promise<Respons
 // extension. Reuses the existing r2Put helper so the staged object shows up
 // in R2 under `in/<uuid>.<ext>` with the user's email on customMetadata, and
 // is deletable via the same artifact-cleanup paths that already exist.
+
+// ---------- /api/storyboard/refine (v0.50.0) ----------
+//
+// Iterative refinement on a planned storyboard. Body: {model, storyboard,
+// message}. Returns the same envelope shape as /api/storyboard/plan so
+// the frontend can reuse its existing error / re-prompt UI handling.
+// Stateless: the chat history is a UI concern on the frontend (turns are
+// shown to the user as a log) and is NOT replayed to the model; the
+// current storyboard already reflects all accepted prior changes.
+
+interface StoryboardRefineRequest {
+  model?: unknown;
+  storyboard?: unknown;
+  message?: unknown;
+}
+
+async function handleStoryboardRefine(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+
+  let raw: StoryboardRefineRequest;
+  try {
+    raw = await request.json<StoryboardRefineRequest>();
+  } catch {
+    return json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  if (typeof raw.model !== "string" || raw.model.trim().length === 0) {
+    return json({ error: "model is required (non-empty string)" }, { status: 400 });
+  }
+  if (typeof raw.message !== "string" || raw.message.trim().length === 0) {
+    return json({ error: "message is required (non-empty string)" }, { status: 400 });
+  }
+  if (raw.storyboard === undefined || raw.storyboard === null) {
+    return json({ error: "storyboard is required (the current draft to refine)" }, { status: 400 });
+  }
+  if (!findPlanningModel(raw.model)) {
+    return json(
+      {
+        error: `model "${raw.model}" is not in the planning catalog`,
+        catalog: PLANNING_MODELS.map((m) => m.id),
+      },
+      { status: 400 },
+    );
+  }
+
+  const result = await refineStoryboard(env, {
+    storyboard: raw.storyboard,
+    message: raw.message,
+    model: raw.model,
+  });
+
+  if (!result.ok) {
+    const upstreamFailure = result.errors.some((e) =>
+      /^(provider call failed|model execution failed)/.test(e),
+    );
+    return json(
+      {
+        ok: false,
+        errors: result.errors,
+        raw: result.raw,
+        provider: result.provider,
+        model: result.model,
+        logId: result.logId,
+        user: userEmail,
+      },
+      { status: upstreamFailure ? 502 : 200 },
+    );
+  }
+
+  return json({
+    ok: true,
+    storyboard: result.storyboard,
+    yaml: serializeStoryboardYaml(result.storyboard),
+    provider: result.provider,
+    model: result.model,
+    logId: result.logId,
+    user: userEmail,
+  });
+}
 
 // ---------- /api/storyboard/yaml (v0.49.0) ----------
 //

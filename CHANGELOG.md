@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.50.0
+
+Iterative refinement chat on a planned storyboard. The plan route is single-shot: brief in, storyboard out. After v0.50.0 the user can keep talking to the model ("add a fight before the ending", "make scene 2 darker", "swap who appears in scene 4") and each turn rewrites the in-flight storyboard. Closes the legacy `/api/plan/chat/*` gap with a stateless backend variant: the chat history is a UI concern (shown to the user as a turn log) and is NOT replayed to the model. The current storyboard already reflects every accepted change, so the model only needs the current JSON + the latest user message to compute the next state.
+
+### Backend
+
+- `src/planner-prompt.ts`: two new pure helpers, `buildRefinementSystemPrompt()` and `buildRefinementUserMessage(storyboard, message)`. The system prompt repeats the storyboard schema (same one the planning prompt uses) and adds a strict "preserve unchanged fields bit-for-bit" rule so the model does not silently paraphrase prompts the user did not touch.
+- `src/planner.ts`: `refineStoryboard(env, args)` mirrors `planStoryboard`'s provider dispatch (Anthropic / xAI / Workers AI), JSON-fence strip, parse, and `validateStoryboard` flow; returns the same `PlanStoryboardResult` shape so the route handler reuses the existing error envelope.
+- `src/index.ts`: `POST /api/storyboard/refine`. Body `{model, storyboard, message}`. Validates each field at the route boundary (model in catalog, message non-empty, storyboard present); rejects 400 on missing fields, 502 on upstream failure, 200 with `ok:false` on a validator / parse miss, 200 with `ok:true, storyboard, yaml` on success. Identical envelope shape to `/api/storyboard/plan`.
+
+### Frontend (`#planner-refine`)
+
+New section between the plan output panes and the scene editor. Hidden until a plan resolves. Layout: a scrollable turn list (user turns highlighted with the accent border, assistant turns dimmed) + a 2-row textarea + a send button. Cmd/Ctrl+Enter submits.
+
+Each turn:
+1. Optimistically append the user message to the log so the UI does not feel frozen during the model call.
+2. POST `/api/storyboard/refine` with the current `planState.storyboard` + the message.
+3. On success, replace `planState.storyboard` with the returned draft, refresh the JSON + YAML panes, re-render the scene editor, append an assistant turn (`"updated storyboard (N scenes)"`) to the log.
+4. On validator / parse failure, append the error list as an assistant turn so the user can correct the request without losing the conversation.
+
+A fresh plan resets the chat log; the conversation is per-storyboard. Both `refineHistory` and the v0.49.0 `originalStoryboard` snapshot are saved in the localStorage stash so a tab close keeps the editing context.
+
+### Tests
+
+4 new vitest tests for the refinement prompt builders: system prompt contains the preserve-unchanged rule + the schema + no-prose/markdown/fences guardrails; user message includes the storyboard JSON + the trimmed user request + the close-out instruction. 397/397 passing.
+
+### What is NOT in this PR
+
+- D1-backed conversation persistence per project (the chat log lives in localStorage; it dies on storage clear and is not shared across browsers).
+- Conversational history replay to the model (each turn is stateless; the model sees only the current storyboard + new message).
+- Streaming responses (the route is a single POST/response; UI shows a "refining..." status for the 5-15s call).
+- "Undo last turn" affordance (the scene editor's "discard all edits" already restores the original plan output; per-turn undo would need a snapshot stack).
+
 ## v0.49.0
 
 Per-scene editor between plan output and bundle. After the planner returns a validated storyboard, the user can now tweak individual scenes (prompt text, target seconds, per-shot character slots, act label) and delete unwanted shots before the bundle assembles. Edits flow into the bundle automatically since the bundle POST already uses `planState.storyboard`; the YAML preview pane refreshes via a new `/api/storyboard/yaml` route so the user sees the canonical wire format after each edit.

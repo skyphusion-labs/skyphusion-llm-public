@@ -39,6 +39,25 @@ describe("PLANNING_MODELS", () => {
     const ids = PLANNING_MODELS.map((m) => m.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
+
+  // v0.89.0: Conrad asked specifically for Kimi, Llama 4 Scout, Gemma 4,
+  // and Qwen in the planner picker. Pin them as a regression net so a
+  // future curation pass cannot silently drop any of them.
+  it("includes Kimi K2.6", () => {
+    expect(PLANNING_MODELS.some((m) => m.id === "@cf/moonshotai/kimi-k2.6")).toBe(true);
+  });
+
+  it("includes Llama 4 Scout", () => {
+    expect(PLANNING_MODELS.some((m) => m.id === "@cf/meta/llama-4-scout-17b-16e-instruct")).toBe(true);
+  });
+
+  it("includes Gemma 4 26B", () => {
+    expect(PLANNING_MODELS.some((m) => m.id === "@cf/google/gemma-4-26b-a4b-it")).toBe(true);
+  });
+
+  it("includes Qwen3 30B MoE", () => {
+    expect(PLANNING_MODELS.some((m) => m.id === "@cf/qwen/qwen3-30b-a3b-fp8")).toBe(true);
+  });
 });
 
 describe("findPlanningModel", () => {

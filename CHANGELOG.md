@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.99.0
+
+Synced the catalog with the live Workers AI list: fixed two dead model IDs, added SEA-LION chat and Deepgram Nova-3 STT. (This is the catalog/STT work originally slated for 0.96.0; it was lost from git in a concurrent-session collision and is re-landed here. The 0.96.0-0.98.0 span was consumed by the parallel rembg Container work.)
+
+### What ships
+
+- **Fixed dead IDs** (verified absent from the live `wrangler ai models` catalog; old paths 404):
+  - `@cf/myshell/melotts` -> `@cf/myshell-ai/melotts` (TTS)
+  - `@cf/deepseek/deepseek-r1-distill-qwen-32b` -> `@cf/deepseek-ai/deepseek-r1-distill-qwen-32b` (chat)
+- **Added chat**: `@cf/aisingapore/gemma-sea-lion-v4-27b-it` (SEA-LION v4 27B, Southeast Asian languages). Rides the generic `aiRun` chat path.
+- **Added STT**: `@cf/deepgram/nova-3`. The `runStt` Deepgram branch (already on main from v0.97.0) sends `{ audio: { body: <ReadableStream>, contentType } }` and reads the native Deepgram `results.channels[].alternatives[].transcript`; it bypasses AI Gateway (Gateway rejects ReadableStream inputs) so there's no `cf-aig-log-id`. Verified live by round-tripping Aura-2 TTS through nova-3.
+- `@cf/deepgram/flux` is intentionally excluded: websocket-only (error 8006 over the request/response binding).
+
+### Not yet added
+
+SDXL (`@cf/stabilityai/stable-diffusion-xl-base-1.0`) and LLaVA 1.5 (`@cf/llava-hf/llava-1.5-7b-hf`) are requested but pending live contract verification (SDXL output shape vs FLUX; LLaVA's image-to-text input contract).
+
 ## v0.98.0
 
 Rolled back the v0.97.0 cast-portrait container integration. The bg-removal step moves pod-side to `vivijure-serverless 0.4.56`; portrait uploads pass through to R2 raw again.

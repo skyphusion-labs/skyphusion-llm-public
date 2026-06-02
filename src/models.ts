@@ -104,10 +104,11 @@ export const MODELS: ModelEntry[] = [
   { id: "@cf/qwen/qwq-32b",                             label: "QwQ 32B (reasoning)",          group: "Chat \u00b7 Qwen",     type: "chat", capabilities: [], streaming: true },
   { id: "@cf/qwen/qwen2.5-coder-32b-instruct",          label: "Qwen2.5 Coder 32B",            group: "Chat \u00b7 Qwen",     type: "chat", capabilities: [], streaming: true },
   // Other
-  { id: "@cf/deepseek/deepseek-r1-distill-qwen-32b",    label: "DeepSeek R1 32B",              group: "Chat \u00b7 Other",    type: "chat", capabilities: [], streaming: true },
+  { id: "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b", label: "DeepSeek R1 32B",              group: "Chat \u00b7 Other",    type: "chat", capabilities: [], streaming: true },
   { id: "@cf/mistralai/mistral-small-3.1-24b-instruct", label: "Mistral Small 3.1 (vision)",   group: "Chat \u00b7 Other",    type: "chat", capabilities: ["vision"], streaming: true },
   { id: "@cf/zai-org/glm-4.7-flash",                    label: "GLM-4.7 Flash (Z.AI, 100+ lang)", group: "Chat \u00b7 Other", type: "chat", capabilities: [], streaming: true },
   { id: "@cf/nvidia/nemotron-3-120b-a12b",              label: "Nemotron 3 120B (NVIDIA, agentic)", group: "Chat \u00b7 Other", type: "chat", capabilities: [], streaming: true },
+  { id: "@cf/aisingapore/gemma-sea-lion-v4-27b-it",     label: "SEA-LION v4 27B (SE Asian langs)", group: "Chat \u00b7 Other", type: "chat", capabilities: [], streaming: true },
   // Gemini proxied via Unified Billing (v0.21.3; streaming v0.21.4). NOT
   // OpenAI-shaped: native contents/candidates format, transformed by
   // src/providers/google.ts. Streaming via callGeminiStream +
@@ -145,14 +146,18 @@ export const MODELS: ModelEntry[] = [
   // ---- Text-to-speech ----
   { id: "@cf/deepgram/aura-2-en",                       label: "Aura-2 English (Deepgram)",    group: "TTS",                  type: "tts",   capabilities: [] },
   { id: "@cf/deepgram/aura-2-es",                       label: "Aura-2 Spanish (Deepgram)",    group: "TTS",                  type: "tts",   capabilities: [] },
-  { id: "@cf/myshell/melotts",                          label: "MeloTTS (multilingual)",       group: "TTS",                  type: "tts",   capabilities: [] },
+  { id: "@cf/myshell-ai/melotts",                       label: "MeloTTS (multilingual)",       group: "TTS",                  type: "tts",   capabilities: [] },
 
-  // ---- Speech-to-text (Whisper) ----
+  // ---- Speech-to-text ----
   // Attach an audio file, pick a model, get the transcript. Audio file is
-  // required; everything else (prompt, system prompt) is ignored.
+  // required; everything else (prompt, system prompt) is ignored. Whisper and
+  // Deepgram have different input/output contracts; runStt adapts per model.
   { id: "@cf/openai/whisper-large-v3-turbo",            label: "Whisper Large v3 Turbo (best)", group: "Speech-to-text",      type: "stt",   capabilities: [] },
   { id: "@cf/openai/whisper",                           label: "Whisper (general purpose)",    group: "Speech-to-text",       type: "stt",   capabilities: [] },
   { id: "@cf/openai/whisper-tiny-en",                   label: "Whisper Tiny EN (fast, beta)", group: "Speech-to-text",       type: "stt",   capabilities: [] },
+  { id: "@cf/deepgram/nova-3",                          label: "Deepgram Nova-3 (accurate)",   group: "Speech-to-text",       type: "stt",   capabilities: [] },
+  // Note: @cf/deepgram/flux is websocket-only (error 8006 over the
+  // request/response binding), so it is not offered on the runStt path.
 
   // ---- Music generation (Unified Billing only) ----
   { id: "minimax/music-2.6",                            label: "MiniMax Music 2.6 (needs CF credits)", group: "Music Gen",     type: "music", capabilities: [], provider: "minimax" },

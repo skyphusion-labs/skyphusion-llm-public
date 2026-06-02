@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.83.0
+
+Worker-side fix for the v16-v18 multi-character regression. v15 produced a clean two-subject keyframe (Aria left, Marcus right, distinct identities, no seam); v16-v18 all regressed into a single merged figure regardless of payload tuning, including v18 which used the v15-baseline payload + zero overrides. Bisect surfaced vivijure-serverless 0.4.46 wired `prompt_engine.negative_for_style` into the regional path's `negative_prompt`, and the config.yaml default `image_prompting.negative_extra` contains `"duplicate person, multiple people, multiple heads, character sheet, reference sheet, multiple views, split image, panels, collage"` - SDXL anti-multi-subject negatives on a path whose entire purpose is rendering multiple people in one frame.
+
+### Why Worker, not pod
+
+The immutable-image directive says rendering-behavior fixes ship via Worker payload, not pod code. Per `feedback-no-config-changes-on-image` memory. The two recent violations of this rule (0.4.47 default change, 0.4.50 attempt) are exactly the friction the memory now exists to prevent.
+
+### What ships
+
+`public/planner.js`: after assembling the render payload, when `multiCharacterOverrides.engine === "regional"`, inject `imagePromptingOverrides.negative_extra = ""` and `imagePromptingOverrides.anatomy_guard = false` (only when the user hasn't already typed something for those fields). On the wire this neutralizes the regional path's `negative_for_style` call to an effectively-empty negative, matching v15 behavior. The pod stays at 0.4.49; no rebuild needed.
+
+User can type a custom `negative_extra` or set `anatomy_guard` explicitly in the image-prompting advanced block to override the injected default.
+
+### Tests
+
+473/473 still passing, type-check clean.
+
 ## v0.82.0
 
 Phase 13 (the last major config pull). Wire types + normalizers for the prompt-template constants that vivijure-serverless 0.4.49 just made payload-routable, plus two small extensions on existing override blocks.

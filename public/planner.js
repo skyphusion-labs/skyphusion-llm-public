@@ -3023,6 +3023,30 @@ async function submitRender() {
   if (contOverrides) reqBody.continuityOverrides = contOverrides;
   const ipOverrides = buildImagePromptingOverrides();
   if (ipOverrides) reqBody.imagePromptingOverrides = ipOverrides;
+  // v0.83.0: regional path needs an empty negative_extra + disabled
+  // anatomy_guard so SDXL doesn't see "duplicate person, multiple
+  // people, multiple heads, split image, panels, collage" - the
+  // config.yaml default image_prompting.negative_extra contains
+  // anti-multi-subject phrases that actively suppress the second
+  // identity on a path whose entire purpose is rendering multiple
+  // people in one frame. v18 smoke against 0.4.49 reproduced the
+  // collapse with the v15 baseline payload and zero overrides;
+  // vivijure-serverless 0.4.46 wired negative_for_style into the
+  // regional path with no thought for the multi-subject case.
+  //
+  // Worker handles the fix per the immutable-image directive
+  // (project-immutable-image-config-from-worker memory + the hard-
+  // rule feedback-no-config-changes-on-image memory): we inject the
+  // values the regional path needs to behave like v15. User can
+  // type into the image-prompting advanced block to override either
+  // injected value back to something else.
+  if (reqBody.multiCharacterOverrides
+      && reqBody.multiCharacterOverrides.engine === "regional") {
+    const ip = reqBody.imagePromptingOverrides || {};
+    if (ip.negative_extra === undefined) ip.negative_extra = "";
+    if (ip.anatomy_guard === undefined) ip.anatomy_guard = false;
+    reqBody.imagePromptingOverrides = ip;
+  }
   const cgOverrides = buildCharacterGenerationOverrides();
   if (cgOverrides) reqBody.characterGenerationOverrides = cgOverrides;
   // v0.74.0: face_lock + instantid.

@@ -31,7 +31,8 @@ export interface Env {
   // instance invokes env.AI.run (long-running), downloads the artifact,
   // uploads to R2, and finalizes the D1 row across retryable steps.
   LONGRUN: Workflow;
-  ANTHROPIC_API_KEY?: string; // optional; preferred is to store in AI Gateway dashboard
+  // v0.93.0: Anthropic moved off BYOK to Cloudflare Unified Billing, so there
+  // is no longer an ANTHROPIC_API_KEY; it authorizes via CF_AIG_TOKEN below.
   XAI_API_KEY?: string;       // optional; preferred is to store in AI Gateway dashboard
   // v0.22.1: OpenAI BYOK, used ONLY for direct image gen (transparent PNG).
   // OpenAI chat/image otherwise route through the Unified Billing proxy, but the
@@ -45,7 +46,9 @@ export interface Env {
   AWS_SECRET_ACCESS_KEY?: string;
   AWS_REGION?: string;
   AWS_REGION_PEGASUS?: string; // optional override for Pegasus calls
-  CF_AIG_TOKEN?: string;      // only needed if gateway has Authenticated Gateway enabled
+  // Required for Anthropic Unified Billing (v0.93.0) and for any gateway with
+  // Authenticated Gateway enabled. Bearer token sent as cf-aig-authorization.
+  CF_AIG_TOKEN?: string;
   // v0.17.0: Tavily Search API key for the optional web-search retrieval source.
   // Optional: when unset, web search uses Wikipedia only (no key required).
   TAVILY_API_KEY?: string;

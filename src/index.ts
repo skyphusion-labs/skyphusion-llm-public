@@ -783,8 +783,8 @@ async function handleChatStream(request: Request, env: Env, ctx: ExecutionContex
 
 // ---------- /api/storyboard/plan (v0.29.0) ----------
 //
-// Drafts a storyboard JSON via the selected planning model (Anthropic BYOK,
-// xAI BYOK, or a Workers AI text model from PLANNING_MODELS), validates it
+// Drafts a storyboard JSON via the selected planning model (Anthropic via
+// Unified Billing, xAI BYOK, or a Workers AI text model from PLANNING_MODELS), validates it
 // against the storyboard-validate schema, and returns the validated JSON
 // plus a bundle-ready storyboard.yaml string. Does NOT submit anything to
 // RunPod or assemble a bundle; the caller decides whether to re-prompt the

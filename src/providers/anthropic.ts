@@ -1,13 +1,16 @@
-// Anthropic BYOK chat dispatch (v0.19.0).
+// Anthropic Unified Billing chat dispatch (v0.93.0).
 //
 // Extracted from src/index.ts. Owns the request builder, message transform,
 // non-streaming caller, and streaming caller for Anthropic Messages API
 // through Cloudflare AI Gateway.
 //
-// Auth strategy: stored-keys-first. If env.ANTHROPIC_API_KEY is set, we send
-// it as x-api-key (inline auth, takes priority at the gateway). If it isn't,
-// we omit the header and let the gateway inject the key you've stored in
-// dashboard > AI Gateway > Provider Keys. Either path works.
+// Auth strategy: Unified Billing (keyless). We hit the AI Gateway anthropic
+// endpoint with cf-aig-authorization: Bearer <CF_AIG_TOKEN> and send NO
+// provider key. Cloudflare uses its own upstream credentials and rolls the
+// cost into the Cloudflare bill. An x-api-key would flip the gateway back to
+// BYOK / pass-through billing, so we deliberately never set one. CF_AIG_TOKEN
+// is therefore required for this provider (was BYOK via x-api-key before
+// v0.93.0).
 //
 // The message format coming in is OpenAI-style (role + content array with
 // text / image_url blocks). We transform to Anthropic's Messages API shape:
@@ -109,8 +112,14 @@ async function prepareAnthropicRequest(
     "content-type": "application/json",
   };
   if (opts.stream) headers["accept"] = "text/event-stream";
-  if (env.ANTHROPIC_API_KEY) headers["x-api-key"] = env.ANTHROPIC_API_KEY;
-  if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
+  // Unified Billing: keyless. Never send x-api-key (that would make the
+  // gateway bill BYOK/pass-through); authorize with the gateway token only.
+  if (!env.CF_AIG_TOKEN) {
+    throw new Error(
+      "Anthropic runs on Cloudflare Unified Billing and requires CF_AIG_TOKEN; set it with `npx wrangler secret put CF_AIG_TOKEN`.",
+    );
+  }
+  headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
 
   return {
     url: `${baseUrl}/v1/messages`,

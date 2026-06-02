@@ -75,11 +75,13 @@ enabled = true
 #   GATEWAY_ID=your-gateway-slug
 #
 # Other worker secrets (also set via `npx wrangler secret put <NAME>`):
-#   ANTHROPIC_API_KEY, XAI_API_KEY, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+#   XAI_API_KEY, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
 #   AWS_REGION (optional, defaults us-east-1; for Nova),
 #   AWS_REGION_PEGASUS (optional, defaults us-west-2; Pegasus only available
 #                       in us-west-2 or eu-west-1),
-#   CF_AIG_TOKEN (optional, only if Authenticated Gateway is enabled),
+#   CF_AIG_TOKEN (required for Anthropic Unified Billing, and for any gateway
+#                 with Authenticated Gateway enabled; v0.93.0 dropped the
+#                 Anthropic BYOK key in favor of this),
 #   OPENAI_API_KEY (optional, v0.22.1; ONLY for openai/gpt-image-1.5 transparent
 #                   image output via a direct OpenAI call. Without it that model
 #                   falls back to opaque via Unified Billing. OpenAI chat does

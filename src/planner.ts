@@ -1,7 +1,7 @@
 // Storyboard planner dispatcher (v0.28.0).
 //
 // Takes a brief + character bible + model selection, dispatches to one of
-// callAnthropic (BYOK), callXai (BYOK), or aiRun (Workers AI binding) for
+// callAnthropic (Unified Billing), callXai (BYOK), or aiRun (Workers AI binding) for
 // a single non-streaming completion, strips ```json fences, JSON.parses
 // the result, runs validateStoryboard, and returns the validated
 // StoryboardValidated or the error list. Does NOT submit anything to
@@ -9,9 +9,9 @@
 // with the errors or hands the validated value to serializeStoryboardYaml
 // for the bundle.
 //
-// BYOK secrets (ANTHROPIC_API_KEY, XAI_API_KEY) are consumed inside the
-// provider modules; this file never reads them directly. Workers AI runs
-// through aiRun (which uses env.AI + env.GATEWAY_ID).
+// Auth lives inside the provider modules; this file never reads secrets
+// directly. Anthropic rides Cloudflare Unified Billing (CF_AIG_TOKEN), xAI is
+// BYOK (XAI_API_KEY), and Workers AI runs through aiRun (env.AI + GATEWAY_ID).
 
 import type { Env } from "./env";
 import { callAnthropic } from "./providers/anthropic";

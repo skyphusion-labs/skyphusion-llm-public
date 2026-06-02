@@ -14,7 +14,7 @@ import { MODELS, type ModelEntry } from "./models";
 export type PlanningProvider = "anthropic" | "xai" | "workers-ai";
 
 const PLANNING_MODEL_IDS: readonly string[] = [
-  // Anthropic BYOK
+  // Anthropic (Unified Billing)
   "anthropic/claude-opus-4-7",
   "anthropic/claude-sonnet-4-6",
   "anthropic/claude-haiku-4-5",

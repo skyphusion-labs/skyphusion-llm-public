@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.93.0
+
+Anthropic chat moves from BYOK to Cloudflare Unified Billing. Requests now bill through Cloudflare instead of a personal Anthropic key.
+
+### Why
+
+The goal is to route every paid provider through Cloudflare Unified Billing so cost rolls up to one bill, and the Anthropic API credits backing the old BYOK key were exhausted. Cloudflare's AI Gateway supports Anthropic under Unified Billing (keyless: `cf-aig-authorization` header, no provider key), so the switch is an auth change, not a new dispatch path; the existing Messages-API transform, streaming, and SSE parsing are unchanged.
+
+### What ships
+
+- `src/providers/anthropic.ts`: `prepareAnthropicRequest` no longer sends `x-api-key`. It now requires `CF_AIG_TOKEN` and sends `cf-aig-authorization: Bearer <token>` only (a provider key would flip the gateway back to BYOK/pass-through billing). Missing `CF_AIG_TOKEN` throws a clear error instead of silently failing auth.
+- `src/env.ts`: removed the now-unused `ANTHROPIC_API_KEY` field; documented `CF_AIG_TOKEN` as required for Anthropic Unified Billing.
+- Catalog/labels: dropped the "BYOK" suffix from the five Anthropic chat labels (`src/models.ts`) and updated provider comments (`src/planner.ts`, `src/planner-catalog.ts`, `src/index.ts`).
+- `wrangler.example.toml`: removed `ANTHROPIC_API_KEY` from the secrets list; noted `CF_AIG_TOKEN` is now required for Anthropic.
+
+### Deploy steps for existing deployers
+
+1. Enable Unified Billing for Anthropic on your AI Gateway (dashboard > AI Gateway > your gateway), and confirm a payment method is on the Cloudflare account.
+2. Ensure `CF_AIG_TOKEN` is set (`npx wrangler secret put CF_AIG_TOKEN`) with a Cloudflare API token that has AI Gateway Run authorization.
+3. The old `ANTHROPIC_API_KEY` secret is no longer read and can be deleted (`npx wrangler secret delete ANTHROPIC_API_KEY`).
+
 ## v0.86.0
 
 The planner UI now exposes and forwards every override block, and finalize forwards them too. Closes the last gaps so everything is Worker-configurable.

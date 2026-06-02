@@ -603,6 +603,53 @@ function buildCastLoraSubmit() {
   return out;
 }
 
+// v0.79.0: lora_train_extras / loras / quality / image_models builders.
+function buildLoraTrainExtras() {
+  const $sel = (s) => $(s);
+  const out = {};
+  const en = ($sel("#planner-lte-enabled") || {}).value;
+  if (en === "true") out.enabled = true;
+  else if (en === "false") out.enabled = false;
+  const mn = parseFloat(($sel("#planner-lte-min-images") || {}).value || "");
+  if (Number.isInteger(mn) && mn >= 1 && mn <= 64) out.min_images = mn;
+  const mx = parseFloat(($sel("#planner-lte-max-images") || {}).value || "");
+  if (Number.isInteger(mx) && mx >= 1 && mx <= 256) out.max_images = mx;
+  const tpl = (($sel("#planner-lte-trigger-template") || {}).value || "").trim();
+  if (tpl && tpl.length <= 64) out.trigger_template = tpl;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function buildLorasOverrides() {
+  const $sel = (s) => $(s);
+  const out = {};
+  const ds = parseFloat(($sel("#planner-lo-default-scale") || {}).value || "");
+  if (Number.isFinite(ds) && ds >= 0 && ds <= 2) out.default_scale = ds;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+const _FFMPEG_PRESETS_SET = new Set([
+  "ultrafast", "superfast", "veryfast", "faster", "fast",
+  "medium", "slow", "slower", "veryslow",
+]);
+
+function buildQualityOverrides() {
+  const $sel = (s) => $(s);
+  const out = {};
+  const crf = parseFloat(($sel("#planner-ql-assemble-crf") || {}).value || "");
+  if (Number.isInteger(crf) && crf >= 0 && crf <= 51) out.assemble_crf = crf;
+  const preset = (($sel("#planner-ql-assemble-preset") || {}).value || "").trim();
+  if (preset && _FFMPEG_PRESETS_SET.has(preset)) out.assemble_preset = preset;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function buildImageModelsOverrides() {
+  const $sel = (s) => $(s);
+  const out = {};
+  const p = (($sel("#planner-im-default-profile") || {}).value || "").trim();
+  if (p && p.length <= 64) out.default_profile = p;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 // v0.78.0: character_bible / production / top-level switches builders.
 function buildCharacterBibleOverrides() {
   const $sel = (s) => $(s);
@@ -2992,6 +3039,15 @@ async function submitRender() {
   if (prOverrides) reqBody.productionOverrides = prOverrides;
   const tlOverrides = buildTopLevelSwitches();
   if (tlOverrides) reqBody.topLevelSwitches = tlOverrides;
+  // v0.79.0: lora train extras + loras + quality + image_models.
+  const lteOverrides = buildLoraTrainExtras();
+  if (lteOverrides) reqBody.loraTrainExtras = lteOverrides;
+  const loOverrides = buildLorasOverrides();
+  if (loOverrides) reqBody.lorasOverrides = loOverrides;
+  const qlOverrides = buildQualityOverrides();
+  if (qlOverrides) reqBody.qualityOverrides = qlOverrides;
+  const imOverrides = buildImageModelsOverrides();
+  if (imOverrides) reqBody.imageModelsOverrides = imOverrides;
 
   let resp = null;
   let data = null;

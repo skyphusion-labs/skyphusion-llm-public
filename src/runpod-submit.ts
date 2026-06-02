@@ -90,6 +90,13 @@ export interface RenderSubmitArgs {
   characterBibleOverrides?: CharacterBibleOverrides;
   productionOverrides?: ProductionOverrides;
   topLevelSwitches?: TopLevelSwitches;
+  // v0.79.0: loras.training extras + loras top-level + quality
+  // (ffmpeg encoding) + image_models default profile
+  // (vivijure-serverless 0.4.37+).
+  loraTrainExtras?: LoraTrainExtras;
+  lorasOverrides?: LorasOverrides;
+  qualityOverrides?: QualityOverrides;
+  imageModelsOverrides?: ImageModelsOverrides;
 }
 
 export interface LoraTrainOverrides {
@@ -128,6 +135,52 @@ export interface QualityGateOverrides {
   // When true the render proceeds even on verdict="fail". When false
   // a hard fail blocks the render.
   allow_warn?: boolean;
+}
+
+// v0.79.0: loras.training extras - the four loras.training keys
+// the v0.68.0 LoraTrainOverrides interface doesn't cover (enabled,
+// min_images, max_images, trigger_template). Routes through
+// vivijure-serverless 0.4.37+ via the lora_train module-global.
+export interface LoraTrainExtras {
+  // Master switch for the LoRA training pass. Pod default false on
+  // a stock config; the orchestrator flips it on per-job when slots
+  // need training, so the explicit override is rarely needed.
+  enabled?: boolean;
+  // Minimum image count before training proceeds. Pod default 8.
+  // Below this the gate hard-fails the slot.
+  min_images?: number;             // int 1..64
+  // Cap on training image count. Pod default 30.
+  max_images?: number;             // int 1..256
+  // Pattern used to derive the trigger word from the character name.
+  // Pod default "chr_{name}" produces e.g. "chr_aria" for "Aria".
+  // Changing this affects all NEW LoRA training runs (existing
+  // .safetensors keep their trigger).
+  trigger_template?: string;       // max 64 chars
+}
+
+// v0.79.0: loras top-level - default LoRA scale fallback. Pod default
+// 0.75 applies when no per-row scale is set in the catalog. The
+// flat render_overrides.lora_scale key still wins per-render.
+export interface LorasOverrides {
+  default_scale?: number;          // 0..2
+}
+
+// v0.79.0: quality block - the ffmpeg encoding knobs the assembly
+// step uses. Pod default crf=18 + preset=medium.
+export interface QualityOverrides {
+  // ffmpeg CRF. 0=lossless, 18=visually-lossless, 23=ffmpeg default,
+  // 51=worst. Pod default 18.
+  assemble_crf?: number;           // int 0..51
+  // ffmpeg preset. ultrafast / superfast / veryfast / faster / fast /
+  // medium / slow / slower / veryslow. Pod default "medium".
+  assemble_preset?: string;        // max 32 chars
+}
+
+// v0.79.0: image_models.default_profile - the SDXL profile id the
+// renderer picks when the manifest has style_category="None".
+// Discoverable via GET /api/image-models on the pod UI (legacy).
+export interface ImageModelsOverrides {
+  default_profile?: string;        // max 64 chars; e.g. "anime_sdxl"
 }
 
 // v0.78.0: character_bible block - the auto-condensed cast bible
@@ -499,6 +552,11 @@ export interface RenderJobInput {
   character_bible_overrides?: CharacterBibleOverrides;
   production_overrides?: ProductionOverrides;
   top_level_switches?: TopLevelSwitches;
+  // v0.79.0: lora_train_extras + loras + quality + image_models (0.4.37+).
+  lora_train_extras?: LoraTrainExtras;
+  loras_overrides?: LorasOverrides;
+  quality_overrides?: QualityOverrides;
+  image_models_overrides?: ImageModelsOverrides;
 }
 
 // v0.41.0: per-shot SDXL keyframe regeneration. The Worker derives the
@@ -572,6 +630,11 @@ export interface FinalizeArgs {
   characterBibleOverrides?: CharacterBibleOverrides;
   productionOverrides?: ProductionOverrides;
   topLevelSwitches?: TopLevelSwitches;
+  // v0.79.0: same lora_train_extras + loras + quality + image_models as RenderSubmitArgs.
+  loraTrainExtras?: LoraTrainExtras;
+  lorasOverrides?: LorasOverrides;
+  qualityOverrides?: QualityOverrides;
+  imageModelsOverrides?: ImageModelsOverrides;
 }
 
 export interface FinalizeJobInput {
@@ -602,6 +665,10 @@ export interface FinalizeJobInput {
   character_bible_overrides?: CharacterBibleOverrides;
   production_overrides?: ProductionOverrides;
   top_level_switches?: TopLevelSwitches;
+  lora_train_extras?: LoraTrainExtras;
+  loras_overrides?: LorasOverrides;
+  quality_overrides?: QualityOverrides;
+  image_models_overrides?: ImageModelsOverrides;
 }
 
 // v0.57.0: standalone LoRA training. The cast manager UI on /cast
@@ -767,6 +834,15 @@ export function buildSubmitPayload(args: RenderSubmitArgs): { input: RenderJobIn
   if (pr) input.production_overrides = pr;
   const tls = normalizeTopLevelSwitches(args.topLevelSwitches);
   if (tls) input.top_level_switches = tls;
+  // v0.79.0: lora train extras + loras + quality + image_models.
+  const lte = normalizeLoraTrainExtras(args.loraTrainExtras);
+  if (lte) input.lora_train_extras = lte;
+  const lor = normalizeLorasOverrides(args.lorasOverrides);
+  if (lor) input.loras_overrides = lor;
+  const ql = normalizeQualityOverrides(args.qualityOverrides);
+  if (ql) input.quality_overrides = ql;
+  const im = normalizeImageModelsOverrides(args.imageModelsOverrides);
+  if (im) input.image_models_overrides = im;
   return { input };
 }
 
@@ -837,6 +913,14 @@ export function buildFinalizePayload(args: FinalizeArgs): { input: FinalizeJobIn
   if (prF) input.production_overrides = prF;
   const tlsF = normalizeTopLevelSwitches(args.topLevelSwitches);
   if (tlsF) input.top_level_switches = tlsF;
+  const lteF = normalizeLoraTrainExtras(args.loraTrainExtras);
+  if (lteF) input.lora_train_extras = lteF;
+  const lorF = normalizeLorasOverrides(args.lorasOverrides);
+  if (lorF) input.loras_overrides = lorF;
+  const qlF = normalizeQualityOverrides(args.qualityOverrides);
+  if (qlF) input.quality_overrides = qlF;
+  const imF = normalizeImageModelsOverrides(args.imageModelsOverrides);
+  if (imF) input.image_models_overrides = imF;
   return { input };
 }
 
@@ -879,6 +963,68 @@ export function normalizeLoraTrainOverrides(
     if (typeof v === "number" && Number.isFinite(v) && v > 0) {
       out[k] = v;
     }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// v0.79.0: normalize lora train extras.
+export function normalizeLoraTrainExtras(
+  raw: LoraTrainExtras | undefined,
+): LoraTrainExtras | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: LoraTrainExtras = {};
+  if (typeof raw.enabled === "boolean") out.enabled = raw.enabled;
+  if (typeof raw.min_images === "number" && Number.isInteger(raw.min_images) && raw.min_images >= 1 && raw.min_images <= 64) {
+    out.min_images = raw.min_images;
+  }
+  if (typeof raw.max_images === "number" && Number.isInteger(raw.max_images) && raw.max_images >= 1 && raw.max_images <= 256) {
+    out.max_images = raw.max_images;
+  }
+  if (typeof raw.trigger_template === "string" && raw.trigger_template.length > 0 && raw.trigger_template.length <= 64) {
+    out.trigger_template = raw.trigger_template;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// v0.79.0: normalize loras top-level.
+export function normalizeLorasOverrides(
+  raw: LorasOverrides | undefined,
+): LorasOverrides | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: LorasOverrides = {};
+  if (typeof raw.default_scale === "number" && Number.isFinite(raw.default_scale) && raw.default_scale >= 0 && raw.default_scale <= 2) {
+    out.default_scale = raw.default_scale;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// v0.79.0: normalize quality (ffmpeg) overrides.
+const _FFMPEG_PRESETS = new Set([
+  "ultrafast", "superfast", "veryfast", "faster", "fast",
+  "medium", "slow", "slower", "veryslow",
+]);
+export function normalizeQualityOverrides(
+  raw: QualityOverrides | undefined,
+): QualityOverrides | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: QualityOverrides = {};
+  if (typeof raw.assemble_crf === "number" && Number.isInteger(raw.assemble_crf) && raw.assemble_crf >= 0 && raw.assemble_crf <= 51) {
+    out.assemble_crf = raw.assemble_crf;
+  }
+  if (typeof raw.assemble_preset === "string" && _FFMPEG_PRESETS.has(raw.assemble_preset)) {
+    out.assemble_preset = raw.assemble_preset;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// v0.79.0: normalize image_models overrides.
+export function normalizeImageModelsOverrides(
+  raw: ImageModelsOverrides | undefined,
+): ImageModelsOverrides | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: ImageModelsOverrides = {};
+  if (typeof raw.default_profile === "string" && raw.default_profile.length > 0 && raw.default_profile.length <= 64) {
+    out.default_profile = raw.default_profile;
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }

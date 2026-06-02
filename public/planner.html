@@ -1132,6 +1132,70 @@
             flip overall pipeline behavior.
           </p>
         </details>
+        <!-- v0.79.0: LoRA training extras + loras registry + quality
+             (ffmpeg) + image_models default profile
+             (vivijure-serverless 0.4.37+). -->
+        <details class="planner-overrides-raw-details">
+          <summary class="planner-overrides-summary">LoRA training extras + encoding + image profile (advanced)</summary>
+          <div class="planner-overrides-fields">
+            <label class="planner-field">
+              <span>LoRA training master switch</span>
+              <select id="planner-lte-enabled">
+                <option value="">(use pod default)</option>
+                <option value="true">true</option>
+                <option value="false">false (skip training entirely)</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>min training images (pod default 8)</span>
+              <input id="planner-lte-min-images" type="number" min="1" max="64" step="1" placeholder="8" />
+            </label>
+            <label class="planner-field">
+              <span>max training images (pod default 30)</span>
+              <input id="planner-lte-max-images" type="number" min="1" max="256" step="1" placeholder="30" />
+            </label>
+            <label class="planner-field">
+              <span>trigger template (pod default "chr_{name}")</span>
+              <input id="planner-lte-trigger-template" type="text" maxlength="64" placeholder="chr_{name}" />
+            </label>
+            <label class="planner-field">
+              <span>LoRA default scale fallback (pod default 0.75)</span>
+              <input id="planner-lo-default-scale" type="number" min="0" max="2" step="0.05" placeholder="0.75" />
+            </label>
+            <label class="planner-field">
+              <span>ffmpeg CRF (pod default 18)</span>
+              <input id="planner-ql-assemble-crf" type="number" min="0" max="51" step="1" placeholder="18" />
+            </label>
+            <label class="planner-field">
+              <span>ffmpeg preset (pod default medium)</span>
+              <select id="planner-ql-assemble-preset">
+                <option value="">(use pod default: medium)</option>
+                <option value="ultrafast">ultrafast</option>
+                <option value="superfast">superfast</option>
+                <option value="veryfast">veryfast</option>
+                <option value="faster">faster</option>
+                <option value="fast">fast</option>
+                <option value="medium">medium</option>
+                <option value="slow">slow</option>
+                <option value="slower">slower</option>
+                <option value="veryslow">veryslow</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>image profile (pod default anime_sdxl)</span>
+              <input id="planner-im-default-profile" type="text" maxlength="64" placeholder="anime_sdxl" />
+            </label>
+          </div>
+          <p class="planner-overrides-hint">
+            forwarded as <code>lora_train_extras</code> +
+            <code>loras_overrides</code> + <code>quality_overrides</code>
+            + <code>image_models_overrides</code>. training extras cover
+            the loras.training keys not on the per-call path
+            (enabled / min+max images / trigger_template). encoding knobs
+            govern ffmpeg's silent-MP4 assembly. image profile picks
+            the SDXL profile when style_category="None".
+          </p>
+        </details>
         <details class="planner-overrides-raw-details">
           <summary class="planner-overrides-summary">raw JSON overrides (wins on conflict)</summary>
           <textarea id="planner-render-overrides" rows="3" placeholder='{"wan_inference_steps": 12, "wan_num_frames": 33}' spellcheck="false"></textarea>

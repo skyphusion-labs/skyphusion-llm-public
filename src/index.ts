@@ -1518,6 +1518,12 @@ interface RenderSubmitRequest {
   characterBibleOverrides?: unknown;
   productionOverrides?: unknown;
   topLevelSwitches?: unknown;
+  // v0.79.0: lora_train_extras + loras + quality + image_models
+  // (vivijure-serverless 0.4.37+).
+  loraTrainExtras?: unknown;
+  lorasOverrides?: unknown;
+  qualityOverrides?: unknown;
+  imageModelsOverrides?: unknown;
 }
 
 async function handleRenderSubmit(request: Request, env: Env): Promise<Response> {
@@ -1735,6 +1741,23 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
     topLevelSwitches:
       body.topLevelSwitches && typeof body.topLevelSwitches === "object"
         ? (body.topLevelSwitches as RenderSubmitArgs["topLevelSwitches"])
+        : undefined,
+    // v0.79.0: lora train extras + loras + quality + image_models passthrough.
+    loraTrainExtras:
+      body.loraTrainExtras && typeof body.loraTrainExtras === "object"
+        ? (body.loraTrainExtras as RenderSubmitArgs["loraTrainExtras"])
+        : undefined,
+    lorasOverrides:
+      body.lorasOverrides && typeof body.lorasOverrides === "object"
+        ? (body.lorasOverrides as RenderSubmitArgs["lorasOverrides"])
+        : undefined,
+    qualityOverrides:
+      body.qualityOverrides && typeof body.qualityOverrides === "object"
+        ? (body.qualityOverrides as RenderSubmitArgs["qualityOverrides"])
+        : undefined,
+    imageModelsOverrides:
+      body.imageModelsOverrides && typeof body.imageModelsOverrides === "object"
+        ? (body.imageModelsOverrides as RenderSubmitArgs["imageModelsOverrides"])
         : undefined,
   };
 
@@ -2414,6 +2437,10 @@ async function handleFinalizeSubmit(
   let bodyCharacterBibleOverrides: RenderSubmitArgs["characterBibleOverrides"] | undefined;
   let bodyProductionOverrides: RenderSubmitArgs["productionOverrides"] | undefined;
   let bodyTopLevelSwitches: RenderSubmitArgs["topLevelSwitches"] | undefined;
+  let bodyLoraTrainExtras: RenderSubmitArgs["loraTrainExtras"] | undefined;
+  let bodyLorasOverrides: RenderSubmitArgs["lorasOverrides"] | undefined;
+  let bodyQualityOverrides: RenderSubmitArgs["qualityOverrides"] | undefined;
+  let bodyImageModelsOverrides: RenderSubmitArgs["imageModelsOverrides"] | undefined;
   try {
     const ct = (request.headers.get("content-type") || "").toLowerCase();
     if (ct.includes("application/json")) {
@@ -2438,6 +2465,10 @@ async function handleFinalizeSubmit(
         characterBibleOverrides?: unknown;
         productionOverrides?: unknown;
         topLevelSwitches?: unknown;
+        loraTrainExtras?: unknown;
+        lorasOverrides?: unknown;
+        qualityOverrides?: unknown;
+        imageModelsOverrides?: unknown;
       };
       if (typeof parsed?.audioKey === "string" && parsed.audioKey.length > 0) {
         bodyAudioKey = parsed.audioKey;
@@ -2567,6 +2598,34 @@ async function handleFinalizeSubmit(
         && !Array.isArray(parsed.topLevelSwitches)
       ) {
         bodyTopLevelSwitches = parsed.topLevelSwitches as RenderSubmitArgs["topLevelSwitches"];
+      }
+      if (
+        parsed?.loraTrainExtras
+        && typeof parsed.loraTrainExtras === "object"
+        && !Array.isArray(parsed.loraTrainExtras)
+      ) {
+        bodyLoraTrainExtras = parsed.loraTrainExtras as RenderSubmitArgs["loraTrainExtras"];
+      }
+      if (
+        parsed?.lorasOverrides
+        && typeof parsed.lorasOverrides === "object"
+        && !Array.isArray(parsed.lorasOverrides)
+      ) {
+        bodyLorasOverrides = parsed.lorasOverrides as RenderSubmitArgs["lorasOverrides"];
+      }
+      if (
+        parsed?.qualityOverrides
+        && typeof parsed.qualityOverrides === "object"
+        && !Array.isArray(parsed.qualityOverrides)
+      ) {
+        bodyQualityOverrides = parsed.qualityOverrides as RenderSubmitArgs["qualityOverrides"];
+      }
+      if (
+        parsed?.imageModelsOverrides
+        && typeof parsed.imageModelsOverrides === "object"
+        && !Array.isArray(parsed.imageModelsOverrides)
+      ) {
+        bodyImageModelsOverrides = parsed.imageModelsOverrides as RenderSubmitArgs["imageModelsOverrides"];
       }
       if (parsed?.castLoras !== undefined) {
         if (
@@ -2704,6 +2763,11 @@ async function handleFinalizeSubmit(
     characterBibleOverrides: bodyCharacterBibleOverrides,
     productionOverrides: bodyProductionOverrides,
     topLevelSwitches: bodyTopLevelSwitches,
+    // v0.79.0: lora train extras + loras + quality + image_models passthrough (vivijure-serverless 0.4.37+).
+    loraTrainExtras: bodyLoraTrainExtras,
+    lorasOverrides: bodyLorasOverrides,
+    qualityOverrides: bodyQualityOverrides,
+    imageModelsOverrides: bodyImageModelsOverrides,
   });
   if (!result.ok) {
     return json(

@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.79.0
+
+Phase 12 of the worker-pod config pull. Four more config.yaml regions become routable from the web Worker: `loras.training` extras (4 keys the v0.68.0 LoraTrainOverrides didn't cover: `enabled`, `min_images`, `max_images`, `trigger_template`), `loras.default_scale` (1 key), `quality.*` ffmpeg encoding knobs (`assemble_crf`, `assemble_preset`), and `image_models.default_profile`. Pod side landed in vivijure-serverless 0.4.37.
+
+### Backend
+
+- `src/runpod-submit.ts`: `LoraTrainExtras`, `LorasOverrides`, `QualityOverrides`, `ImageModelsOverrides` interfaces + matching normalizers. `QualityOverrides.assemble_preset` validates against the 9 known ffmpeg presets. All Args + JobInput types carry the new fields; all builders forward them.
+- `src/index.ts`: `RenderSubmitRequest` accepts the four new fields; both render and finalize handlers read them and forward through.
+
+### Frontend
+
+- `public/planner.html`: new "LoRA training extras + encoding + image profile (advanced)" disclosure with all 8 controls.
+- `public/planner.js`: four new builders read + validate, attached alongside the other override builders.
+
+### Tests
+
+464/464 still passing, type-check clean.
+
 ## v0.78.0
 
 Phase 11 of the worker-pod config pull. Three more config.yaml regions become routable from the web Worker: the `character_bible.*` block (3 keys; the auto-condensed cast bible prepended to every shot), `production.*` top-level sub-keys (6 keys; hand-fix / adetailer master switches + character-ref count gates + LoRA training threshold), and five top-level switches (`production_mode`, `always_use_style_reference`, `assemble_use_crossfade`, `auto_render_clips`, `auto_bootstrap_start_image`). Pod side landed in vivijure-serverless 0.4.35, which ALSO fixes the Phase 10 reach gap: `movie_mode`, `character_bible`, `production_gates`, and `hand_fix` all re-read `config.yaml` from disk per call, so Phase 10's `max_scenes` / movie-block overrides never propagated to them. 0.4.35 makes those modules delegate to `core.CONFIG`, fixing Phase 10 retroactively.

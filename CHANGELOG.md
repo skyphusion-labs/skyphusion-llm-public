@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.101.0
+
+Removed the rembg Cloudflare Container entirely. It was disabled back in v0.98.0 (bg-removal moved pod-side), but the dormant `[[containers]]` config kept making `wrangler deploy` rebuild the container image, and that build started failing on a `requirements.txt` dependency conflict (`pillow==11.0.0`), blocking all deploys.
+
+### What ships
+
+- Deleted `containers/rembg/` (Dockerfile, main.py, requirements.txt, README) and `src/containers/rembg.ts`.
+- `src/index.ts`: dropped the `RembgContainer` re-export; updated the cast-portrait comment (bg-removal is pod-side, container gone).
+- `src/env.ts`: removed the `REMBG_CONTAINER` binding.
+- `wrangler.toml`: removed the `[[durable_objects.bindings]]` + `[[containers]]` blocks; added a `tag = "v2"` migration with `deleted_classes = ["RembgContainer"]` so the already-registered DO class is cleanly torn down (keeping v1 in history). `wrangler.example.toml`: removed the rembg binding/container/migration blocks outright (fresh deploys never had it).
+- `package.json`: dropped the now-unused `@cloudflare/containers` dependency.
+
+Net effect: `wrangler deploy` no longer builds a container, so deploys work again. The cast-portrait flow is unchanged (raw passthrough to R2; bg-removal in `vivijure-serverless` at render time).
+
 ## v0.100.0
 
 Added Stable Diffusion XL (`@cf/stabilityai/stable-diffusion-xl-base-1.0`) to image generation, a different aesthetic from the FLUX lineup.

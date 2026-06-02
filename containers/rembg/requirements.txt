@@ -1,7 +1,0 @@
-# Pinned to the versions validated in the smoke v26 workflow on the
-# author's laptop. Bump in lockstep with future smoke verifications.
-fastapi==0.115.6
-uvicorn[standard]==0.34.0
-rembg==2.0.75
-onnxruntime==1.26.0
-pillow==11.0.0

@@ -18,11 +18,6 @@ import { getDocumentProxy } from "unpdf";
 import * as XLSX from "xlsx";
 import { WorkflowEntrypoint, WorkflowStep } from "cloudflare:workers";
 import type { WorkflowEvent } from "cloudflare:workers";
-// v0.94.0+: Cloudflare Container wrapper class for the rembg
-// bg-removal service. Cloudflare runtime needs this class to be
-// importable from the worker entry so the binding can find it; the
-// actual work happens inside the container at containers/rembg/main.py.
-export { RembgContainer } from "./containers/rembg";
 import type { ProviderStreamEvent } from "./parsers/types";
 import type { ModelType, Provider, ModelEntry } from "./models";
 import { MODELS } from "./models";
@@ -3105,15 +3100,11 @@ async function handleCastPortraitUpload(
     if (bytes.length > CAST_MAX_BYTES) {
       return json({ error: "source image too large (16 MB max)" }, { status: 413 });
     }
-    // v0.97.0 routed every portrait write through the rembg container
-    // before R2; rolled back to the pre-v0.97.0 pass-through because
-    // the CF Container path was blocked by an unresolved runtime issue
-    // (even a stdlib hello-world container failed to bind). Background
-    // removal now runs pod-side at render time in
-    // multi_character_regional.py:_slot_portraits (vivijure-serverless
-    // 0.4.56+); the saved portrait stays as the user's raw upload.
-    // The Container code under src/containers/rembg.ts is left in
-    // place so the path can be re-enabled when CF resolves the issue.
+    // Portraits are written to R2 raw. Background removal runs pod-side at
+    // render time in multi_character_regional.py:_slot_portraits
+    // (vivijure-serverless 0.4.56+); the saved portrait stays as the user's
+    // raw upload. (The v0.97.0 CF Container approach to bg-removal was removed
+    // in v0.101.0 after the container runtime stayed blocked on the CF side.)
     if (cur.portrait_key) {
       try { await env.R2_RENDERS.delete(cur.portrait_key); } catch { /* ignore */ }
     }

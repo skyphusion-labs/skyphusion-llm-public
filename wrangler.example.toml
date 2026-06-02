@@ -61,30 +61,6 @@ name = "skyphusion-longrun"
 binding = "LONGRUN"
 class_name = "LongRunWorkflow"
 
-# v0.97.0+: Cloudflare Container for rembg background-removal. The
-# cast portrait flow pipes uploaded / generated portraits through this
-# container before writing to R2, so the vivijure-serverless regional
-# render path's IP-Adapter sees a clean subject-on-black conditioning
-# input. Container source lives at containers/rembg/; the DO wrapper
-# class is RembgContainer in src/containers/rembg.ts (re-exported from
-# the worker entry).
-[[durable_objects.bindings]]
-name = "REMBG_CONTAINER"
-class_name = "RembgContainer"
-
-[[containers]]
-class_name = "RembgContainer"
-image = "./containers/rembg/Dockerfile"
-max_instances = 5
-instance_type = "basic"
-
-# Durable Object class registration. new_sqlite_classes is the modern
-# (post-2024) form that uses SQLite-backed DO storage; cheaper than the
-# legacy new_classes path and the only one supported for new accounts.
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["RembgContainer"]
-
 # Per-instance observability for the worker (lets you tail logs in the
 # dashboard). Workflows have their own dashboard surface; this enables it
 # for the rest of the worker too.

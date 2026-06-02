@@ -439,12 +439,42 @@
                 <option value="false">false (require mode=always)</option>
               </select>
             </label>
+            <!-- v0.81.0: Phase R regional engine knobs. vivijure-
+                 serverless 0.4.42+ ships the regional IP-Adapter path
+                 as the default multi-character engine. The default
+                 values in these inputs (engine=regional, lora=0.3,
+                 ip=0.7) are the v15 known-good settings. They are
+                 pre-filled (not placeholder) so the wire payload
+                 carries them unless the user clears the field; this
+                 keeps the docker image immutable per the
+                 immutable-image directive (changing what production
+                 should use never requires a pod rebuild). -->
+            <label class="planner-field">
+              <span>engine</span>
+              <select id="planner-mc-engine">
+                <option value="regional" selected>regional (single SDXL pass, per-region IP-Adapter masks)</option>
+                <option value="composite_legacy">composite_legacy (per-slot panels + grabcut + tile)</option>
+                <option value="">(send nothing; use pod default)</option>
+              </select>
+            </label>
+            <label class="planner-field">
+              <span>regional LoRA scale per slot (v15 win: 0.3)</span>
+              <input id="planner-mc-lora-scale" type="number" min="0" max="2" step="0.05" value="0.3" />
+            </label>
+            <label class="planner-field">
+              <span>regional IP-Adapter scale per slot (v15 win: 0.7)</span>
+              <input id="planner-mc-ip-scale" type="number" min="0" max="2" step="0.05" value="0.7" />
+            </label>
           </div>
           <p class="planner-overrides-hint">
             forwarded as <code>multi_character_overrides</code>. controls how
-            SDXL keyframes for scenes with 2+ cast slots get composited
-            (separate solo gen per slot, then stitched). leave fields blank
-            to use the pod's <code>config.yaml</code> defaults.
+            SDXL keyframes for scenes with 2+ cast slots get rendered. the
+            regional engine (default) does a single SDXL pass with per-region
+            IP-Adapter masks; lora=0.3 and ip=0.7 are the v15-confirmed
+            identity-routing settings. composite_legacy is the pre-Phase-R
+            panel + grabcut + tile path, kept as an escape hatch. leave a
+            field blank to use the pod's compiled default for that key
+            instead.
           </p>
         </details>
         <!-- v0.70.0: lora_quality_gate overrides. Vivijure-serverless

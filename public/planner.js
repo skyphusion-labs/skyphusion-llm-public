@@ -1027,6 +1027,17 @@ function buildMultiCharacterOverrides() {
   const auto = readStr("#planner-mc-auto");
   if (auto === "true") out.auto_when_multi_slot = true;
   else if (auto === "false") out.auto_when_multi_slot = false;
+  // v0.81.0: Phase R regional engine knobs. The defaults are pre-
+  // filled in the UI (engine=regional, lora=0.3, ip=0.7 = v15
+  // settings); user can clear a field to fall back to the pod's
+  // compiled default for that key. Keeps the docker image immutable
+  // per the immutable-image directive.
+  const engine = readStr("#planner-mc-engine");
+  if (engine === "regional" || engine === "composite_legacy") out.engine = engine;
+  const loraScale = readNum("#planner-mc-lora-scale");
+  if (loraScale !== undefined && loraScale >= 0 && loraScale <= 2) out.lora_scale_per_slot = loraScale;
+  const ipScale = readNum("#planner-mc-ip-scale");
+  if (ipScale !== undefined && ipScale >= 0 && ipScale <= 2) out.ip_adapter_scale_per_slot = ipScale;
   return Object.keys(out).length > 0 ? out : undefined;
 }
 

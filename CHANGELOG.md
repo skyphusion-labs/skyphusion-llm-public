@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.81.0
+
+Phase R regional knobs land in the planner UI with v15-confirmed defaults pre-filled. Companion to vivijure-serverless 0.4.48 which reverted a misguided pod-side default change (0.4.47 had bumped the lora_scale_per_slot default from 0.55 to 0.3 in pod code; that violates the immutable-image directive that the whole 12-phase config pull served). Production defaults belong on the Worker, not in the pod.
+
+### What's new in the UI
+
+Three fields added to the "multi-character composite (advanced)" disclosure:
+
+- **engine** select — `regional` (default, single-pass with per-region IP-Adapter masks) or `composite_legacy` (the pre-Phase-R panel + grabcut + tile escape hatch)
+- **regional LoRA scale per slot** — pre-filled at `0.3` (v15 win)
+- **regional IP-Adapter scale per slot** — pre-filled at `0.7` (v15 win)
+
+These are **values, not placeholders**. The field carries the value to the wire payload unless the user explicitly clears it. The default behavior shifts from "send nothing, let the pod use its compiled default" to "send v15's known-good values, override per render if desired". The docker image stays immutable; the production defaults are right here in the Worker.
+
+### Why pre-fill instead of placeholder
+
+The pod's compiled default for `lora_scale_per_slot` is still 0.55 (the original config-file value). v15 smoke confirmed 0.3 is the production-quality value for multi-character keyframes. If we want "0.3 in production" without rebuilding the pod, the Worker has to fill it. The user can clear the field to fall back to the pod default for that key — same as every other override.
+
+### Tests
+
+473/473 still passing, type-check clean.
+
 ## v0.80.0
 
 LLM Assist content guards. The structural validator in `src/storyboard-validate.ts` historically only checked JSON shape (required fields, slot IDs, types). The four content-shape constraints the GPU renderer depends on are now enforced too, closing the gaps an LLM Assist (`POST /api/storyboard/plan`, `POST /api/storyboard/refine`) output could slip through.

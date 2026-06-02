@@ -114,6 +114,33 @@ describe("buildPlanningSystemPrompt", () => {
     expect(prompt).toContain(String(STORYBOARD_MAX_SCENES));
     expect(prompt).toMatch(/scenes array length: at most/i);
   });
+
+  // v0.88.0: the GOLDEN EXAMPLE block teaches the LLM the storyboard.
+  // example.yaml shape concretely. The rules alone produced output that
+  // packed appearance descriptors into scene prompts and double-applied
+  // style language; the example pins the working shape.
+  it("includes a GOLDEN EXAMPLE block that mirrors storyboard.example.yaml", () => {
+    expect(prompt).toMatch(/GOLDEN EXAMPLE/i);
+    expect(prompt).toMatch(/storyboard\.example\.yaml/i);
+  });
+
+  it("the example uses the cast name in prose, not the slot id", () => {
+    expect(prompt).toContain("Kira walks into frame");
+    expect(prompt).toContain("Close-up on Kira's face");
+    expect(prompt).not.toMatch(/slot A walks into frame/);
+  });
+
+  it("the example omits character_slots on the empty-frame shot", () => {
+    expect(prompt).toMatch(
+      /Wide establishing shot[\s\S]+?"act":\s*"opening"\s*\}/,
+    );
+    expect(prompt).toMatch(/"prompt": "Kira walks into frame[\s\S]+?"character_slots": \["A"\]/);
+  });
+
+  it("calls out canonical defaults (style_category/preset 'None')", () => {
+    expect(prompt).toContain(`"style_category": "None"`);
+    expect(prompt).toContain(`"style_preset": "None"`);
+  });
 });
 
 describe("buildRefinementSystemPrompt", () => {
@@ -148,6 +175,18 @@ describe("buildRefinementSystemPrompt", () => {
   it("declares the storyboard scene-count cap", () => {
     expect(prompt).toContain(String(STORYBOARD_MAX_SCENES));
     expect(prompt).toMatch(/scenes array length: at most/i);
+  });
+
+  // v0.88.0: refinement also gets a canonical-shape block so new/edited
+  // scenes match the planning example.
+  it("includes a CANONICAL SHAPE block", () => {
+    expect(prompt).toMatch(/CANONICAL SHAPE/i);
+    expect(prompt).toMatch(/storyboard\.example\.yaml/i);
+  });
+
+  it("canonical-shape example uses Kira (cast name) in scene prose", () => {
+    expect(prompt).toContain("Kira walks into frame");
+    expect(prompt).toContain("Close-up on Kira's face");
   });
 });
 

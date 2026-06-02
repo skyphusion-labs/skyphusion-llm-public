@@ -119,6 +119,57 @@ overflow SDXL's CLIP 77-token text encoder or break manifest builds):
     shot render is already 25+ minutes of GPU time at typical clip
     seconds; if the brief implies more, shorten clip_seconds or split.
 
+GOLDEN EXAMPLE (mirrors the renderer's storyboard.example.yaml). This
+shape is the canonical output; produce JSON that matches its style:
+
+{
+  "title": "morning_walk",
+  "full_prompt": "Three-shot vignette: Kira walks into a hilltop clearing at dawn.",
+  "duration_seconds": 21,
+  "clip_seconds": 7,
+  "style_prefix": "cinematic 35mm film, soft golden hour light, shallow depth of field",
+  "style_category": "None",
+  "style_preset": "None",
+  "use_characters": ["A"],
+  "cast_rules": "",
+  "scenes": [
+    {
+      "prompt": "Wide establishing shot of a quiet hilltop at dawn, mist over the valley below.",
+      "act": "opening"
+    },
+    {
+      "prompt": "Kira walks into frame from the left, looks out over the valley, wind in her coat.",
+      "character_slots": ["A"],
+      "act": "rising"
+    },
+    {
+      "prompt": "Close-up on Kira's face, soft side light, expression of quiet resolve, eyes catching the last warm light.",
+      "character_slots": ["A"],
+      "act": "turn"
+    }
+  ]
+}
+
+What that example demonstrates concretely:
+- Each scene's prompt is ~15-25 words: subject + action + framing +
+  one beat of mood. Well inside the ${SCENE_PROMPT_MAX_WORDS}-word cap.
+- The cast member is referenced by NAME ("Kira"), not by slot id.
+  The slot id only appears in scenes[].character_slots, never in prose.
+- Scene 1 omits character_slots entirely because nothing in the prompt
+  references a character. Do NOT send character_slots:[] either; omit
+  the field. (The example.yaml puts ["A"] on every shot; both forms
+  are accepted, but omitting is clearer for empty-frame shots.)
+- No appearance details in any scene prompt (no "red hair, green coat",
+  no "weathered older man"). The cast bible carries those; the renderer
+  prepends a LoRA trigger that injects the appearance vector for you.
+- No style language in any scene prompt: "cinematic", "35mm",
+  "golden hour" all live in style_prefix and are prepended once per
+  shot. Repeating them inside a scene double-applies them.
+- style_category and style_preset are literal "None" strings (never
+  null, never empty) because the renderer disables on the string.
+- act values are lowercase: "opening", "rising", "turn", "climax",
+  "resolution". Each scene optionally tagged.
+
 Return ONLY the JSON object. Nothing before it. Nothing after it.`;
 }
 
@@ -215,6 +266,36 @@ over these because they overflow SDXL's CLIP 77-token text encoder):
   user asks for more shots than the cap allows, add as many as fit
   under the cap and keep the remaining requested scenes for a future
   refinement turn; never let the array exceed the cap.
+
+CANONICAL SHAPE (any new or edited scene must match this style;
+mirrors the renderer's storyboard.example.yaml):
+
+{
+  "scenes": [
+    {
+      "prompt": "Wide establishing shot of a quiet hilltop at dawn, mist over the valley below.",
+      "act": "opening"
+    },
+    {
+      "prompt": "Kira walks into frame from the left, looks out over the valley, wind in her coat.",
+      "character_slots": ["A"],
+      "act": "rising"
+    },
+    {
+      "prompt": "Close-up on Kira's face, soft side light, expression of quiet resolve, eyes catching the last warm light.",
+      "character_slots": ["A"],
+      "act": "turn"
+    }
+  ]
+}
+
+What that example demonstrates:
+- Each prompt is ~15-25 words; subject + action + framing + one beat
+  of mood. No style language, no appearance descriptors.
+- Cast referenced by NAME in prose; slot id only in character_slots.
+- character_slots omitted entirely for empty-frame shots (don't send
+  an empty array).
+- act tags lowercase: opening / rising / turn / climax / resolution.
 
 Return ONLY the JSON object. No prose, no markdown, no fences.`;
 }

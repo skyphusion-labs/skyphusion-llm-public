@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.100.0
+
+Added Stable Diffusion XL (`@cf/stabilityai/stable-diffusion-xl-base-1.0`) to image generation, a different aesthetic from the FLUX lineup.
+
+### What ships
+
+- `src/models.ts`: new `type: "image"` catalog row, "Stable Diffusion XL (SDXL)".
+- `src/index.ts` `runImage`: SDXL reuses the Workers-AI stream-output path (it returns a `ReadableStream` of JPEG, so it joins the `bypassGateway` set with Phoenix/Dreamshaper since AI Gateway can't proxy stream output). Two SDXL-specific tweaks: its step field is `num_steps` (max 20), not `steps`, so the param builder swaps it; and the drained-stream mime is set to `image/jpeg` for SDXL (PNG for the others).
+
+Verified live: generated an image through the deployed worker, non-empty JPEG bytes returned, no error.
+
 ## v0.99.0
 
 Synced the catalog with the live Workers AI list: fixed two dead model IDs, added SEA-LION chat and Deepgram Nova-3 STT. (This is the catalog/STT work originally slated for 0.96.0; it was lost from git in a concurrent-session collision and is re-landed here. The 0.96.0-0.98.0 span was consumed by the parallel rembg Container work.)

@@ -142,6 +142,7 @@ export const MODELS: ModelEntry[] = [
   { id: "@cf/leonardo/lucid-origin",                    label: "Lucid Origin (Leonardo)",      group: "Image Gen",            type: "image", capabilities: [] },
   { id: "@cf/leonardo/phoenix-1.0",                     label: "Phoenix 1.0 (Leonardo)",       group: "Image Gen",            type: "image", capabilities: [] },
   { id: "@cf/lykon/dreamshaper-8-lcm",                  label: "Dreamshaper 8 LCM (fast SD)",  group: "Image Gen",            type: "image", capabilities: [] },
+  { id: "@cf/stabilityai/stable-diffusion-xl-base-1.0", label: "Stable Diffusion XL (SDXL)",   group: "Image Gen",            type: "image", capabilities: [] },
 
   // ---- Text-to-speech ----
   { id: "@cf/deepgram/aura-2-en",                       label: "Aura-2 English (Deepgram)",    group: "TTS",                  type: "tts",   capabilities: [] },

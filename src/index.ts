@@ -3884,9 +3884,11 @@ async function runImage(request: Request, env: Env, model: ModelEntry, body: Cha
       // observability/caching for these specific models (ai_gateway_log_id
       // stays null on the persisted row).
       const isFlux2 = model.id.startsWith("@cf/black-forest-labs/flux-2-");
+      const isSdxl = model.id === "@cf/stabilityai/stable-diffusion-xl-base-1.0";
       const bypassGateway = isFlux2
         || model.id === "@cf/leonardo/phoenix-1.0"
-        || model.id === "@cf/lykon/dreamshaper-8-lcm";
+        || model.id === "@cf/lykon/dreamshaper-8-lcm"
+        || isSdxl; // SDXL returns a ReadableStream (image/jpg); gateway can't proxy it
 
       let runParams: unknown;
 
@@ -3944,6 +3946,12 @@ async function runImage(request: Request, env: Env, model: ModelEntry, body: Cha
           params.steps = 4;
           delete params.negative_prompt;
         }
+        // SDXL's step field is `num_steps` (max 20), not `steps`; swap to avoid
+        // sending an unknown/over-max field.
+        if (isSdxl) {
+          delete params.steps;
+          params.num_steps = 20;
+        }
         runParams = params;
       }
 
@@ -3982,7 +3990,8 @@ async function runImage(request: Request, env: Env, model: ModelEntry, body: Cha
           bytes.set(c, offset);
           offset += c.length;
         }
-        mime = "image/png";
+        // SDXL streams JPEG; Phoenix/Dreamshaper stream PNG.
+        mime = isSdxl ? "image/jpeg" : "image/png";
       } else {
         const b64 = (result as { image?: string })?.image;
         if (!b64 || typeof b64 !== "string") {

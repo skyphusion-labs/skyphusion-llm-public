@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.82.0
+
+Phase 13 (the last major config pull). Wire types + normalizers for the prompt-template constants that vivijure-serverless 0.4.49 just made payload-routable, plus two small extensions on existing override blocks.
+
+### What's new
+
+- **`PromptTemplatesOverrides`** interface — 12 fields covering the prompt-engine and hand-fix constants:
+  - Scalar strings (10): `anatomy_positive_base`, `anatomy_positive_human`, `anatomy_positive_anime`, `anatomy_negative_global`, `anatomy_negative_focused`, `anatomy_negative_portrait`, `anatomy_negative_anime`, `portrait_positive`, `hand_positive`, `hand_negative`. Each capped at 1024 chars to prevent runaway overrides bloating prompts past SDXL's CLIP-77 limit.
+  - `framing_hints?: string[]` — up to 32 entries, each ≤128 chars. Replaces the pod's pinned 10-entry cycle.
+  - `act_mood?: Record<string, string>` — keyed by act name, values ≤256 chars. Merges over the pod-side defaults.
+- **`AdetailerOverrides`** extended: `face_confidence` (0..1) and `extra_steps` (0..16). Closes the gaps the comprehensive code audit identified.
+- **`WanDiffusionOverrides`** extended: `wan_negative_prompt` (≤1024 chars). Replaces the pod-pinned `WAN_DEFAULT_NEGATIVE` per render; the pod was already reading `wan_negative_prompt` off the config block but the key wasn't in the override schema, so it was unreachable from the payload.
+
+### Wiring
+
+`normalizePromptTemplatesOverrides` validates scalars + the two structural fields; drop-on-invalid (pod re-validates). `buildSubmitPayload` and `buildFinalizePayload` forward the new field. `handleRenderSubmit` and the finalize handler accept it from the request body and forward through.
+
+### Tests
+
+473/473 still passing, type-check clean.
+
+### What now stays in the image
+
+After Phase 13, the only hardcoded values left in the docker image are genuine algorithm internals (grabcut bounding-box rectangles, mask blur radii, retry counts), deployment constants (volume paths, VRAM estimates for the pipeline registry), and redundant-with-already-exposed preset structures (`quality_tiers.*` presets that overlap with the `wan_diffusion` overrides). The image is structurally immutable for production iteration.
+
 ## v0.81.0
 
 Phase R regional knobs land in the planner UI with v15-confirmed defaults pre-filled. Companion to vivijure-serverless 0.4.48 which reverted a misguided pod-side default change (0.4.47 had bumped the lora_scale_per_slot default from 0.55 to 0.3 in pod code; that violates the immutable-image directive that the whole 12-phase config pull served). Production defaults belong on the Worker, not in the pod.

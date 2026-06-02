@@ -97,6 +97,9 @@ export interface RenderSubmitArgs {
   lorasOverrides?: LorasOverrides;
   qualityOverrides?: QualityOverrides;
   imageModelsOverrides?: ImageModelsOverrides;
+  // v0.82.0 (Phase 13): prompt-template overrides (vivijure-
+  // serverless 0.4.49+).
+  promptTemplatesOverrides?: PromptTemplatesOverrides;
 }
 
 export interface LoraTrainOverrides {
@@ -342,6 +345,12 @@ export interface AdetailerOverrides {
   // 0..1; lower = catches subtle malformations, higher = fewer
   // false positives.
   hand_confidence?: number;
+  // v0.82.0 (Phase 13): face detector confidence floor; same shape
+  // as hand_confidence. Pod default 0.5.
+  face_confidence?: number;
+  // Extra SDXL steps added to the inpaint pass for each detected
+  // region. Pod default 2. 0..16.
+  extra_steps?: number;
 }
 
 // v0.75.0: wan_diffusion block - Wan 2.1 I2V/T2V model + inference
@@ -373,6 +382,65 @@ export interface WanDiffusionOverrides {
   // Target seconds per shot used to derive num_frames if no shot
   // duration is specified. Pod default 5.0.
   seconds_per_shot?: number;
+  // v0.82.0 (Phase 13): override the vivijure-pinned WAN_DEFAULT_
+  // NEGATIVE prompt that ships with Wan I2V/T2V. Pre-Phase-13 the
+  // pod read wan_negative_prompt off the wan_diffusion config but
+  // the key was never in the override schema, so it was unreachable
+  // from the payload. Pod default: "duplicate, multi-subject,
+  // deformed, ..." (see WAN_DEFAULT_NEGATIVE in wan_video.py).
+  wan_negative_prompt?: string;
+}
+
+// v0.82.0 (Phase 13): prompt-template overrides. Vivijure pre-Phase-13
+// had ~10 hardcoded prompt strings in prompt_engine.py + 2 in hand_
+// fix.py used as positive / negative scaffolding around every keyframe
+// render. Changing them required a docker rebuild. Phase 13 makes them
+// payload-routable via vivijure-serverless 0.4.49+'s
+// prompt_engine.set_template_overrides + hand_fix.set_prompt_overrides
+// (dispatched by orchestrator._install_prompt_templates_overrides).
+//
+// Most fields are flat strings; framing_hints is a list (string per
+// shot, cycled by shot_index % len); act_mood is a {act-name: phrase}
+// map. The pod re-validates structure on receipt.
+export interface PromptTemplatesOverrides {
+  // Quality preamble appended to every keyframe positive (default
+  // "masterpiece, best quality, extremely detailed, sharp focus,
+  //  professional composition").
+  anatomy_positive_base?: string;
+  // Human-subject anatomy positive (default "perfect anatomy,
+  // correct human proportions, symmetrical face, well-drawn hands,
+  // five fingers on each hand..."). Applied when the scene mentions
+  // a human.
+  anatomy_positive_human?: string;
+  // Anime-style anatomy positive (default "anime key visual, clean
+  // linework..."). Applied when style is anime.
+  anatomy_positive_anime?: string;
+  // Global negative used when image_prompting.negative_mode is
+  // "full".
+  anatomy_negative_global?: string;
+  // Focused negative used when image_prompting.negative_mode is
+  // "focused".
+  anatomy_negative_focused?: string;
+  // Portrait-only negative appended for character portraits (e.g.
+  // "long neck, uncanny valley, ...").
+  anatomy_negative_portrait?: string;
+  // Anime-style negative appended when style is anime.
+  anatomy_negative_anime?: string;
+  // Portrait positive ("solo, centered, clear face, single
+  // subject").
+  portrait_positive?: string;
+  // Hand-fix positive injected by the ADetailer hand pass (default
+  // "well-drawn hands, five fingers per hand, ...").
+  hand_positive?: string;
+  // Hand-fix negative injected by the ADetailer hand pass.
+  hand_negative?: string;
+  // List of framing phrases cycled per shot index. Pod default 10
+  // entries: "wide establishing shot", "medium shot", "close-up",
+  // etc. Pass a non-empty list to replace entirely.
+  framing_hints?: string[];
+  // Per-act mood phrases. Pod default keys "Opening", "Rising
+  // Action", "Climax", "Falling Action", "Resolution".
+  act_mood?: Record<string, string>;
 }
 
 // v0.74.0: matching face_lock block from config.yaml. Routes through to
@@ -557,6 +625,8 @@ export interface RenderJobInput {
   loras_overrides?: LorasOverrides;
   quality_overrides?: QualityOverrides;
   image_models_overrides?: ImageModelsOverrides;
+  // v0.82.0 (Phase 13): prompt_templates (vivijure-serverless 0.4.49+).
+  prompt_templates_overrides?: PromptTemplatesOverrides;
 }
 
 // v0.41.0: per-shot SDXL keyframe regeneration. The Worker derives the
@@ -632,6 +702,8 @@ export interface FinalizeArgs {
   topLevelSwitches?: TopLevelSwitches;
   // v0.79.0: same lora_train_extras + loras + quality + image_models as RenderSubmitArgs.
   loraTrainExtras?: LoraTrainExtras;
+  // v0.82.0 (Phase 13): same prompt_templates as RenderSubmitArgs.
+  promptTemplatesOverrides?: PromptTemplatesOverrides;
   lorasOverrides?: LorasOverrides;
   qualityOverrides?: QualityOverrides;
   imageModelsOverrides?: ImageModelsOverrides;
@@ -666,6 +738,7 @@ export interface FinalizeJobInput {
   production_overrides?: ProductionOverrides;
   top_level_switches?: TopLevelSwitches;
   lora_train_extras?: LoraTrainExtras;
+  prompt_templates_overrides?: PromptTemplatesOverrides;
   loras_overrides?: LorasOverrides;
   quality_overrides?: QualityOverrides;
   image_models_overrides?: ImageModelsOverrides;
@@ -843,6 +916,9 @@ export function buildSubmitPayload(args: RenderSubmitArgs): { input: RenderJobIn
   if (ql) input.quality_overrides = ql;
   const im = normalizeImageModelsOverrides(args.imageModelsOverrides);
   if (im) input.image_models_overrides = im;
+  // v0.82.0 (Phase 13): prompt-template overrides.
+  const pt = normalizePromptTemplatesOverrides(args.promptTemplatesOverrides);
+  if (pt) input.prompt_templates_overrides = pt;
   return { input };
 }
 
@@ -921,6 +997,8 @@ export function buildFinalizePayload(args: FinalizeArgs): { input: FinalizeJobIn
   if (qlF) input.quality_overrides = qlF;
   const imF = normalizeImageModelsOverrides(args.imageModelsOverrides);
   if (imF) input.image_models_overrides = imF;
+  const ptF = normalizePromptTemplatesOverrides(args.promptTemplatesOverrides);
+  if (ptF) input.prompt_templates_overrides = ptF;
   return { input };
 }
 
@@ -1232,6 +1310,13 @@ export function normalizeAdetailerOverrides(
   if (typeof raw.hand_confidence === "number" && Number.isFinite(raw.hand_confidence) && raw.hand_confidence >= 0 && raw.hand_confidence <= 1) {
     out.hand_confidence = raw.hand_confidence;
   }
+  // v0.82.0 (Phase 13).
+  if (typeof raw.face_confidence === "number" && Number.isFinite(raw.face_confidence) && raw.face_confidence >= 0 && raw.face_confidence <= 1) {
+    out.face_confidence = raw.face_confidence;
+  }
+  if (typeof raw.extra_steps === "number" && Number.isInteger(raw.extra_steps) && raw.extra_steps >= 0 && raw.extra_steps <= 16) {
+    out.extra_steps = raw.extra_steps;
+  }
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
@@ -1272,6 +1357,58 @@ export function normalizeWanDiffusionOverrides(
   if (typeof raw.cpu_offload === "boolean") out.cpu_offload = raw.cpu_offload;
   if (typeof raw.seconds_per_shot === "number" && Number.isFinite(raw.seconds_per_shot) && raw.seconds_per_shot >= 0.5 && raw.seconds_per_shot <= 60) {
     out.seconds_per_shot = raw.seconds_per_shot;
+  }
+  // v0.82.0 (Phase 13). 1024-char cap mirrors the pod-side limit.
+  if (typeof raw.wan_negative_prompt === "string" && raw.wan_negative_prompt.length > 0 && raw.wan_negative_prompt.length <= 1024) {
+    out.wan_negative_prompt = raw.wan_negative_prompt;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// v0.82.0 (Phase 13): normalize prompt-template overrides. Scalar
+// templates get 1024-char caps so a runaway override can't bloat any
+// scene's prompt past CLIP-77 by itself. framing_hints accepts up to
+// 32 entries each <= 128 chars. act_mood accepts string-keyed string
+// values with a 256-char value cap. Drop-on-invalid; pod re-validates.
+const _TEMPLATE_SCALAR_KEYS = [
+  "anatomy_positive_base",
+  "anatomy_positive_human",
+  "anatomy_positive_anime",
+  "anatomy_negative_global",
+  "anatomy_negative_focused",
+  "anatomy_negative_portrait",
+  "anatomy_negative_anime",
+  "portrait_positive",
+  "hand_positive",
+  "hand_negative",
+] as const;
+
+export function normalizePromptTemplatesOverrides(
+  raw: PromptTemplatesOverrides | undefined,
+): PromptTemplatesOverrides | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: PromptTemplatesOverrides = {};
+  for (const k of _TEMPLATE_SCALAR_KEYS) {
+    const v = (raw as Record<string, unknown>)[k];
+    if (typeof v === "string" && v.length > 0 && v.length <= 1024) {
+      (out as Record<string, string>)[k] = v;
+    }
+  }
+  if (Array.isArray(raw.framing_hints)) {
+    const cleaned = raw.framing_hints
+      .filter((s): s is string => typeof s === "string" && s.trim().length > 0 && s.length <= 128)
+      .slice(0, 32);
+    if (cleaned.length > 0) out.framing_hints = cleaned;
+  }
+  if (raw.act_mood && typeof raw.act_mood === "object" && !Array.isArray(raw.act_mood)) {
+    const moodOut: Record<string, string> = {};
+    for (const [k, v] of Object.entries(raw.act_mood)) {
+      if (typeof k === "string" && k.trim().length > 0
+        && typeof v === "string" && v.trim().length > 0 && v.length <= 256) {
+        moodOut[k.trim()] = v.trim();
+      }
+    }
+    if (Object.keys(moodOut).length > 0) out.act_mood = moodOut;
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }

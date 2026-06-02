@@ -1524,6 +1524,8 @@ interface RenderSubmitRequest {
   lorasOverrides?: unknown;
   qualityOverrides?: unknown;
   imageModelsOverrides?: unknown;
+  // v0.82.0 (Phase 13): prompt_templates (vivijure-serverless 0.4.49+).
+  promptTemplatesOverrides?: unknown;
 }
 
 async function handleRenderSubmit(request: Request, env: Env): Promise<Response> {
@@ -1758,6 +1760,11 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
     imageModelsOverrides:
       body.imageModelsOverrides && typeof body.imageModelsOverrides === "object"
         ? (body.imageModelsOverrides as RenderSubmitArgs["imageModelsOverrides"])
+        : undefined,
+    // v0.82.0 (Phase 13): prompt_templates passthrough.
+    promptTemplatesOverrides:
+      body.promptTemplatesOverrides && typeof body.promptTemplatesOverrides === "object"
+        ? (body.promptTemplatesOverrides as RenderSubmitArgs["promptTemplatesOverrides"])
         : undefined,
   };
 
@@ -2438,6 +2445,7 @@ async function handleFinalizeSubmit(
   let bodyProductionOverrides: RenderSubmitArgs["productionOverrides"] | undefined;
   let bodyTopLevelSwitches: RenderSubmitArgs["topLevelSwitches"] | undefined;
   let bodyLoraTrainExtras: RenderSubmitArgs["loraTrainExtras"] | undefined;
+  let bodyPromptTemplatesOverrides: RenderSubmitArgs["promptTemplatesOverrides"] | undefined;
   let bodyLorasOverrides: RenderSubmitArgs["lorasOverrides"] | undefined;
   let bodyQualityOverrides: RenderSubmitArgs["qualityOverrides"] | undefined;
   let bodyImageModelsOverrides: RenderSubmitArgs["imageModelsOverrides"] | undefined;
@@ -2469,6 +2477,7 @@ async function handleFinalizeSubmit(
         lorasOverrides?: unknown;
         qualityOverrides?: unknown;
         imageModelsOverrides?: unknown;
+        promptTemplatesOverrides?: unknown;
       };
       if (typeof parsed?.audioKey === "string" && parsed.audioKey.length > 0) {
         bodyAudioKey = parsed.audioKey;
@@ -2627,6 +2636,14 @@ async function handleFinalizeSubmit(
       ) {
         bodyImageModelsOverrides = parsed.imageModelsOverrides as RenderSubmitArgs["imageModelsOverrides"];
       }
+      // v0.82.0 (Phase 13).
+      if (
+        parsed?.promptTemplatesOverrides
+        && typeof parsed.promptTemplatesOverrides === "object"
+        && !Array.isArray(parsed.promptTemplatesOverrides)
+      ) {
+        bodyPromptTemplatesOverrides = parsed.promptTemplatesOverrides as RenderSubmitArgs["promptTemplatesOverrides"];
+      }
       if (parsed?.castLoras !== undefined) {
         if (
           typeof parsed.castLoras !== "object" ||
@@ -2768,6 +2785,7 @@ async function handleFinalizeSubmit(
     lorasOverrides: bodyLorasOverrides,
     qualityOverrides: bodyQualityOverrides,
     imageModelsOverrides: bodyImageModelsOverrides,
+    promptTemplatesOverrides: bodyPromptTemplatesOverrides,
   });
   if (!result.ok) {
     return json(

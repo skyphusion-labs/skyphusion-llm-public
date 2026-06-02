@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.103.0
+
+Added LLaVA 1.5 7B (`@cf/llava-hf/llava-1.5-7b-hf`), an image-to-text (image Q&A) model.
+
+### What ships
+
+- `src/models.ts`: new catalog row, surfaced as a vision chat model (`type: "chat"`, `capabilities: ["vision"]`, no streaming) so it reuses the existing attach-an-image UI with no frontend changes.
+- `src/index.ts` `runChat`: a dispatch branch for LLaVA. Unlike chat models it takes `{ image: number[] (raw bytes), prompt, max_tokens }`, not `{ messages }`, and is single-shot (prior turns and system prompt are not threaded). Requires an image attachment (400 otherwise). Goes through the AI Gateway normally (JSON in/out, no stream).
+- `src/output-extract.ts`: handle LLaVA's `{ description }` output shape (+ test).
+
+### Notes
+
+LLaVA 1.5 is older/weaker than the existing vision chat models (Llama 3.2 11B vision, Llama 4 Scout, Gemma, Mistral Small 3.1, plus Claude/Gemini vision); it's offered as a lightweight single-shot image-describe option, not a capability upgrade. Multi-turn follow-ups re-run against only the currently attached image.
+
 ## v0.102.0
 
 Corrected the SDXL stored mime to `image/png`. v0.100.0 set `image/jpeg` based on the model doc's stated `image/jpg` content-type, but a live generation showed the binding actually returns PNG bytes (`file` reports PNG). The stored artifact mime now matches the bytes; SDXL no longer special-cases the drained-stream mime (all stream-output image models emit PNG).

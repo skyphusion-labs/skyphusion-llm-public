@@ -118,6 +118,10 @@ export const MODELS: ModelEntry[] = [
   { id: "@cf/google/gemma-3-12b-it",                    label: "Gemma 3 12B (vision, 128K)",   group: "Chat \u00b7 Google",   type: "chat", capabilities: ["vision"], streaming: true },
   { id: "@cf/ibm-granite/granite-4.0-h-micro",          label: "Granite 4.0 Micro (IBM)",      group: "Chat \u00b7 Other",    type: "chat", capabilities: [], streaming: true },
   { id: "@hf/nousresearch/hermes-2-pro-mistral-7b",     label: "Hermes 2 Pro (function calling)", group: "Chat \u00b7 Other", type: "chat", capabilities: [], streaming: true },
+  // LLaVA 1.5: image-to-text, single-shot. Surfaced as a vision chat model so
+  // the attach UI works, but runChat routes it to the { image, prompt } wire
+  // format. No streaming (omitted): it returns one { description } per call.
+  { id: "@cf/llava-hf/llava-1.5-7b-hf",                 label: "LLaVA 1.5 7B (image Q&A, single-shot)", group: "Chat \u00b7 Other", type: "chat", capabilities: ["vision"] },
   { id: "@cf/meta/llama-3.2-1b-instruct",               label: "Llama 3.2 1B (tiny, cheap)",   group: "Chat \u00b7 Meta",     type: "chat", capabilities: [], streaming: true },
 
   // ---- Image generation ----

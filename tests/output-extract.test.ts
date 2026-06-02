@@ -71,6 +71,10 @@ describe("extractOutput", () => {
     expect(extractOutput(r)).toBe("gemini answer");
   });
 
+  it("reads LLaVA image-to-text { description }", () => {
+    expect(extractOutput({ description: "a cat on a mat" })).toBe("a cat on a mat");
+  });
+
   it("falls back to JSON.stringify on an unrecognized shape", () => {
     const weird = { nope: true };
     expect(extractOutput(weird)).toBe(JSON.stringify(weird));

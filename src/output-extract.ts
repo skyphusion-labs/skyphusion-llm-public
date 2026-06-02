@@ -60,6 +60,9 @@ export function extractOutput(result: unknown): string {
     if (text) return text;
   }
 
+  // LLaVA 1.5 image-to-text (@cf/llava-hf/llava-1.5-7b-hf): { description }
+  if (typeof r?.description === "string") return r.description;
+
   return JSON.stringify(result);
 }
 

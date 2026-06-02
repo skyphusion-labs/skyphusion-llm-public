@@ -556,6 +556,16 @@ export interface VideoConsistencyOverrides {
 // from config.yaml's production.multi_character block. Routes through
 // to vivijure-serverless 0.4.23+'s _parse_multi_character_overrides.
 // All fields optional; missing entries fall back to the pod's defaults.
+//
+// v0.85.0: Phase R fields (engine, lora_scale_per_slot,
+// ip_adapter_scale_per_slot) declared and normalized. They were already
+// in the pod's _MULTI_CHARACTER_OVERRIDE_KEYS (vivijure-serverless
+// 0.4.42+) but the Worker normalizer was the pre-Phase-R version, so
+// every regional-tuning attempt from v15 forward was silently dropped
+// before the payload left the Worker. The pod fell through to its
+// 0.55 / 0.7 defaults, which is why v15-v19 looked stuck regardless
+// of payload changes. Caught when 0.4.52 made the pod refuse to
+// default and the silently-dropped fields produced a regional fail.
 export interface MultiCharacterOverrides {
   // "auto" composites only when a scene has 2+ slots; "always" forces
   // composite mode whenever any slot is present; "off" skips composite
@@ -573,6 +583,20 @@ export interface MultiCharacterOverrides {
   // "layer" overlays the panels with a feathered alpha mask;
   // "side_by_side" tiles them horizontally.
   layout?: "layer" | "side_by_side";
+  // v0.85.0 / pod 0.4.42 Phase R: pick the multi-character render path.
+  // "regional" runs one SDXL pass with per-slot IP-Adapter masks +
+  // attached LoRAs (single coherent frame). "composite_legacy" is the
+  // pre-Phase-R panel-and-grabcut path (kept for fallback). When unset,
+  // the pod default is "regional".
+  engine?: "regional" | "composite_legacy";
+  // v0.85.0 / pod 0.4.42 Phase R: LoRA weight per slot for the regional
+  // path. Range 0 to 2. Smoke v15 baseline is 0.3. 0.4.52 made this a
+  // required field on the pod side; the Worker must send it.
+  lora_scale_per_slot?: number;
+  // v0.85.0 / pod 0.4.42 Phase R: IP-Adapter weight per slot for the
+  // regional path. Range 0 to 2. Smoke v15 baseline is 0.7. 0.4.52
+  // made this a required field on the pod side.
+  ip_adapter_scale_per_slot?: number;
 }
 
 // What the vivijure-serverless rp_handler.py reads off the job input. Field
@@ -1617,6 +1641,31 @@ export function normalizeMultiCharacterOverrides(
   }
   if (raw.layout === "layer" || raw.layout === "side_by_side") {
     out.layout = raw.layout;
+  }
+  // v0.85.0: Phase R fields. The pod (vivijure-serverless 0.4.42+) has
+  // accepted these in _MULTI_CHARACTER_OVERRIDE_KEYS since Phase R,
+  // but the Worker normalizer was the pre-Phase-R version and silently
+  // dropped them. Without these the pod falls through to its built-in
+  // defaults (now removed in 0.4.52, where the missing fields trigger
+  // a regional-fail + composite_legacy fallback).
+  if (raw.engine === "regional" || raw.engine === "composite_legacy") {
+    out.engine = raw.engine;
+  }
+  if (
+    typeof raw.lora_scale_per_slot === "number"
+    && Number.isFinite(raw.lora_scale_per_slot)
+    && raw.lora_scale_per_slot >= 0
+    && raw.lora_scale_per_slot <= 2
+  ) {
+    out.lora_scale_per_slot = raw.lora_scale_per_slot;
+  }
+  if (
+    typeof raw.ip_adapter_scale_per_slot === "number"
+    && Number.isFinite(raw.ip_adapter_scale_per_slot)
+    && raw.ip_adapter_scale_per_slot >= 0
+    && raw.ip_adapter_scale_per_slot <= 2
+  ) {
+    out.ip_adapter_scale_per_slot = raw.ip_adapter_scale_per_slot;
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }

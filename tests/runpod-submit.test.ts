@@ -12,6 +12,7 @@ import {
   buildCancelUrl,
   deriveProjectFromBundleKey,
   isValidJobId,
+  normalizeMultiCharacterOverrides,
   normalizeRunpodResponse,
 } from "../src/runpod-submit";
 
@@ -378,6 +379,106 @@ describe("isValidJobId", () => {
   it("rejects ids longer than 128 chars", () => {
     expect(isValidJobId("a".repeat(128))).toBe(true);
     expect(isValidJobId("a".repeat(129))).toBe(false);
+  });
+});
+
+describe("normalizeMultiCharacterOverrides (v0.85.0: Phase R fields)", () => {
+  // The pre-v0.85.0 normalizer only whitelisted mode, auto_when_multi_slot,
+  // max_slots, feather_px, layout. Phase R added engine, lora_scale_per_
+  // slot, ip_adapter_scale_per_slot on the pod side back in 0.4.42 but
+  // the Worker normalizer was never updated, so every Worker request that
+  // tried to tune Phase R was silently sending an empty payload and the
+  // pod fell through to its built-in defaults. Caught when pod 0.4.52
+  // refused to default and surfaced the missing fields. These tests pin
+  // the contract so the same gap cannot reopen.
+  it("passes engine='regional' through", () => {
+    const out = normalizeMultiCharacterOverrides({ engine: "regional" });
+    expect(out).toEqual({ engine: "regional" });
+  });
+
+  it("passes engine='composite_legacy' through", () => {
+    const out = normalizeMultiCharacterOverrides({ engine: "composite_legacy" });
+    expect(out).toEqual({ engine: "composite_legacy" });
+  });
+
+  it("drops an unrecognized engine string", () => {
+    const out = normalizeMultiCharacterOverrides({
+      engine: "experimental" as unknown as "regional",
+    });
+    expect(out).toBeUndefined();
+  });
+
+  it("passes lora_scale_per_slot at the smoke v15 baseline", () => {
+    const out = normalizeMultiCharacterOverrides({ lora_scale_per_slot: 0.3 });
+    expect(out).toEqual({ lora_scale_per_slot: 0.3 });
+  });
+
+  it("passes ip_adapter_scale_per_slot at the smoke v15 baseline", () => {
+    const out = normalizeMultiCharacterOverrides({ ip_adapter_scale_per_slot: 0.7 });
+    expect(out).toEqual({ ip_adapter_scale_per_slot: 0.7 });
+  });
+
+  it("accepts the regional bundle the smoke v20 script sends", () => {
+    const out = normalizeMultiCharacterOverrides({
+      engine: "regional",
+      lora_scale_per_slot: 0.3,
+      ip_adapter_scale_per_slot: 0.7,
+    });
+    expect(out).toEqual({
+      engine: "regional",
+      lora_scale_per_slot: 0.3,
+      ip_adapter_scale_per_slot: 0.7,
+    });
+  });
+
+  it("drops lora_scale_per_slot below 0", () => {
+    const out = normalizeMultiCharacterOverrides({ lora_scale_per_slot: -0.1 });
+    expect(out).toBeUndefined();
+  });
+
+  it("drops lora_scale_per_slot above 2", () => {
+    const out = normalizeMultiCharacterOverrides({ lora_scale_per_slot: 2.1 });
+    expect(out).toBeUndefined();
+  });
+
+  it("drops ip_adapter_scale_per_slot above 2", () => {
+    const out = normalizeMultiCharacterOverrides({ ip_adapter_scale_per_slot: 2.5 });
+    expect(out).toBeUndefined();
+  });
+
+  it("drops non-numeric scale values", () => {
+    const out = normalizeMultiCharacterOverrides({
+      lora_scale_per_slot: "0.3" as unknown as number,
+      ip_adapter_scale_per_slot: "0.7" as unknown as number,
+    });
+    expect(out).toBeUndefined();
+  });
+
+  it("still passes pre-Phase-R fields (mode / layout / feather_px) alongside Phase R", () => {
+    const out = normalizeMultiCharacterOverrides({
+      mode: "auto",
+      layout: "layer",
+      feather_px: 48,
+      engine: "regional",
+      lora_scale_per_slot: 0.3,
+      ip_adapter_scale_per_slot: 0.7,
+    });
+    expect(out).toEqual({
+      mode: "auto",
+      layout: "layer",
+      feather_px: 48,
+      engine: "regional",
+      lora_scale_per_slot: 0.3,
+      ip_adapter_scale_per_slot: 0.7,
+    });
+  });
+
+  it("returns undefined when raw is undefined", () => {
+    expect(normalizeMultiCharacterOverrides(undefined)).toBeUndefined();
+  });
+
+  it("returns undefined when raw is empty", () => {
+    expect(normalizeMultiCharacterOverrides({})).toBeUndefined();
   });
 });
 

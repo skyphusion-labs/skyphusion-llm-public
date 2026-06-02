@@ -1367,7 +1367,7 @@ transcriptEl.addEventListener("click", handleCastSendAction);
 // v0.87.0: send-to-cast affordance for chat image artifacts.
 // loadCastList caches the list per page-load; cache invalidates on a
 // successful POST so the next open re-fetches (mostly to pick up a new
-// portrait if Megan made one in the cast UI between sends).
+// portrait if one was made in the cast UI between sends).
 let _castListPromise = null;
 async function loadCastList() {
   if (_castListPromise) return _castListPromise;

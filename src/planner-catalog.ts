@@ -23,7 +23,7 @@ const PLANNING_MODEL_IDS: readonly string[] = [
   "xai/grok-4.20-multi-agent-0309",
   "xai/grok-build-0.1",
   // Workers AI text (frontier; v0.89.0 added Kimi K2.6, Gemma 4 26B,
-  // Qwen3 30B MoE so Megan has open-weight options alongside the
+  // Qwen3 30B MoE so users have open-weight options alongside the
   // BYOK frontier models)
   "@cf/zai-org/glm-4.7-flash",
   "@cf/openai/gpt-oss-120b",

@@ -64,10 +64,13 @@ import {
   deriveProjectFromBundleKey,
   isValidJobId,
   pollRenderJob,
+  submitAnalyzeAudioJob,
   submitFinalizeJob,
   submitRegenShotJob,
   submitRenderJob,
   submitTrainLoraJob,
+  parseAudioBeatPlan,
+  type AudioAnalyzeRequest,
   type RenderSubmitArgs,
 } from "./runpod-submit";
 import {
@@ -499,6 +502,15 @@ export default {
     // it to R2 at bundles/<projectName>.tar.gz, returns the key + size.
     if (url.pathname === "/api/storyboard/bundle" && request.method === "POST") {
       return handleStoryboardBundle(request, env);
+    }
+    // v0.105.0: audio beat-sync. Submit + poll an analyze_audio job (pod
+    // action shipped in vivijure-serverless 0.4.59). Mirrors the render pair.
+    if (url.pathname === "/api/audio/analyze" && request.method === "POST") {
+      return handleAudioAnalyzeSubmit(request, env);
+    }
+    const aj = url.pathname.match(/^\/api\/audio\/analyze\/([A-Za-z0-9_-]+)$/);
+    if (aj && request.method === "GET") {
+      return handleAudioAnalyzePoll(env, aj[1]);
     }
     // v0.32.0: submit a render job to the vivijure-serverless RunPod endpoint.
     if (url.pathname === "/api/storyboard/render" && request.method === "POST") {
@@ -1547,6 +1559,74 @@ interface RenderSubmitRequest {
   imageModelsOverrides?: unknown;
   // v0.82.0 (Phase 13): prompt_templates (vivijure-serverless 0.4.49+).
   promptTemplatesOverrides?: unknown;
+}
+
+// v0.105.0: audio beat-sync. Submit an analyze_audio job; poll mirrors the
+// render poll. See docs/audio-beat-sync.md.
+async function handleAudioAnalyzeSubmit(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  let body: AudioAnalyzeRequest;
+  try {
+    body = await request.json<AudioAnalyzeRequest>();
+  } catch {
+    return json({ ok: false, error: "Invalid JSON" }, { status: 400 });
+  }
+  if (typeof body.audioKey !== "string" || body.audioKey.length === 0) {
+    return json({ ok: false, error: "audio_key required" }, { status: 400 });
+  }
+  if (!/^(audio|out)\/.+/.test(body.audioKey)) {
+    return json({ ok: false, error: "audioKey must be an audio/ or out/ R2 key" }, { status: 400 });
+  }
+  if (body.clipSeconds !== undefined && (typeof body.clipSeconds !== "number" || body.clipSeconds <= 0)) {
+    return json({ ok: false, error: "clipSeconds must be a positive number" }, { status: 400 });
+  }
+  if (body.mode !== undefined && body.mode !== "beat" && body.mode !== "duration") {
+    return json({ ok: false, error: "mode must be 'beat' or 'duration'" }, { status: 400 });
+  }
+  // Ensure the key lives in the GPU-readable bucket (copies out/ -> audio/ if
+  // it's a chat-bucket music-gen output); same routing as the render path.
+  let audioKey: string;
+  try {
+    audioKey = await placeAudioForGpu(env, body.audioKey, userEmail);
+  } catch (err) {
+    return json({ ok: false, error: err instanceof Error ? err.message : String(err) }, { status: 400 });
+  }
+  // Confirm it exists before burning a RunPod call.
+  const head = await env.R2_RENDERS.head(audioKey);
+  if (!head) {
+    return json({ ok: false, error: `audio key not found: ${audioKey}` }, { status: 404 });
+  }
+  const result = await submitAnalyzeAudioJob(env, { ...body, audioKey });
+  if (!result.ok) {
+    return json({ ok: false, error: result.error }, { status: result.status ?? 502 });
+  }
+  return json({ ok: true, jobId: result.view.jobId, status: result.view.status });
+}
+
+async function handleAudioAnalyzePoll(env: Env, jobId: string): Promise<Response> {
+  if (!isValidJobId(jobId)) {
+    return json({ ok: false, error: "invalid jobId" }, { status: 400 });
+  }
+  const result = await pollRenderJob(env, jobId);
+  if (!result.ok) {
+    return json({ ok: false, error: result.error }, { status: result.status ?? 502 });
+  }
+  const view = result.view;
+  const resp: Record<string, unknown> = {
+    ok: true,
+    jobId: view.jobId,
+    status: view.status,
+    statusRaw: view.statusRaw,
+  };
+  if (view.error) resp.error = view.error;
+  if (view.status === "COMPLETED") {
+    const plan = parseAudioBeatPlan(view.output);
+    if (!plan) {
+      return json({ ok: false, error: "could not parse audio analysis output", raw: view.output }, { status: 502 });
+    }
+    resp.output = plan;
+  }
+  return json(resp);
 }
 
 async function handleRenderSubmit(request: Request, env: Env): Promise<Response> {

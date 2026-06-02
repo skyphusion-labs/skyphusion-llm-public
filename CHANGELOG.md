@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.105.0
+
+Audio beat-sync, Worker side (backend). Pairs with the `analyze_audio` pod action in vivijure-serverless 0.4.59; see docs/audio-beat-sync.md. The planner UI hook is a follow-up.
+
+### What ships
+
+- `src/runpod-submit.ts`: `AudioAnalyzeRequest` + `AnalyzeAudioJobInput` types, `buildAnalyzeAudioPayload` (pure, camel->snake, omits defaults), `AudioBeatPlan`/`TimedScene` + `parseAudioBeatPlan` (pod snake_case -> Worker camelCase; null on no valid `mode`; filters malformed `timed_scenes`), and `submitAnalyzeAudioJob` (mirrors `submitRenderJob`).
+- `src/index.ts`: `POST /api/audio/analyze` (`handleAudioAnalyzeSubmit`) and `GET /api/audio/analyze/:jobId` (`handleAudioAnalyzePoll`), mirroring the render submit/poll pair. Submit validates `audioKey` (required, `audio/` or `out/`), `clipSeconds > 0`, `mode in {beat,duration}`; routes the key through `placeAudioForGpu` (copies `out/` chat-bucket music output into `R2_RENDERS` under `audio/`); HEADs `R2_RENDERS` (404 before burning a RunPod call); submits. Poll reuses `pollRenderJob`/`isValidJobId` and parses the COMPLETED `output` via `parseAudioBeatPlan` (502 + raw on parse failure).
+- `tests/audio-analyze.test.ts`: 9 tests for the two pure helpers.
+- `docs/audio-beat-sync.md`: the spec.
+
+### Next
+
+Planner UI: an "analyze beats" button in the audio section that submits + polls, shows BPM/shots/note, and an "apply to storyboard" that writes `timedScenes` into scene `target_seconds`/`start`/`end` (with a `STORYBOARD_MAX_SCENES` cap warning). End-to-end needs the 0.4.59 pod image live on the endpoint.
+
 ## v0.104.0
 
 Added conversational speech-to-text via Deepgram Flux (`@cf/deepgram/flux`) over a WebSocket. Phase 1: a standalone `/stt.html` "voice" widget; flux stays out of the model catalog (it is websocket-only, not a request/response chat/STT model).

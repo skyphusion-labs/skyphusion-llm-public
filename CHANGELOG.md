@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.102.0
+
+Corrected the SDXL stored mime to `image/png`. v0.100.0 set `image/jpeg` based on the model doc's stated `image/jpg` content-type, but a live generation showed the binding actually returns PNG bytes (`file` reports PNG). The stored artifact mime now matches the bytes; SDXL no longer special-cases the drained-stream mime (all stream-output image models emit PNG).
+
 ## v0.101.0
 
 Removed the rembg Cloudflare Container entirely. It was disabled back in v0.98.0 (bg-removal moved pod-side), but the dormant `[[containers]]` config kept making `wrangler deploy` rebuild the container image, and that build started failing on a `requirements.txt` dependency conflict (`pillow==11.0.0`), blocking all deploys.

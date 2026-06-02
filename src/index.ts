@@ -3879,7 +3879,7 @@ async function runImage(request: Request, env: Env, model: ModelEntry, body: Cha
       const bypassGateway = isFlux2
         || model.id === "@cf/leonardo/phoenix-1.0"
         || model.id === "@cf/lykon/dreamshaper-8-lcm"
-        || isSdxl; // SDXL returns a ReadableStream (image/jpg); gateway can't proxy it
+        || isSdxl; // SDXL returns a ReadableStream image; gateway can't proxy it
 
       let runParams: unknown;
 
@@ -3981,8 +3981,10 @@ async function runImage(request: Request, env: Env, model: ModelEntry, body: Cha
           bytes.set(c, offset);
           offset += c.length;
         }
-        // SDXL streams JPEG; Phoenix/Dreamshaper stream PNG.
-        mime = isSdxl ? "image/jpeg" : "image/png";
+        // All stream-output image models here emit PNG bytes. (The SDXL docs
+        // claim image/jpg, but the binding's actual output is PNG, confirmed
+        // live, so we don't special-case it.)
+        mime = "image/png";
       } else {
         const b64 = (result as { image?: string })?.image;
         if (!b64 || typeof b64 !== "string") {

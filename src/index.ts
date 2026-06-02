@@ -53,7 +53,6 @@ import { isZip, unzip } from "./zip";
 import { parseDiscordExport, chunkDiscordMessages } from "./discord";
 import { callAnthropic, callAnthropicStream } from "./providers/anthropic";
 import { callXai, callXaiStream } from "./providers/xai";
-import { callBedrockNova, callBedrockNovaStream, callBedrockPegasus } from "./providers/bedrock";
 import { planStoryboard, refineStoryboard, type PlannerCharacter } from "./planner";
 import { findPlanningModel, PLANNING_MODELS } from "./planner-catalog";
 import { serializeStoryboardYaml } from "./planner-yaml";
@@ -353,7 +352,7 @@ async function r2KeyToDataUri(env: Env, key: string, userEmail: string): Promise
 // carry an R2 `key` (an artifact already produced in this conversation)
 // instead of inline `data`. Hydrate `data` from R2 once, here at the request
 // boundary, so every downstream consumer (vision chat, FLUX.2 reference
-// images, Pegasus video-Q&A) works unchanged. Ownership is enforced by
+// images, image-to-video) works unchanged. Ownership is enforced by
 // r2KeyToDataUri. This is what lets a model use what a previous model in the
 // same conversation generated, with no download/re-upload.
 async function resolveAttachmentKeys(env: Env, attachments: InputAttachment[], userEmail: string): Promise<InputAttachment[]> {
@@ -757,20 +756,14 @@ async function handleChatStream(request: Request, env: Env, ctx: ExecutionContex
   if (!model.streaming) {
     return json({ error: `Model ${model.id} does not support streaming. Use /api/chat (non-streaming) or pick a streaming-capable model.` }, { status: 400 });
   }
-  // Pass 5 (v0.21.0): Anthropic + Workers AI + xAI + Bedrock Nova + OpenAI.
-  // Workers AI catalog entries omit `provider` (the type allows this and the
-  // ModelEntry default per the type comment is "workers-ai"); BYOK providers
-  // and OpenAI set it explicitly.
-  //
-  // Bedrock Pegasus is single-shot video Q&A (uses InvokeModel, not
-  // ConverseStream) and is not flagged streaming in the catalog, so it
-  // would already fail the model.streaming check above. The provider gate
-  // here permits all of bedrock; the catalog flag is the real filter.
+  // Anthropic + Workers AI + xAI + OpenAI + Google. Workers AI catalog
+  // entries omit `provider` (the type allows this and the ModelEntry default
+  // per the type comment is "workers-ai"); BYOK / Unified Billing providers
+  // set it explicitly.
   const isWorkersAI = !model.provider;
   if (
     model.provider !== "anthropic" &&
     model.provider !== "xai" &&
-    model.provider !== "bedrock" &&
     model.provider !== "openai" &&
     model.provider !== "google" &&
     !isWorkersAI
@@ -3627,10 +3620,10 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
       extraText.push(`[Video${fn}${dur}, ${frames.length} evenly-sampled frames attached below]`);
       persistedAtt.push({ type: "video_frames", keys, frame_count: keys.length, duration: att.duration, filename: att.filename });
     } else if (att.type === "video_full") {
-      // Full video file upload for models that need the raw video (Pegasus 1.2).
-      // Stored in R2 so it appears in history; the dispatch reads it back from
-      // the InputAttachment.data field directly (we don't need to fetch it from
-      // R2 since it's already in this request).
+      // Full video file upload. No chat model currently consumes the raw video
+      // (the keyframe path covers vision models); the upload is still stored in
+      // R2 so it appears in history and the plumbing stays ready for a future
+      // video-aware model. Dormant since Bedrock Pegasus was removed in v0.95.0.
       const parsed = att.data ? parseDataUrl(att.data) : null;
       if (!parsed) return json({ error: "Invalid video data URL" }, { status: 400 });
       const bytes = base64ToBytes(parsed.base64);
@@ -3698,7 +3691,7 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
 
   // Build the message array. For Anthropic, system goes as a top-level field
   // on the upstream request (handled inside callAnthropic), not in messages.
-  // For Workers AI, xAI, and Bedrock, we push a role:"system" message.
+  // For Workers AI, xAI, and OpenAI, we push a role:"system" message.
   //
   // Prior turns of this conversation go in as alternating user/assistant
   // text messages. Multimodal content (images) from prior turns is NOT
@@ -3727,16 +3720,6 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
       const r = await callXai(env, model, messages);
       result = r.raw;
       logId = r.logId;
-    } else if (model.provider === "bedrock") {
-      // Pegasus uses a totally different API shape (InvokeModel + video media);
-      // Nova family uses Converse. Route accordingly.
-      if (model.byok_alias?.startsWith("twelvelabs.pegasus")) {
-        const r = await callBedrockPegasus(env, model, body.user_input, body.attachments ?? []);
-        result = r.raw;
-      } else {
-        const r = await callBedrockNova(env, model, effectiveSystemPrompt || undefined, messages);
-        result = r.raw;
-      }
     } else if (model.provider === "google") {
       const r = await callGemini(env, model, effectiveSystemPrompt || undefined, messages);
       result = r.raw;
@@ -4459,10 +4442,9 @@ async function runChatStream(request: Request, env: Env, model: ModelEntry, body
       extraText.push(`[Video${fn}${dur}, ${frames.length} evenly-sampled frames attached below]`);
       persistedAtt.push({ type: "video_frames", keys, frame_count: keys.length, duration: att.duration, filename: att.filename });
     } else if (att.type === "video_full") {
-      // Anthropic Messages API doesn't accept raw video. Reject explicitly
-      // so the user picks a different model rather than getting silent
-      // truncation. (Pegasus is the only video-aware model and it's non-streaming.)
-      return json({ error: "Anthropic streaming does not accept raw video attachments. Use a non-streaming model that supports video, or attach extracted frames instead." }, { status: 400 });
+      // No streaming model accepts raw video; reject explicitly so the user
+      // attaches extracted frames instead of getting silent truncation.
+      return json({ error: "Raw video attachments are not accepted on the streaming path. Attach extracted frames instead." }, { status: 400 });
     } else if (att.type === "document") {
       const r = buildDocumentAttachment(att);
       if ("error" in r) return json({ error: r.error }, { status: 400 });
@@ -4556,8 +4538,6 @@ async function runChatStream(request: Request, env: Env, model: ModelEntry, body
         streamGenerator = callAnthropicStream(env, model, effectiveSystemPrompt || undefined, messages, upstreamAbort.signal);
       } else if (model.provider === "xai") {
         streamGenerator = callXaiStream(env, model, messages, upstreamAbort.signal);
-      } else if (model.provider === "bedrock") {
-        streamGenerator = callBedrockNovaStream(env, model, effectiveSystemPrompt || undefined, messages, upstreamAbort.signal);
       } else if (model.provider === "openai") {
         streamGenerator = callOpenAIStream(env, model, messages, upstreamAbort.signal);
       } else if (model.provider === "google") {

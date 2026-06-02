@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.95.0
+
+Removed Amazon Bedrock entirely (Nova family + TwelveLabs Pegasus) and the `aws4fetch` dependency it pulled in.
+
+### Why
+
+Bedrock was the only provider requiring a second cloud's credentials (AWS IAM + SigV4), which runs against the consolidation onto Cloudflare Unified Billing. The four Nova chat models were redundant with stronger models already in the catalog (and their advertised vision was never wired), and Pegasus 1.2 was implemented as a coding exercise with no real use case. Dropping all of it sheds the lone AWS-BYOK setup burden, a runtime dependency, and a chunk of dedicated dispatch/parser code.
+
+### What ships
+
+- Deleted `src/providers/bedrock.ts`, `src/parsers/bedrock-eventstream.ts`, and `tests/bedrock-eventstream.test.ts`.
+- `src/models.ts`: removed the 5 Bedrock catalog rows and the `"bedrock"` provider from the union.
+- `src/index.ts`: removed the Bedrock import and the sync + streaming dispatch branches; simplified the streaming-provider gate.
+- `src/env.ts`: removed `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `AWS_REGION_PEGASUS`.
+- `src/output-extract.ts`: removed the Bedrock Converse / Pegasus InvokeModel response-shape branches and the Bedrock camelCase usage keys (plus their tests).
+- `package.json`: dropped the `aws4fetch` dependency; description now reads 33 models across 5 providers.
+- Docs: removed the Bedrock section from `README.md` and all Bedrock references across `README.md`, `CONTRIBUTING.md`, and `wrangler.example.toml`.
+
+Also folded in stale-doc cleanup from v0.93.0: the README "Anthropic models" section now documents Unified Billing (keyless `cf-aig-authorization`) instead of the removed BYOK key.
+
+### Note
+
+The `video_full` attachment path is retained but dormant; Pegasus was its only consumer. No chat model currently reads raw video (vision models use the 8-keyframe path).
+
 ## v0.94.0
 
 Storyboard-planner picker synced with the frontier hosted flagships and pruned of a model that does not belong.

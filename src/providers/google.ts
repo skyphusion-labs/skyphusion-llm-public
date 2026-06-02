@@ -14,7 +14,7 @@
 //               usageMetadata: { promptTokenCount, candidatesTokenCount, ... } }.
 //
 // So this needs a transform from the worker's internal OpenAI-style message
-// array, the same way Anthropic and Bedrock do. Two differences to get right:
+// array, the same way Anthropic does. Two differences to get right:
 //   - Roles: Gemini uses "user" and "model" (no "assistant", no "system" turn).
 //     The system prompt is hoisted to systemInstruction by the caller (runChat
 //     keeps it out of `messages` for provider "google"), but we also defensively

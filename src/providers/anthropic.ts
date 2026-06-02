@@ -79,8 +79,7 @@ function transformToAnthropic(
 // callAnthropicStream (eventstream). The transform, URL, auth headers, and
 // body shape are identical between the two; only stream:true on the body
 // and accept:text/event-stream on the headers differ, conditional on
-// opts.stream. Mirrors the v0.17.2 prepareXaiRequest / prepareBedrockNovaRequest
-// pattern.
+// opts.stream. Mirrors the v0.17.2 prepareXaiRequest pattern.
 
 async function prepareAnthropicRequest(
   env: Env,

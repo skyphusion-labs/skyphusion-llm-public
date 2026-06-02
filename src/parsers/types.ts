@@ -2,10 +2,10 @@
 //
 // ProviderStreamEvent is the normalized envelope every provider's streaming
 // parser yields. The worker layers above (callXaiStream, callAnthropicStream,
-// callBedrockNovaStream, callWorkersAIStream, plus runChatStream that consumes
-// them) are all written against this shape, so each provider's specific wire
-// format (OpenAI-style SSE, Anthropic named-event SSE, Bedrock binary
-// eventstream) gets translated to this common type at the parser boundary.
+// callGeminiStream, callOpenAIStream, callWorkersAIStream, plus runChatStream
+// that consumes them) are all written against this shape, so each provider's
+// specific wire format (OpenAI-style SSE, Anthropic named-event SSE) gets
+// translated to this common type at the parser boundary.
 //
 // Adding a new field here is a breaking change for the v0.13.0 envelope
 // contract in /api/chat/stream; the worker has to forward whatever lands here

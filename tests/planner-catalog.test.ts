@@ -77,10 +77,6 @@ describe("PLANNING_MODELS", () => {
   it("excludes the Grok Build coding model", () => {
     expect(PLANNING_MODELS.some((m) => m.id === "xai/grok-build-0.1")).toBe(false);
   });
-
-  it("excludes all Bedrock models (no planner dispatch path)", () => {
-    expect(PLANNING_MODELS.some((m) => m.provider === "bedrock")).toBe(false);
-  });
 });
 
 describe("findPlanningModel", () => {

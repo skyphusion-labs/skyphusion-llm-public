@@ -53,13 +53,6 @@ describe("extractOutput", () => {
     expect(extractOutput(r)).toBe("plain text block");
   });
 
-  it("does not confuse the Responses API { output: [] } with the Bedrock { output: {} } shape", () => {
-    // Bedrock's output is an object with .message; the Responses API output is
-    // an array. Both branches must coexist without crossfire.
-    const bedrock = { output: { message: { content: [{ text: "bedrock nova" }] } } };
-    expect(extractOutput(bedrock)).toBe("bedrock nova");
-  });
-
   // --- Existing-shape regression coverage ---
 
   it("reads the Anthropic Messages content array, text blocks only", () => {
@@ -71,14 +64,6 @@ describe("extractOutput", () => {
       ],
     };
     expect(extractOutput(r)).toBe("anthropic answer");
-  });
-
-  it("reads Bedrock Pegasus { message }", () => {
-    expect(extractOutput({ message: "pegasus says", finishReason: "stop" })).toBe("pegasus says");
-  });
-
-  it("reads Bedrock { generations[0].text }", () => {
-    expect(extractOutput({ generations: [{ text: "gen text" }] })).toBe("gen text");
   });
 
   it("reads Gemini candidates content parts", () => {
@@ -106,11 +91,6 @@ describe("extractUsage", () => {
   it("reads Anthropic input_tokens / output_tokens", () => {
     expect(extractUsage({ usage: { input_tokens: 8, output_tokens: 4 } }))
       .toEqual({ in_: 8, out_: 4 });
-  });
-
-  it("reads Bedrock camelCase inputTokens / outputTokens", () => {
-    expect(extractUsage({ usage: { inputTokens: 3, outputTokens: 9 } }))
-      .toEqual({ in_: 3, out_: 9 });
   });
 
   it("reads Gemini usageMetadata promptTokenCount / candidatesTokenCount", () => {

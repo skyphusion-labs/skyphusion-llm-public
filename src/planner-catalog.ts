@@ -9,9 +9,8 @@
 // already exist in MODELS. The catalog test (tests/planner-catalog.
 // test.ts) fails fast if an id is dangling. Note the dispatch constraint:
 // the planner can only reach providers plannerProviderFor() maps to a real
-// path (anthropic, xai, google, workers-ai/aiRun). Bedrock chat models are
-// NOT addable here, they need AWS SigV4 via callBedrockNova, which the
-// planner does not wire up.
+// path (anthropic, xai, google, workers-ai/aiRun); OpenAI rides the
+// workers-ai/aiRun else-branch.
 
 import { MODELS, type ModelEntry } from "./models";
 

@@ -3,11 +3,11 @@
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Typecheck](https://github.com/SkyPhusion/skyphusion-llm-public/actions/workflows/typecheck.yml/badge.svg)](https://github.com/SkyPhusion/skyphusion-llm-public/actions/workflows/typecheck.yml)
 
-A multimodal AI playground deployed as a single Cloudflare Worker. 38 chat models across 6 providers, image / TTS / STT / video / music generation, cross-model artifact reuse within a conversation (v0.21.7), RAG over files of any type (v0.23.0), projects that scope a knowledge base and system prompt, Discord chat-log ingestion, opt-in web search via Tavily and Wikipedia, SSE streaming on supported chat models, and multi-turn conversations. One web UI behind Cloudflare Access, per-user history, R2 for all binary artifacts.
+A multimodal AI playground deployed as a single Cloudflare Worker. 33 chat models across 5 providers, image / TTS / STT / video / music generation, cross-model artifact reuse within a conversation (v0.21.7), RAG over files of any type (v0.23.0), projects that scope a knowledge base and system prompt, Discord chat-log ingestion, opt-in web search via Tavily and Wikipedia, SSE streaming on supported chat models, and multi-turn conversations. One web UI behind Cloudflare Access, per-user history, R2 for all binary artifacts.
 
 <p align="center">
   <img src="docs/screenshot-desktop.jpg" alt="Desktop UI: image generation with FLUX-1 schnell" width="800"><br><br>
-  <img src="docs/screenshot-mobile.jpg" alt="Mobile UI: Claude Haiku 4.5 BYOK chat" width="280">
+  <img src="docs/screenshot-mobile.jpg" alt="Mobile UI: Claude Haiku 4.5 chat" width="280">
 </p>
 
 ## What this is
@@ -15,22 +15,21 @@ A multimodal AI playground deployed as a single Cloudflare Worker. 38 chat model
 A working template for the Cloudflare AI stack. One Worker, no framework, no build step beyond TypeScript. The interesting parts are the patterns, not the model count:
 
 - **Unified `env.AI.run()` binding** drives every modality through one call surface: chat, vision input, image gen, TTS, STT, video gen (Unified Billing), and music gen.
-- **BYOK paths** for Anthropic Claude, xAI Grok, and Amazon Bedrock (Nova family plus TwelveLabs Pegasus 1.2). Each provider has its own dispatch helper that transforms our internal `messages` shape into the provider's format.
-- **SSE streaming** (v0.13.0+) for chat models on all six providers: Anthropic native SSE, Workers AI OpenAI-compatible SSE, xAI OpenAI-compatible SSE, Bedrock Nova `vnd.amazon.eventstream` binary frames, OpenAI proxied (binding-based, v0.21.1), and Gemini (binding-based, v0.21.4). Pegasus stays single-shot.
+- **Per-provider dispatch helpers** for Anthropic Claude (Unified Billing), xAI Grok (BYOK), and Gemini, each transforming our internal `messages` shape into the provider's format. OpenAI and Workers AI ride the `env.AI.run` binding directly.
+- **SSE streaming** (v0.13.0+) for chat models on all five providers: Anthropic native SSE, Workers AI OpenAI-compatible SSE, xAI OpenAI-compatible SSE, OpenAI proxied (binding-based, v0.21.1), and Gemini (binding-based, v0.21.4).
 - **AI Gateway** wraps every call for observability, caching, and rate-limiting.
 - **D1** holds chat metadata, multi-turn conversation history, and RAG chunk text. **R2** holds all binary artifacts. **Vectorize** holds RAG embeddings (768-dim BGE-base). The chat row references R2 keys; nothing binary touches D1.
 - **Cloudflare Workflows** owns long-running Unified Billing video and music generation (30s to 3min jobs). The `LongRunWorkflow` class holds the blocking `env.AI.run` call alive across step boundaries that `ctx.waitUntil` cannot.
 - **Cloudflare Access** gates the entire worker URL. The worker reads `Cf-Access-Authenticated-User-Email` to scope history per user; R2 objects carry `customMetadata.user_email` so cross-user access is impossible even if a UUID is guessed.
-- **Client-side video keyframe extraction** sends 8 evenly-spaced frames to vision-capable chat models instead of uploading the full video file. The exception is TwelveLabs Pegasus 1.2 on Bedrock, which takes the raw video file directly for proper temporal understanding (18MB cap per the Bedrock InvokeModel request limit).
+- **Client-side video keyframe extraction** sends 8 evenly-spaced frames to vision-capable chat models instead of uploading the full video file.
 - **Collapsible model picker** (v0.15.0) groups the ~50 catalog entries across 6 modalities with capability badges (vision, stream) inline.
 
 ## Features
 
-**Chat (38 models across 6 providers; 37 stream-capable):**
+**Chat (33 models across 5 providers; all stream-capable):**
 - Workers AI: Llama 4 Scout, Llama 3.x family, Qwen3 30B / QwQ 32B / Qwen2.5 Coder 32B, DeepSeek R1, Mistral Small 3.1, Gemma 4 26B / Gemma 3 12B, Granite 4 Micro, Nemotron 3 120B, GLM-4.7 Flash, Hermes 2 Pro, GPT-OSS 120B / 20B, Kimi K2.6
-- Anthropic BYOK: Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 4.6, Haiku 4.5 (all streaming)
+- Anthropic (Unified Billing): Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 4.6, Haiku 4.5 (all streaming)
 - xAI BYOK: Grok 4.3, Grok 4.20 (Multi-Agent and Reasoning), Grok Build 0.1 (all streaming as of v0.16.0)
-- Bedrock BYOK: Nova 2 Lite/Pro, Nova Lite/Pro (all streaming as of v0.16.0), TwelveLabs Pegasus 1.2 (single-shot video Q&A)
 - OpenAI (Unified Billing): GPT-5.5, GPT-5.4, GPT-5.4 mini, o4-mini (streaming as of v0.21.1; needs CF credits)
 - Google Gemini (Unified Billing): Gemini 3.1 Pro (streaming as of v0.21.4; needs CF credits)
 
@@ -269,7 +268,7 @@ The `[[workflows]]` binding in `wrangler.toml` declares this (one binding serves
 
 **Audio.** Transcribed via `@cf/openai/whisper-large-v3-turbo` before the model call. Transcript text is prepended to the user message. Raw audio is dropped (not stored). 20 MB cap.
 
-**Video.** Client-side keyframe extraction via HTML5 video + canvas. Eight evenly-spaced frames are pulled at upload time and sent as image content blocks to a vision-capable chat model. The original video file is never uploaded to the worker. This is sampled-frames understanding, not true temporal video reasoning. For raw video understanding, use TwelveLabs Pegasus 1.2 on Bedrock (full file upload, 18MB cap). 100 MB cap on regular video uploads is a browser-side sanity limit.
+**Video.** Client-side keyframe extraction via HTML5 video + canvas. Eight evenly-spaced frames are pulled at upload time and sent as image content blocks to a vision-capable chat model. The original video file is never uploaded to the worker. This is sampled-frames understanding, not true temporal video reasoning. 100 MB cap on regular video uploads is a browser-side sanity limit.
 
 **Text files (v0.24.0).** Attach any text-based file (yaml, json, csv, source code, logs, markdown, etc.) to a chat turn and its contents are inlined into the prompt as a fenced block for the model to analyze, on any chat model (no vision requirement). The frontend decodes the file to UTF-8 text; the worker rejects bytes that don't decode to usable text (binary formats) and truncates very large files at 200k chars to protect the context window. 2 MB browser-side upload cap. This is distinct from RAG document upload (sidebar): inline attachment puts the whole file in this one turn's context, whereas RAG embeds the file for retrieval across turns.
 
@@ -281,48 +280,31 @@ Workers AI billing is per-token / per-image / per-minute depending on model. Fre
 
 D1 is roughly $0.75/GB-month for storage. R2 is roughly $0.015/GB-month with no egress fees inside Cloudflare. Free tiers on D1 and R2 cover small personal use indefinitely.
 
-Anthropic (Claude) and xAI (Grok) models bill against your own provider accounts via BYOK, not Cloudflare. Amazon Bedrock models (Nova family, Pegasus 1.2) bill against your AWS account. Tavily web search bills against your Tavily account (1000 searches/month free tier). See per-provider sections below.
+xAI (Grok) models bill against your own xAI account via BYOK. Anthropic (Claude) and the OpenAI / Gemini proxied models bill against your Cloudflare account via Unified Billing. Tavily web search bills against your Tavily account (1000 searches/month free tier). See per-provider sections below.
 
-## Anthropic models (BYOK)
+## Anthropic models (Unified Billing)
 
-The Anthropic entries in the model menu (Claude Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 4.6, Haiku 4.5) are routed via BYOK (Bring Your Own Key) rather than Cloudflare Unified Billing. The `env.AI.run()` binding doesn't support BYOK for third-party models, so the worker hits the AI Gateway's Anthropic provider endpoint directly with Anthropic-native payloads. The gateway still wraps the call for observability, caching, and rate-limiting.
+The Anthropic entries in the model menu (Claude Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 4.6, Haiku 4.5) run on Cloudflare Unified Billing as of v0.93.0 (they were BYOK before that). The `env.AI.run()` binding doesn't carry Anthropic's native payload shape, so the worker hits the AI Gateway's Anthropic provider endpoint directly with Anthropic-native payloads, but keyless: it sends `cf-aig-authorization: Bearer <CF_AIG_TOKEN>` and no `x-api-key`, so Cloudflare provides the upstream credentials and bills the call. The gateway still wraps it for observability, caching, and rate-limiting.
 
-All five Claude entries support SSE streaming (v0.13.0). Streaming events normalize to the same envelope as Workers AI/xAI/Bedrock streams, so the client doesn't see Anthropic's native event vocabulary.
+All five Claude entries support SSE streaming (v0.13.0). Streaming events normalize to the same envelope as Workers AI / xAI / OpenAI streams, so the client doesn't see Anthropic's native event vocabulary.
 
-There are two ways to authenticate, and the worker supports both:
+### Setup
 
-### Option A (recommended): Store the key in AI Gateway
-
-1. Get an API key from https://console.anthropic.com > Settings > API Keys > Create Key
-2. Dashboard > AI > AI Gateway > select your gateway > Provider Keys > Add API Key > pick Anthropic > paste
+1. Enable Unified Billing for Anthropic on your gateway: Dashboard > AI > AI Gateway > select your gateway > turn on Unified Billing, and confirm a payment method is on the Cloudflare account.
+2. Set the gateway token (also covers Authenticated Gateway if enabled):
+   ```
+   npx wrangler secret put CF_AIG_TOKEN
+   ```
+   The token must be a Cloudflare API token with AI Gateway Run authorization.
 3. Redeploy: `npm run deploy`
 
-The worker sends the request without an `x-api-key` header; the gateway injects the stored key before forwarding to Anthropic. Keys live in Cloudflare Secrets Store, are rotatable in one place, and never appear in worker secrets.
+`CF_AIG_TOKEN` is required; without it the Anthropic dispatch throws a clear error rather than silently failing auth. There is no `ANTHROPIC_API_KEY` anymore.
 
-### Option B: Inline secret
-
-1. Get the key as above
-2. Load it as a Worker secret:
-   ```
-   npx wrangler secret put ANTHROPIC_API_KEY
-   ```
-3. Redeploy
-
-The worker sends the key as `x-api-key` on every request. This overrides any stored key at the gateway level.
-
-### Authenticated Gateway
-
-If your gateway has Authenticated Gateway enabled (recommended for production), also set:
-```
-npx wrangler secret put CF_AIG_TOKEN
-```
-The worker will include the `cf-aig-authorization` header automatically when this is set.
-
-Billing: Anthropic charges your account at their per-token rates. There's no Cloudflare markup on BYOK calls; the gateway just proxies. Caching at the gateway level can reduce duplicate-prompt costs.
+Billing: the call bills against your Cloudflare account at Anthropic's per-token rates through Unified Billing. Gateway caching can reduce duplicate-prompt costs.
 
 ## xAI / Grok models (BYOK)
 
-Grok 4.3, Grok 4.20 (Multi-Agent and Reasoning variants), and Grok Build 0.1 are routed via BYOK against your own xAI account. Same patterns as Anthropic above: stored keys in the gateway dashboard (recommended) or inline Worker secret. xAI is OpenAI-compatible so no message transform is needed.
+Grok 4.3, Grok 4.20 (Multi-Agent and Reasoning variants), and Grok Build 0.1 are routed via BYOK against your own xAI account. This is the one remaining BYOK chat path: store the key in the gateway dashboard (recommended) or set it as an inline Worker secret. xAI is OpenAI-compatible so no message transform is needed.
 
 All four Grok entries support SSE streaming as of v0.16.0. The streaming path requests `stream_options.include_usage: true` so token counts arrive in the final pre-`[DONE]` frame.
 
@@ -345,69 +327,11 @@ Note: Grok 4.x are reasoning models and expect `max_completion_tokens` rather th
 
 Billing: xAI charges your account directly. Pricing as of mid-2026: Grok 4.3 and Grok 4.20 variants at $1.25/$2.50 per million input/output tokens, Grok Build 0.1 at $1.00/$2.00. No Cloudflare markup.
 
-## Amazon Bedrock models (BYOK)
-
-v0.11.0 adds Bedrock support via AWS SigV4 signing using the `aws4fetch` library. Two model families are wired up:
-
-**Nova (Amazon's chat models)**: Nova 2 Lite, Nova 2 Pro, Nova Lite, Nova Pro. All routed through Bedrock's Converse API, which normalizes request/response shapes across model families. All four Nova entries support SSE streaming as of v0.16.0, using Bedrock's `ConverseStream` endpoint and the `vnd.amazon.eventstream` binary framing protocol (parser lives in `callBedrockNovaStream`).
-
-**Pegasus 1.2 (TwelveLabs video-Q&A)**: Single-shot video understanding. Takes a video file + prompt, returns text analysis. Uses Bedrock's `InvokeModel` endpoint with a video-specific request body. Does NOT stream; the model produces one complete analysis per call.
-
-### Setup
-
-```
-npx wrangler secret put AWS_ACCESS_KEY_ID
-npx wrangler secret put AWS_SECRET_ACCESS_KEY
-```
-
-Optionally set `AWS_REGION` (defaults to `us-east-1`) and `AWS_REGION_PEGASUS` (defaults to `us-west-2`, since Pegasus has tighter regional availability than Nova):
-
-```
-npx wrangler secret put AWS_REGION
-npx wrangler secret put AWS_REGION_PEGASUS
-```
-
-### IAM scoping (recommended)
-
-Create an IAM user with only Bedrock invoke permissions. Attach a policy like:
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [{
-    "Effect": "Allow",
-    "Action": [
-      "bedrock:InvokeModel",
-      "bedrock:InvokeModelWithResponseStream"
-    ],
-    "Resource": "*"
-  }]
-}
-```
-
-The user must also have model access requested and approved in the Bedrock console (Console → Bedrock → Model access → Manage model access). Without explicit access, every invoke returns `AccessDeniedException`.
-
-### Pegasus regional limits
-
-Pegasus 1.2 is only generally available in `us-west-2` and `eu-west-1`. Cross-region inference from other US/EU regions can work but may add latency. If your Nova workloads run in `us-east-1` but you also want Pegasus, set `AWS_REGION=us-east-1` for Nova and `AWS_REGION_PEGASUS=us-west-2` for Pegasus.
-
-### Pegasus video size limit
-
-Bedrock's `InvokeModel` endpoint has a 25MB request payload limit. After base64 encoding, that's about 18MB of binary video. The frontend caps Pegasus uploads at 18MB and returns a clear error for larger files. To support bigger videos you'd integrate S3 (Pegasus accepts `s3Location` in `mediaSource` as an alternative to base64). Not implemented in this build.
-
-### Pegasus in multi-turn conversations
-
-Pegasus is fundamentally single-shot: one video + one prompt per call. If you continue a Pegasus conversation past the first turn, you must re-attach the video on each follow-up turn. The frontend will accept the upload but the worker won't reuse the prior turn's video from R2 automatically. A future iteration may auto-attach the prior turn's video on continuation.
-
-### Billing
-
-AWS charges your account directly per https://aws.amazon.com/bedrock/pricing/. Nova family is competitively priced (Nova 2 Lite is the cheapest at fractions of a cent per 1k tokens); Pegasus pricing is per-second of analyzed video duration.
-
 ## OpenAI models (Unified Billing)
 
-GPT-5.5, GPT-5.4, GPT-5.4 mini, and o4-mini (a reasoning model) are routed through Cloudflare Unified Billing, not BYOK. Unlike the Anthropic/xAI/Bedrock chat providers, there is no OpenAI dispatch helper and no `OPENAI_API_KEY` secret for chat: these models ride the generic `env.AI.run("openai/<model>", { messages })` path, the same call surface as the Workers AI hosted chat models, and Cloudflare handles auth and billing against your CF credits.
+GPT-5.5, GPT-5.4, GPT-5.4 mini, and o4-mini (a reasoning model) are routed through Cloudflare Unified Billing, not BYOK. Unlike the xAI chat provider, there is no OpenAI dispatch helper and no `OPENAI_API_KEY` secret for chat: these models ride the generic `env.AI.run("openai/<model>", { messages })` path, the same call surface as the Workers AI hosted chat models, and Cloudflare handles auth and billing against your CF credits.
 
-This is a deliberate re-introduction. OpenAI chat shipped as BYOK in v0.11.0 and was removed in the v0.14.0 consolidation that dropped all non-Anthropic/xAI/Bedrock BYOK paths in favor of Unified Billing. These entries come back on the Unified Billing side of that same decision, so they are not a revert of v0.14.0; the BYOK chat path stays gone.
+This is a deliberate re-introduction. OpenAI chat shipped as BYOK in v0.11.0 and was removed in the v0.14.0 consolidation in favor of Unified Billing. These entries come back on the Unified Billing side of that same decision, so they are not a revert of v0.14.0; the BYOK chat path stays gone.
 
 One narrow BYOK exception exists for image, not chat (v0.22.1): `openai/gpt-image-1.5` can produce transparent PNGs, but the Unified Billing proxy's image schema is strictly `{ prompt, images, quality, size, style }` and rejects `background`/`output_format` (a request with them returns `7003: User Input Error`). Transparency therefore requires a direct call to `api.openai.com`, which does accept those fields. The worker uses an optional `OPENAI_API_KEY` for this single purpose (image only): when set, gpt-image-1.5 goes direct and transparent; when unset, it falls back to the opaque proxy path. See the Image generation section below.
 
@@ -420,7 +344,7 @@ Like all Unified Billing models, these appear in the menu but will fail until yo
 
 ## Google Gemini models (Unified Billing)
 
-Gemini 3.1 Pro (`google/gemini-3.1-pro`) is proxied through Unified Billing. Unlike the OpenAI proxied models, Gemini is **not** OpenAI-shaped through the binding, so it has its own provider module (`src/providers/google.ts`) with a transform in both directions, the same pattern as Anthropic and Bedrock:
+Gemini 3.1 Pro (`google/gemini-3.1-pro`) is proxied through Unified Billing. Unlike the OpenAI proxied models, Gemini is **not** OpenAI-shaped through the binding, so it has its own provider module (`src/providers/google.ts`) with a transform in both directions, the same pattern as Anthropic:
 
 - **Request:** the worker's internal OpenAI-style message array is transformed to Gemini's native `{ contents: [{ role, parts: [{ text }] }] }`. Roles map `assistant -> model` (Gemini has no "assistant"), and the system prompt is hoisted out of the turns into `systemInstruction` rather than sent as a `system` turn.
 - **Response:** Gemini returns `{ candidates: [{ content: { parts: [{ text }] } }], usageMetadata: { promptTokenCount, candidatesTokenCount } }`. `extractOutput`/`extractUsage` have branches for both.
@@ -628,7 +552,7 @@ npx wrangler d1 execute skyphusion-llm-public --remote --file=schema.sql
 
 A model can use what a previous model generated in the same conversation, without download/re-upload. Generate an image with `google/nano-banana-pro`, then switch to `alibaba/hh1-i2v` and the image is already the source; switch to a vision chat model and ask about it; switch to a FLUX.2 model and use it as a reference.
 
-The mechanism is **attachment-by-reference**. An image or full-video attachment may carry an R2 `key` (an artifact already produced in the conversation) instead of inline `data`. `resolveAttachmentKeys` hydrates the key to data once, at the request dispatch boundary, before routing, via `r2KeyToDataUri`, so every consumer (vision chat, FLUX.2 reference, Pegasus video-Q&A, image-to-video) works unchanged. Ownership is enforced: the object's `customMetadata.user_email` must match the requester, so a client can't reference another user's artifact.
+The mechanism is **attachment-by-reference**. An image or full-video attachment may carry an R2 `key` (an artifact already produced in the conversation) instead of inline `data`. `resolveAttachmentKeys` hydrates the key to data once, at the request dispatch boundary, before routing, via `r2KeyToDataUri`, so every consumer (vision chat, FLUX.2 reference, image-to-video) works unchanged. Ownership is enforced: the object's `customMetadata.user_email` must match the requester, so a client can't reference another user's artifact.
 
 The frontend carries the most recent conversation image forward automatically when you switch to an image-consuming model (unless you attached your own). Image-to-video receives it via the `image_key` field; vision chat and FLUX.2 receive it as an attachment-by-key. Video-as-input carry-forward is supported on the backend but not yet auto-wired in the UI.
 
@@ -719,7 +643,7 @@ If your use case is the legal-research pattern (citation accuracy matters, sourc
 
 ## Streaming
 
-`POST /api/chat/stream` accepts the same request body as `POST /api/chat` and returns `text/event-stream`. Available for any chat model flagged `streaming: true` in the catalog (36 models as of v0.21.1, covering all five providers: Anthropic, xAI, Bedrock Nova, Workers AI, and OpenAI proxied).
+`POST /api/chat/stream` accepts the same request body as `POST /api/chat` and returns `text/event-stream`. Available for any chat model flagged `streaming: true` in the catalog (all 33 chat models, covering all five providers: Anthropic, xAI, Workers AI, OpenAI proxied, and Gemini).
 
 Wire format:
 
@@ -735,7 +659,7 @@ Or, on error:
 data: {"type":"error","message":"..."}
 ```
 
-Provider-native event types (Anthropic's `message_start`/`content_block_delta`/etc., Bedrock's `vnd.amazon.eventstream` binary frames, xAI/Workers AI OpenAI-style `data: [DONE]` sentinel) are normalized server-side. The client sees only the envelope above.
+Provider-native event types (Anthropic's `message_start`/`content_block_delta`/etc., xAI/Workers AI/OpenAI OpenAI-style `data: [DONE]` sentinel, Gemini's candidate frames) are normalized server-side. The client sees only the envelope above.
 
 Client disconnect aborts the upstream model call immediately via `AbortSignal`, stopping the token meter mid-generation. Partial responses are NOT persisted; only complete turns reach D1.
 
@@ -747,14 +671,14 @@ Note: AI Gateway does not surface `cf-aig-log-id` on proxied SSE responses, so s
 
 `MODELS` at the top of `src/index.ts`. Each entry has:
 
-- `id`: `@cf/{vendor}/{model}` for Workers AI, `anthropic/{model}` for BYOK Anthropic, `xai/{model}` for BYOK xAI, `bedrock/{model}` for BYOK Bedrock, or `google/{model}` / `bytedance/{model}` / `minimax/{model}` / etc. for Unified Billing video and music partners.
+- `id`: `@cf/{vendor}/{model}` for Workers AI, `anthropic/{model}` for Anthropic (Unified Billing), `xai/{model}` for BYOK xAI, `openai/{model}` / `google/{model}` for Unified Billing chat, or `bytedance/{model}` / `minimax/{model}` / etc. for Unified Billing video and music partners.
 - `label` for the picker
 - `group` for the picker section heading
 - `type`: `"chat"` | `"image"` | `"tts"` | `"video"` | `"stt"` | `"music"`
 - `capabilities`: array. Currently only `"vision"` is recognized; applies to chat models only.
-- `provider` (optional): `"workers-ai"` (default) | `"anthropic"` (BYOK) | `"xai"` (BYOK) | `"bedrock"` (BYOK) | `"google"` / `"bytedance"` / `"minimax"` / `"runwayml"` / `"alibaba"` / `"pixverse"` / `"vidu"` (Unified Billing). Drives the call dispatch.
-- `byok_alias` (optional): for Bedrock chat and xAI video, the upstream model name passed to the provider API.
-- `streaming` (optional, chat only): when `true`, the model is eligible for `POST /api/chat/stream`. As of v0.16.0, Anthropic / Workers AI / xAI / Bedrock Nova are all wired. Bedrock Pegasus is single-shot (no streaming).
+- `provider` (optional): `"workers-ai"` (default) | `"anthropic"` (Unified Billing) | `"xai"` (BYOK) | `"openai"` / `"google"` / `"bytedance"` / `"minimax"` / `"runwayml"` / `"alibaba"` / `"pixverse"` / `"vidu"` (Unified Billing). Drives the call dispatch.
+- `byok_alias` (optional): for xAI video, the upstream model name passed to the provider API.
+- `streaming` (optional, chat only): when `true`, the model is eligible for `POST /api/chat/stream`. All current chat models across the five providers (Anthropic, Workers AI, xAI, OpenAI, Gemini) are wired.
 
 Full Workers AI catalog: https://developers.cloudflare.com/workers-ai/models/. Skip anything tagged "Planned deprecation."
 
@@ -867,9 +791,9 @@ Runs `tsc --noEmit`. The Workers build uses esbuild and skips type checking, so 
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). PRs welcome. Current backlog items that would be especially welcome:
 
-- **Tests for the parsers and transforms**: the Bedrock `vnd.amazon.eventstream` parser (`callBedrockNovaStream`) and the SSE parsers for xAI / Workers AI are unvalidated against real upstream responses. A few golden fixtures plus Vitest would catch a lot.
+- **Tests for the parsers and transforms**: the SSE parsers are exercised by unit fixtures but not validated against real upstream responses. More golden fixtures from live captures would catch drift.
 - **Discriminated-union refactor of `InputAttachment`**: currently a flat shape with optional fields; a proper tagged union would surface real assumptions in the code.
-- **Provider-shared request builders**: `callXai` + `callXaiStream` share ~30 lines, same for `callBedrockNova` + `callBedrockNovaStream`. Factor out URL/headers/body builders.
+- **Provider-shared request builders**: `callXai` + `callXaiStream` share ~30 lines. Factor out URL/headers/body builders.
 - **Upstream BYOK video poll throttle**: client polls every 5s, each currently triggers an upstream call. Adding `last_upstream_check_at` to the chats row would let us throttle to ~1 upstream call per 20-30s while keeping client UX responsive.
 - **Accessibility on the v0.15.0 model picker**: keyboard-accessible (uses `<details>`) but missing `role="combobox"`, `aria-expanded`, `aria-controls`.
 - **RAG chunking quality**: fixed-size chunking within page/sheet boundaries; recursive separator splitting would substantially improve retrieval on technical and legal docs.

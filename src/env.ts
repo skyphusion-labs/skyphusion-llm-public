@@ -1,6 +1,6 @@
 // Worker Env binding (v0.19.0).
 //
-// Extracted from src/index.ts so provider modules (anthropic, xai, bedrock,
+// Extracted from src/index.ts so provider modules (anthropic, xai, google,
 // workers-ai) and future feature modules can import it without circular
 // reference to the worker entry. The runtime binding shape is identical
 // to what wrangler types regenerate from wrangler.toml; this file is the
@@ -40,12 +40,6 @@ export interface Env {
   // requires a direct call to api.openai.com. When this key is set, gpt-image-1.5
   // goes direct + transparent; when unset, it falls back to the opaque proxy path.
   OPENAI_API_KEY?: string;
-  // v0.11.0: AWS credentials for Bedrock BYOK. Scope IAM key to Bedrock invoke only.
-  // AWS_REGION defaults to us-east-1 for Nova; Pegasus 1.2 requires us-west-2 or eu-west-1.
-  AWS_ACCESS_KEY_ID?: string;
-  AWS_SECRET_ACCESS_KEY?: string;
-  AWS_REGION?: string;
-  AWS_REGION_PEGASUS?: string; // optional override for Pegasus calls
   // Required for Anthropic Unified Billing (v0.93.0) and for any gateway with
   // Authenticated Gateway enabled. Bearer token sent as cf-aig-authorization.
   CF_AIG_TOKEN?: string;

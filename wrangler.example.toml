@@ -4,8 +4,8 @@ compatibility_date = "2026-05-01"
 
 # AI binding. The unified binding handles Workers AI models directly and routes
 # third-party Unified Billing models (video and music partners) through the
-# Cloudflare AI Gateway. BYOK chat providers (Anthropic, xAI, Bedrock) bypass
-# the binding and hit the gateway's per-provider endpoints with worker secrets.
+# Cloudflare AI Gateway. Anthropic (Unified Billing) and xAI (BYOK) bypass the
+# binding and hit the gateway's per-provider endpoints with a worker token/key.
 [ai]
 binding = "AI"
 
@@ -75,10 +75,7 @@ enabled = true
 #   GATEWAY_ID=your-gateway-slug
 #
 # Other worker secrets (also set via `npx wrangler secret put <NAME>`):
-#   XAI_API_KEY, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
-#   AWS_REGION (optional, defaults us-east-1; for Nova),
-#   AWS_REGION_PEGASUS (optional, defaults us-west-2; Pegasus only available
-#                       in us-west-2 or eu-west-1),
+#   XAI_API_KEY (xAI BYOK chat),
 #   CF_AIG_TOKEN (required for Anthropic Unified Billing, and for any gateway
 #                 with Authenticated Gateway enabled; v0.93.0 dropped the
 #                 Anthropic BYOK key in favor of this),

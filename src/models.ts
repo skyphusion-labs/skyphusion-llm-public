@@ -15,13 +15,12 @@
 //
 // Catalog conventions for adding a new model:
 //   - Use the upstream's canonical ID for the prefix
-//     (anthropic/, xai/, bedrock/, @cf/<vendor>/, etc.)
+//     (anthropic/, xai/, openai/, google/, @cf/<vendor>/, etc.)
 //   - Include "BYOK" or "needs CF credits" in the label so the picker
 //     makes the billing model obvious to the user
 //   - Set streaming: true if the model can stream and your provider's
-//     stream parser handles it (Anthropic, xAI, Bedrock Nova, Workers AI
-//     are all covered as of v0.16.0)
-//   - For Bedrock chat: set byok_alias to the exact upstream model ID
+//     stream parser handles it (Anthropic, xAI, OpenAI, Google, Workers AI
+//     are all covered)
 //   - For BYOK video: set byok_alias to the provider's model name and
 //     leave provider set to the provider's slug
 
@@ -32,7 +31,6 @@ export type Provider =
   | "xai"
   | "google"
   | "openai"
-  | "bedrock"
   | "bytedance"
   | "minimax"
   | "runwayml"
@@ -56,9 +54,8 @@ export interface ModelEntry {
   // video gen requires Unified Billing on the AI Gateway.
   byok_alias?: string;
   // v0.13.0: when true, the model can be invoked via POST /api/chat/stream
-  // (server-sent events). Pass 1 covers Anthropic only; Pass 2+ will light
-  // up Workers AI, xAI, and Bedrock. Chat models only - irrelevant for
-  // image/tts/video/stt/music types.
+  // (server-sent events). Covers Anthropic, Workers AI, xAI, OpenAI, and
+  // Google. Chat models only - irrelevant for image/tts/video/stt/music types.
   streaming?: boolean;
 }
 
@@ -71,18 +68,6 @@ export const MODELS: ModelEntry[] = [
   { id: "anthropic/claude-opus-4-6",                    label: "Claude Opus 4.6 (Anthropic)",          group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
   { id: "anthropic/claude-sonnet-4-6",                  label: "Claude Sonnet 4.6 (Anthropic)",        group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
   { id: "anthropic/claude-haiku-4-5",                   label: "Claude Haiku 4.5 (Anthropic)",         group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
-
-  // Amazon Bedrock Nova family (v0.11.0, BYOK via AWS SigV4, direct to bedrock-runtime)
-  // All four go through Bedrock's Converse API (unified across model families).
-  { id: "bedrock/amazon.nova-2-lite-v1:0",               label: "Amazon Nova 2 Lite (Bedrock, BYOK)",         group: "Chat \u00b7 Bedrock", type: "chat", capabilities: ["vision"], provider: "bedrock", byok_alias: "amazon.nova-2-lite-v1:0", streaming: true },
-  { id: "bedrock/amazon.nova-2-pro-v1:0",                label: "Amazon Nova 2 Pro (Bedrock, BYOK)",          group: "Chat \u00b7 Bedrock", type: "chat", capabilities: ["vision"], provider: "bedrock", byok_alias: "amazon.nova-2-pro-v1:0", streaming: true },
-  { id: "bedrock/amazon.nova-lite-v1:0",                 label: "Amazon Nova Lite (Bedrock, BYOK)",           group: "Chat \u00b7 Bedrock", type: "chat", capabilities: ["vision"], provider: "bedrock", byok_alias: "amazon.nova-lite-v1:0", streaming: true },
-  { id: "bedrock/amazon.nova-pro-v1:0",                  label: "Amazon Nova Pro (Bedrock, BYOK)",            group: "Chat \u00b7 Bedrock", type: "chat", capabilities: ["vision"], provider: "bedrock", byok_alias: "amazon.nova-pro-v1:0", streaming: true },
-
-  // TwelveLabs Pegasus 1.2 on Bedrock (v0.11.0, video-Q&A via InvokeModel, not Converse).
-  // Requires a video attachment. Region must be us-west-2 or eu-west-1.
-  // Configurable via AWS_REGION_PEGASUS; otherwise falls back to AWS_REGION.
-  { id: "bedrock/twelvelabs.pegasus-1-2-v1:0",           label: "Pegasus 1.2 (TwelveLabs/Bedrock, BYOK)",     group: "Chat \u00b7 Bedrock", type: "chat", capabilities: [], provider: "bedrock", byok_alias: "twelvelabs.pegasus-1-2-v1:0" },
 
   // xAI / Grok (BYOK via Bearer auth or stored keys, routed through AI Gateway)
   { id: "xai/grok-4.3",                                 label: "Grok 4.3 (xAI, BYOK)",                       group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai", streaming: true },

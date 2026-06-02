@@ -18,6 +18,11 @@ import { getDocumentProxy } from "unpdf";
 import * as XLSX from "xlsx";
 import { WorkflowEntrypoint, WorkflowStep } from "cloudflare:workers";
 import type { WorkflowEvent } from "cloudflare:workers";
+// v0.94.0+: Cloudflare Container wrapper class for the rembg
+// bg-removal service. Cloudflare runtime needs this class to be
+// importable from the worker entry so the binding can find it; the
+// actual work happens inside the container at containers/rembg/main.py.
+export { RembgContainer } from "./containers/rembg";
 import type { ProviderStreamEvent } from "./parsers/types";
 import type { ModelType, Provider, ModelEntry } from "./models";
 import { MODELS } from "./models";
@@ -3092,25 +3097,40 @@ async function handleCastPortraitUpload(
     if (obj.customMetadata?.user_email !== userEmail) {
       return json({ error: "source artifact not owned by this user" }, { status: 403 });
     }
-    const mime = obj.httpMetadata?.contentType || "image/png";
-    if (!CAST_IMAGE_MIME_RE.test(mime)) {
-      return json({ error: `source mime ${mime} not allowed (png/jpeg/webp only)` }, { status: 400 });
+    const sourceMime = obj.httpMetadata?.contentType || "image/png";
+    if (!CAST_IMAGE_MIME_RE.test(sourceMime)) {
+      return json({ error: `source mime ${sourceMime} not allowed (png/jpeg/webp only)` }, { status: 400 });
     }
-    const bytes = new Uint8Array(await obj.arrayBuffer());
-    if (bytes.length > CAST_MAX_BYTES) {
+    const sourceBytes = new Uint8Array(await obj.arrayBuffer());
+    if (sourceBytes.length > CAST_MAX_BYTES) {
       return json({ error: "source image too large (16 MB max)" }, { status: 413 });
     }
+    // v0.94.0: every portrait write goes through the rembg container
+    // before landing in R2. The IP-Adapter at the regional render path
+    // expects a clean subject-on-black plate (see memory
+    // project-portrait-on-black-for-regional); cleaning happens here
+    // so renders never have to think about it.
+    let cleaned: Uint8Array;
+    try {
+      const { cleanPortrait } = await import("./containers/rembg");
+      cleaned = await cleanPortrait(env, sourceBytes);
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      return json({ error: `bg removal failed: ${m}` }, { status: 502 });
+    }
     // Replace any prior portrait BEFORE writing the new one so a failed
-    // write does not leave two portraits referenced.
+    // write does not leave two portraits referenced. The cleaned output
+    // is always PNG, so the stored portrait_key carries .png regardless
+    // of the source format.
     if (cur.portrait_key) {
       try { await env.R2_RENDERS.delete(cur.portrait_key); } catch { /* ignore */ }
     }
-    const key = `cast/${id}/portrait.${extFromMime(mime)}`;
-    await env.R2_RENDERS.put(key, bytes, {
-      httpMetadata: { contentType: mime },
+    const key = `cast/${id}/portrait.png`;
+    await env.R2_RENDERS.put(key, cleaned, {
+      httpMetadata: { contentType: "image/png" },
       customMetadata: { user_email: userEmail },
     });
-    const row = await castSetPortrait(env, id, userEmail, key, mime);
+    const row = await castSetPortrait(env, id, userEmail, key, "image/png");
     return json({ cast: row });
   }
 
@@ -3126,15 +3146,27 @@ async function handleCastPortraitUpload(
   if (buf.byteLength > CAST_MAX_BYTES) {
     return json({ error: "image too large (16 MB max)" }, { status: 413 });
   }
+  // v0.94.0: pipe the raw upload through the rembg container before
+  // the R2 write. The IP-Adapter at the regional render path expects
+  // a clean subject-on-black plate (see memory project-portrait-on-
+  // black-for-regional).
+  let cleanedBinary: Uint8Array;
+  try {
+    const { cleanPortrait } = await import("./containers/rembg");
+    cleanedBinary = await cleanPortrait(env, new Uint8Array(buf));
+  } catch (err) {
+    const m = err instanceof Error ? err.message : String(err);
+    return json({ error: `bg removal failed: ${m}` }, { status: 502 });
+  }
   if (cur.portrait_key) {
     try { await env.R2_RENDERS.delete(cur.portrait_key); } catch { /* ignore */ }
   }
-  const key = `cast/${id}/portrait.${extFromMime(contentType)}`;
-  await env.R2_RENDERS.put(key, new Uint8Array(buf), {
-    httpMetadata: { contentType },
+  const key = `cast/${id}/portrait.png`;
+  await env.R2_RENDERS.put(key, cleanedBinary, {
+    httpMetadata: { contentType: "image/png" },
     customMetadata: { user_email: userEmail },
   });
-  const row = await castSetPortrait(env, id, userEmail, key, contentType);
+  const row = await castSetPortrait(env, id, userEmail, key, "image/png");
   return json({ cast: row });
 }
 
@@ -4082,6 +4114,28 @@ async function runTts(request: Request, env: Env, model: ModelEntry, body: ChatR
 // text. No D1 status='pending' or polling - Whisper completes in seconds.
 // Reuses the existing audio attachment shape from the chat path.
 
+// Deepgram ASR on Workers AI returns the native Deepgram results object, not
+// the top-level { text } that Whisper returns. Standard path is
+// results.channels[0].alternatives[0].transcript; we also tolerate a couple of
+// alternate shapes and a normalized top-level text/transcript, defensively.
+function extractDeepgramTranscript(result: unknown): string {
+  const r = result as {
+    results?: {
+      channels?: Array<{ alternatives?: Array<{ transcript?: string }> }>;
+      alternatives?: Array<{ transcript?: string }>;
+    };
+    text?: string;
+    transcript?: string;
+  };
+  const viaChannels = r?.results?.channels?.[0]?.alternatives?.[0]?.transcript;
+  if (typeof viaChannels === "string") return viaChannels.trim();
+  const viaAlternatives = r?.results?.alternatives?.[0]?.transcript;
+  if (typeof viaAlternatives === "string") return viaAlternatives.trim();
+  if (typeof r?.transcript === "string") return r.transcript.trim();
+  if (typeof r?.text === "string") return r.text.trim();
+  return "";
+}
+
 async function runStt(request: Request, env: Env, model: ModelEntry, body: ChatRequest): Promise<Response> {
   const userEmail = getUserEmail(request);
   const t0 = Date.now();
@@ -4093,10 +4147,24 @@ async function runStt(request: Request, env: Env, model: ModelEntry, body: ChatR
   const parsed = parseDataUrl(audioAtt.data);
   if (!parsed) return json({ error: "Invalid audio data URL" }, { status: 400 });
 
+  const viaDeepgram = model.id.startsWith("@cf/deepgram/");
   let transcript: string;
   try {
-    const wr = await aiRun(env, model.id, { audio: parsed.base64 });
-    transcript = (wr as { text?: string })?.text?.trim() ?? "";
+    if (viaDeepgram) {
+      // Deepgram wants { audio: { body, contentType } } where body is a
+      // ReadableStream of the audio bytes (a bare base64 string or Uint8Array
+      // fails schema validation). AI Gateway does not support ReadableStream
+      // inputs ("error 5006/ReadableStreams not supported"), so this is the
+      // one call that bypasses the gateway and hits the binding directly;
+      // there's no cf-aig-log-id for it (logId stays null below). Output is
+      // the native Deepgram results object, parsed by extractDeepgramTranscript.
+      const dr = await (env.AI as unknown as { run: (m: string, p: unknown) => Promise<unknown> })
+        .run(model.id, { audio: { body: new Response(base64ToBytes(parsed.base64)).body, contentType: parsed.mime } });
+      transcript = extractDeepgramTranscript(dr);
+    } else {
+      const wr = await aiRun(env, model.id, { audio: parsed.base64 });
+      transcript = (wr as { text?: string })?.text?.trim() ?? "";
+    }
   } catch (err) {
     const m = err instanceof Error ? err.message : String(err);
     return json({ error: `Transcription failed: ${m}` }, { status: 502 });
@@ -4124,7 +4192,7 @@ async function runStt(request: Request, env: Env, model: ModelEntry, body: ChatR
     tokens_in: null,
     tokens_out: null,
     latency_ms: latency,
-    ai_gateway_log_id: aiLogId(env),
+    ai_gateway_log_id: viaDeepgram ? null : aiLogId(env),
   });
 
   return json({

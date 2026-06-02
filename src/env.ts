@@ -31,6 +31,16 @@ export interface Env {
   // instance invokes env.AI.run (long-running), downloads the artifact,
   // uploads to R2, and finalizes the D1 row across retryable steps.
   LONGRUN: Workflow;
+  // v0.94.0+: Cloudflare Container running rembg + u2net for cast
+  // portrait background removal. The cast portrait endpoints
+  // (handleCastPortraitUpload, handleCastSourceAdd for portraits)
+  // pipe uploaded / generated portrait bytes through this container
+  // before writing to R2_RENDERS. The vivijure-serverless regional
+  // render path's IP-Adapter then sees a clean subject-on-black
+  // conditioning input (see memory project-portrait-on-black-for-
+  // regional for why). Container source lives under
+  // containers/rembg/; DO wrapper class is in src/containers/rembg.ts.
+  REMBG_CONTAINER: DurableObjectNamespace;
   // v0.93.0: Anthropic moved off BYOK to Cloudflare Unified Billing, so there
   // is no longer an ANTHROPIC_API_KEY; it authorizes via CF_AIG_TOKEN below.
   XAI_API_KEY?: string;       // optional; preferred is to store in AI Gateway dashboard

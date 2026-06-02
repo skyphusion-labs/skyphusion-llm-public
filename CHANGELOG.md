@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.86.0
+
+The planner UI now exposes and forwards every override block, and finalize forwards them too. Closes the last gaps so everything is Worker-configurable.
+
+### Why
+
+The TS payload layer (`src/runpod-submit.ts`) and routes (`src/index.ts`) already accepted `wan_negative_prompt`, adetailer `face_confidence` / `extra_steps`, the face_lock IP-Adapter + InstantID string fields, and the whole `prompt_templates_overrides` shape (added in v0.82.0), but the planner UI never built inputs for them, so they were unreachable. Separately, `finalizeRender` only ever forwarded `audioKey` + `castLoras`, so a finalize ran the Wan I2V + assembly with pod defaults for every advanced block even when the render-submit had set them. This pairs with the pod-side fix in vivijure-serverless 0.4.54, which made the readers honor these values via `core.effective_config`; with the pod now reading them, the Worker has to actually send them on both paths.
+
+### What ships
+
+New inputs (planner.html), each wired into its existing builder (planner.js):
+- **wan_diffusion**: `#planner-wd-negative-prompt` textarea (`wan_negative_prompt`, trimmed, <= 1024 chars).
+- **adetailer**: `#planner-ad-face-confidence` (0..1) and `#planner-ad-extra-steps` (int 0..16).
+- **face_lock**: top-level `#planner-fl-ip-repo`, `#planner-fl-ip-subfolder`, `#planner-fl-ip-weight`; InstantID sub-block `#planner-fl-iid-base-model`, `#planner-fl-iid-cn-model`, `#planner-fl-iid-adapter-repo`, `#planner-fl-iid-adapter-weight`, `#planner-fl-iid-antelope-root` (all trimmed non-empty strings; `instantid` still only attached when non-empty).
+- **prompt_templates** (had no UI): a new advanced disclosure with a single `#planner-pt-json` textarea. New `buildPromptTemplatesOverrides()` JSON-parses it inside try/catch; non-null non-array object wins, malformed JSON is dropped (route + pod re-validate structure).
+
+DRY refactor: the entire render-submit override-block collection (plus the new `promptTemplates` line and the regional-engine injection) is extracted into a module-scope `collectOverrideBlocks()` returning a plain `{ xOverrides: ... }` object. The render path now does `Object.assign(reqBody, collectOverrideBlocks())` (behavior identical: same keys, same regional injection, now against the local object before the merge). `finalizeRender` does `Object.assign(finalizeBody, collectOverrideBlocks())` right after the castLoras block, so finalize forwards every advanced override. This single source of truth is what prevents the render/finalize drift that caused the gap.
+
+### Code
+
+- `public/planner.html`: added the wan_diffusion, adetailer, and face_lock inputs in their matching advanced disclosures; added the new "prompt templates (advanced, JSON)" disclosure.
+- `public/planner.js`: extended `buildAdetailerOverrides`, `buildWanDiffusionOverrides`, `buildFaceLockOverrides`; added `buildPromptTemplatesOverrides` and `collectOverrideBlocks`; replaced the inline render-submit collection with `Object.assign(reqBody, collectOverrideBlocks())`; added `Object.assign(finalizeBody, collectOverrideBlocks())` in `finalizeRender`.
+- `package.json`: 0.85.0 -> 0.86.0.
+
+### Tests
+
+496/496 passing, type-check clean. `node --check public/planner.js` is unaffected by this change (the pre-existing duplicate `finalizeRender` declaration is out of scope; the new code parses clean once that collision is isolated).
+
 ## v0.83.0
 
 Worker-side fix for the v16-v18 multi-character regression. v15 produced a clean two-subject keyframe (Aria left, Marcus right, distinct identities, no seam); v16-v18 all regressed into a single merged figure regardless of payload tuning, including v18 which used the v15-baseline payload + zero overrides. Bisect surfaced vivijure-serverless 0.4.46 wired `prompt_engine.negative_for_style` into the regional path's `negative_prompt`, and the config.yaml default `image_prompting.negative_extra` contains `"duplicate person, multiple people, multiple heads, character sheet, reference sheet, multiple views, split image, panels, collage"` - SDXL anti-multi-subject negatives on a path whose entire purpose is rendering multiple people in one frame.

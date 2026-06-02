@@ -613,6 +613,18 @@
               <input id="planner-fl-ip-scale" type="number" min="0" max="2" step="0.05" placeholder="0.65" />
             </label>
             <label class="planner-field">
+              <span>IP-Adapter repo (pod default)</span>
+              <input id="planner-fl-ip-repo" type="text" maxlength="256" placeholder="h94/IP-Adapter" />
+            </label>
+            <label class="planner-field">
+              <span>IP-Adapter subfolder (pod default)</span>
+              <input id="planner-fl-ip-subfolder" type="text" maxlength="256" placeholder="sdxl_models" />
+            </label>
+            <label class="planner-field">
+              <span>IP-Adapter weight file (pod default)</span>
+              <input id="planner-fl-ip-weight" type="text" maxlength="256" placeholder="ip-adapter_sdxl.bin" />
+            </label>
+            <label class="planner-field">
               <span>InstantID enabled</span>
               <select id="planner-fl-iid-enabled">
                 <option value="">(use pod default: false)</option>
@@ -627,6 +639,26 @@
             <label class="planner-field">
               <span>InstantID IP-Adapter scale (pod default 0.8)</span>
               <input id="planner-fl-iid-ip-scale" type="number" min="0" max="2" step="0.05" placeholder="0.8" />
+            </label>
+            <label class="planner-field">
+              <span>InstantID base model id (pod default)</span>
+              <input id="planner-fl-iid-base-model" type="text" maxlength="256" placeholder="stabilityai/stable-diffusion-xl-base-1.0" />
+            </label>
+            <label class="planner-field">
+              <span>InstantID controlnet model id (pod default)</span>
+              <input id="planner-fl-iid-cn-model" type="text" maxlength="256" placeholder="InstantX/InstantID" />
+            </label>
+            <label class="planner-field">
+              <span>InstantID adapter repo (pod default)</span>
+              <input id="planner-fl-iid-adapter-repo" type="text" maxlength="256" placeholder="InstantX/InstantID" />
+            </label>
+            <label class="planner-field">
+              <span>InstantID adapter weight file (pod default)</span>
+              <input id="planner-fl-iid-adapter-weight" type="text" maxlength="256" placeholder="ip-adapter.bin" />
+            </label>
+            <label class="planner-field">
+              <span>InstantID antelope root (pod default)</span>
+              <input id="planner-fl-iid-antelope-root" type="text" maxlength="256" placeholder="/workspace/models/antelopev2" />
             </label>
           </div>
           <p class="planner-overrides-hint">
@@ -802,6 +834,14 @@
               <span>hand confidence floor (pod default 0.35)</span>
               <input id="planner-ad-hand-confidence" type="number" min="0" max="1" step="0.01" placeholder="0.35" />
             </label>
+            <label class="planner-field">
+              <span>face confidence floor (pod default 0.5)</span>
+              <input id="planner-ad-face-confidence" type="number" min="0" max="1" step="0.01" placeholder="0.5" />
+            </label>
+            <label class="planner-field">
+              <span>extra inpaint steps per region (pod default 2)</span>
+              <input id="planner-ad-extra-steps" type="number" min="0" max="16" step="1" placeholder="2" />
+            </label>
           </div>
           <p class="planner-overrides-hint">
             forwarded as <code>adetailer_overrides</code>. controls the
@@ -869,6 +909,10 @@
             <label class="planner-field">
               <span>seconds per shot (pod default 5.0)</span>
               <input id="planner-wd-seconds-per-shot" type="number" min="0.5" max="60" step="0.1" placeholder="5.0" />
+            </label>
+            <label class="planner-field">
+              <span>Wan negative prompt (pod default WAN_DEFAULT_NEGATIVE)</span>
+              <textarea id="planner-wd-negative-prompt" rows="2" maxlength="1024" placeholder="duplicate, multi-subject, deformed, ..." spellcheck="false"></textarea>
             </label>
           </div>
           <p class="planner-overrides-hint">
@@ -1224,6 +1268,25 @@
             (enabled / min+max images / trigger_template). encoding knobs
             govern ffmpeg's silent-MP4 assembly. image profile picks
             the SDXL profile when style_category="None".
+          </p>
+        </details>
+        <!-- v0.86.0: prompt_templates overrides (vivijure-serverless
+             0.4.49+ prompt_engine.set_template_overrides + hand_fix.
+             set_prompt_overrides). Raw JSON because the shape is a mix
+             of flat strings, a list (framing_hints), and a string-keyed
+             map (act_mood); the route + pod re-validate structure. -->
+        <details class="planner-overrides-raw-details">
+          <summary class="planner-overrides-summary">prompt templates (advanced, JSON)</summary>
+          <textarea id="planner-pt-json" rows="4" placeholder='{"anatomy_positive_base": "masterpiece, ...", "framing_hints": ["wide shot", "close-up"], "act_mood": {"Climax": "tense, high stakes"}}' spellcheck="false"></textarea>
+          <p class="planner-overrides-hint">
+            optional JSON object of the <code>prompt_templates</code> shape:
+            <code>anatomy_positive_base / _human / _anime</code>,
+            <code>anatomy_negative_global / _focused / _portrait / _anime</code>,
+            <code>portrait_positive</code>, <code>hand_positive</code>,
+            <code>hand_negative</code>, <code>framing_hints</code> (array of
+            strings cycled per shot), <code>act_mood</code> (act-name to phrase
+            map). forwarded as <code>prompt_templates_overrides</code>. malformed
+            JSON is ignored. leave empty for the pod defaults.
           </p>
         </details>
         <details class="planner-overrides-raw-details">

@@ -816,6 +816,11 @@ function buildAdetailerOverrides() {
   if (Number.isFinite(is) && is >= 0 && is <= 1) out.inpaint_strength = is;
   const hc = parseFloat(($sel("#planner-ad-hand-confidence") || {}).value || "");
   if (Number.isFinite(hc) && hc >= 0 && hc <= 1) out.hand_confidence = hc;
+  // v0.86.0: face detector confidence floor + extra inpaint steps.
+  const fc = parseFloat(($sel("#planner-ad-face-confidence") || {}).value || "");
+  if (Number.isFinite(fc) && fc >= 0 && fc <= 1) out.face_confidence = fc;
+  const es = parseFloat(($sel("#planner-ad-extra-steps") || {}).value || "");
+  if (Number.isInteger(es) && es >= 0 && es <= 16) out.extra_steps = es;
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
@@ -847,6 +852,9 @@ function buildWanDiffusionOverrides() {
   else if (co === "false") out.cpu_offload = false;
   const sps = parseFloat(($sel("#planner-wd-seconds-per-shot") || {}).value || "");
   if (Number.isFinite(sps) && sps >= 0.5 && sps <= 60) out.seconds_per_shot = sps;
+  // v0.86.0: override the vivijure-pinned WAN_DEFAULT_NEGATIVE prompt.
+  const np = (($sel("#planner-wd-negative-prompt") || {}).value || "").trim();
+  if (np && np.length <= 1024) out.wan_negative_prompt = np;
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
@@ -861,6 +869,13 @@ function buildFaceLockOverrides() {
   }
   const ips = parseFloat(($sel("#planner-fl-ip-scale") || {}).value || "");
   if (Number.isFinite(ips) && ips >= 0 && ips <= 2) out.ip_adapter_scale = ips;
+  // v0.86.0: top-level IP-Adapter repo/subfolder/weight string overrides.
+  const ipr = (($sel("#planner-fl-ip-repo") || {}).value || "").trim();
+  if (ipr) out.ip_adapter_repo = ipr;
+  const ipsf = (($sel("#planner-fl-ip-subfolder") || {}).value || "").trim();
+  if (ipsf) out.ip_adapter_subfolder = ipsf;
+  const ipw = (($sel("#planner-fl-ip-weight") || {}).value || "").trim();
+  if (ipw) out.ip_adapter_weight = ipw;
   const inst = {};
   const en = ($sel("#planner-fl-iid-enabled") || {}).value;
   if (en === "true") inst.enabled = true;
@@ -869,8 +884,133 @@ function buildFaceLockOverrides() {
   if (Number.isFinite(cn) && cn >= 0 && cn <= 2) inst.controlnet_scale = cn;
   const ii = parseFloat(($sel("#planner-fl-iid-ip-scale") || {}).value || "");
   if (Number.isFinite(ii) && ii >= 0 && ii <= 2) inst.ip_adapter_scale = ii;
+  // v0.86.0: instantid model/adapter string overrides.
+  const ibm = (($sel("#planner-fl-iid-base-model") || {}).value || "").trim();
+  if (ibm) inst.base_model_id = ibm;
+  const icm = (($sel("#planner-fl-iid-cn-model") || {}).value || "").trim();
+  if (icm) inst.controlnet_model_id = icm;
+  const iar = (($sel("#planner-fl-iid-adapter-repo") || {}).value || "").trim();
+  if (iar) inst.adapter_repo = iar;
+  const iaw = (($sel("#planner-fl-iid-adapter-weight") || {}).value || "").trim();
+  if (iaw) inst.adapter_weight = iaw;
+  const ian = (($sel("#planner-fl-iid-antelope-root") || {}).value || "").trim();
+  if (ian) inst.antelope_root = ian;
   if (Object.keys(inst).length > 0) out.instantid = inst;
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// v0.86.0: prompt_templates overrides. The shape is a mix of flat
+// strings, a list (framing_hints), and a map (act_mood), so the UI is
+// a single JSON textarea. Malformed JSON is dropped silently (the
+// route + pod re-validate structure on receipt).
+function buildPromptTemplatesOverrides() {
+  const raw = (($("#planner-pt-json") || {}).value || "").trim();
+  if (!raw) return undefined;
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    return undefined;
+  }
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    return parsed;
+  }
+  return undefined;
+}
+
+// v0.86.0: single source of truth for the advanced override blocks.
+// Returns a plain object of camelCase keys, each set only when its
+// builder produced a truthy value. Both the render-submit body and the
+// finalize body Object.assign this in so they never drift again. The
+// regional-engine injection happens here too, against the local object,
+// so the merged result is byte-identical to the old inline collection.
+function collectOverrideBlocks() {
+  const b = {};
+  // v0.68.0: collect any LoRA training hyperparam overrides the user set
+  // in the advanced block. Pure numeric coercion; empty / non-numeric
+  // inputs are dropped so the pod's config.yaml defaults win.
+  const loraTrainOverrides = buildLoraTrainOverrides();
+  if (loraTrainOverrides) b.loraTrainOverrides = loraTrainOverrides;
+  // v0.69.0: multi_character composite overrides.
+  const mcOverrides = buildMultiCharacterOverrides();
+  if (mcOverrides) b.multiCharacterOverrides = mcOverrides;
+  // v0.70.0: lora_quality_gate overrides.
+  const qgOverrides = buildQualityGateOverrides();
+  if (qgOverrides) b.qualityGateOverrides = qgOverrides;
+  // v0.72.0: consistency + video_consistency overrides.
+  const consOverrides = buildConsistencyOverrides();
+  if (consOverrides) b.consistencyOverrides = consOverrides;
+  const vconsOverrides = buildVideoConsistencyOverrides();
+  if (vconsOverrides) b.videoConsistencyOverrides = vconsOverrides;
+  // v0.73.0: continuity / image_prompting / character_generation overrides.
+  const contOverrides = buildContinuityOverrides();
+  if (contOverrides) b.continuityOverrides = contOverrides;
+  const ipOverrides = buildImagePromptingOverrides();
+  if (ipOverrides) b.imagePromptingOverrides = ipOverrides;
+  // v0.83.0: regional path needs an empty negative_extra + disabled
+  // anatomy_guard so SDXL doesn't see "duplicate person, multiple
+  // people, multiple heads, split image, panels, collage" - the
+  // config.yaml default image_prompting.negative_extra contains
+  // anti-multi-subject phrases that actively suppress the second
+  // identity on a path whose entire purpose is rendering multiple
+  // people in one frame. v18 smoke against 0.4.49 reproduced the
+  // collapse with the v15 baseline payload and zero overrides;
+  // vivijure-serverless 0.4.46 wired negative_for_style into the
+  // regional path with no thought for the multi-subject case.
+  //
+  // Worker handles the fix per the immutable-image directive
+  // (project-immutable-image-config-from-worker memory + the hard-
+  // rule feedback-no-config-changes-on-image memory): we inject the
+  // values the regional path needs to behave like v15. User can
+  // type into the image-prompting advanced block to override either
+  // injected value back to something else.
+  if (b.multiCharacterOverrides
+      && b.multiCharacterOverrides.engine === "regional") {
+    const ip = b.imagePromptingOverrides || {};
+    if (ip.negative_extra === undefined) ip.negative_extra = "";
+    if (ip.anatomy_guard === undefined) ip.anatomy_guard = false;
+    b.imagePromptingOverrides = ip;
+  }
+  const cgOverrides = buildCharacterGenerationOverrides();
+  if (cgOverrides) b.characterGenerationOverrides = cgOverrides;
+  // v0.74.0: face_lock + instantid.
+  const flOverrides = buildFaceLockOverrides();
+  if (flOverrides) b.faceLockOverrides = flOverrides;
+  // v0.75.0: adetailer + wan_diffusion overrides.
+  const adOverrides = buildAdetailerOverrides();
+  if (adOverrides) b.adetailerOverrides = adOverrides;
+  const wdOverrides = buildWanDiffusionOverrides();
+  if (wdOverrides) b.wanDiffusionOverrides = wdOverrides;
+  // v0.86.0: prompt_templates overrides (raw JSON).
+  const ptOverrides = buildPromptTemplatesOverrides();
+  if (ptOverrides) b.promptTemplatesOverrides = ptOverrides;
+  // v0.76.0: local_diffusion + generation overrides.
+  const ldOverrides = buildLocalDiffusionOverrides();
+  if (ldOverrides) b.localDiffusionOverrides = ldOverrides;
+  const genOverrides = buildGenerationOverrides();
+  if (genOverrides) b.generationOverrides = genOverrides;
+  // v0.77.0: scene-length + movie overrides.
+  const slOverrides = buildSceneLengthOverrides();
+  if (slOverrides) b.sceneLengthOverrides = slOverrides;
+  const mvOverrides = buildMovieOverrides();
+  if (mvOverrides) b.movieOverrides = mvOverrides;
+  // v0.78.0: character_bible + production + top-level switches.
+  const cbOverrides = buildCharacterBibleOverrides();
+  if (cbOverrides) b.characterBibleOverrides = cbOverrides;
+  const prOverrides = buildProductionOverrides();
+  if (prOverrides) b.productionOverrides = prOverrides;
+  const tlOverrides = buildTopLevelSwitches();
+  if (tlOverrides) b.topLevelSwitches = tlOverrides;
+  // v0.79.0: lora train extras + loras + quality + image_models.
+  const lteOverrides = buildLoraTrainExtras();
+  if (lteOverrides) b.loraTrainExtras = lteOverrides;
+  const loOverrides = buildLorasOverrides();
+  if (loOverrides) b.lorasOverrides = loOverrides;
+  const qlOverrides = buildQualityOverrides();
+  if (qlOverrides) b.qualityOverrides = qlOverrides;
+  const imOverrides = buildImageModelsOverrides();
+  if (imOverrides) b.imageModelsOverrides = imOverrides;
+  return b;
 }
 
 // v0.73.0: continuity / image_prompting / character_generation builders.
@@ -3002,87 +3142,11 @@ async function submitRender() {
   // ready-slot pre-check short-circuits training for them.
   const castLoraSubmit = buildCastLoraSubmit();
   if (Object.keys(castLoraSubmit).length > 0) reqBody.castLoras = castLoraSubmit;
-  // v0.68.0: collect any LoRA training hyperparam overrides the user set
-  // in the advanced block. Pure numeric coercion; empty / non-numeric
-  // inputs are dropped so the pod's config.yaml defaults win.
-  const loraTrainOverrides = buildLoraTrainOverrides();
-  if (loraTrainOverrides) reqBody.loraTrainOverrides = loraTrainOverrides;
-  // v0.69.0: multi_character composite overrides.
-  const mcOverrides = buildMultiCharacterOverrides();
-  if (mcOverrides) reqBody.multiCharacterOverrides = mcOverrides;
-  // v0.70.0: lora_quality_gate overrides.
-  const qgOverrides = buildQualityGateOverrides();
-  if (qgOverrides) reqBody.qualityGateOverrides = qgOverrides;
-  // v0.72.0: consistency + video_consistency overrides.
-  const consOverrides = buildConsistencyOverrides();
-  if (consOverrides) reqBody.consistencyOverrides = consOverrides;
-  const vconsOverrides = buildVideoConsistencyOverrides();
-  if (vconsOverrides) reqBody.videoConsistencyOverrides = vconsOverrides;
-  // v0.73.0: continuity / image_prompting / character_generation overrides.
-  const contOverrides = buildContinuityOverrides();
-  if (contOverrides) reqBody.continuityOverrides = contOverrides;
-  const ipOverrides = buildImagePromptingOverrides();
-  if (ipOverrides) reqBody.imagePromptingOverrides = ipOverrides;
-  // v0.83.0: regional path needs an empty negative_extra + disabled
-  // anatomy_guard so SDXL doesn't see "duplicate person, multiple
-  // people, multiple heads, split image, panels, collage" - the
-  // config.yaml default image_prompting.negative_extra contains
-  // anti-multi-subject phrases that actively suppress the second
-  // identity on a path whose entire purpose is rendering multiple
-  // people in one frame. v18 smoke against 0.4.49 reproduced the
-  // collapse with the v15 baseline payload and zero overrides;
-  // vivijure-serverless 0.4.46 wired negative_for_style into the
-  // regional path with no thought for the multi-subject case.
-  //
-  // Worker handles the fix per the immutable-image directive
-  // (project-immutable-image-config-from-worker memory + the hard-
-  // rule feedback-no-config-changes-on-image memory): we inject the
-  // values the regional path needs to behave like v15. User can
-  // type into the image-prompting advanced block to override either
-  // injected value back to something else.
-  if (reqBody.multiCharacterOverrides
-      && reqBody.multiCharacterOverrides.engine === "regional") {
-    const ip = reqBody.imagePromptingOverrides || {};
-    if (ip.negative_extra === undefined) ip.negative_extra = "";
-    if (ip.anatomy_guard === undefined) ip.anatomy_guard = false;
-    reqBody.imagePromptingOverrides = ip;
-  }
-  const cgOverrides = buildCharacterGenerationOverrides();
-  if (cgOverrides) reqBody.characterGenerationOverrides = cgOverrides;
-  // v0.74.0: face_lock + instantid.
-  const flOverrides = buildFaceLockOverrides();
-  if (flOverrides) reqBody.faceLockOverrides = flOverrides;
-  // v0.75.0: adetailer + wan_diffusion overrides.
-  const adOverrides = buildAdetailerOverrides();
-  if (adOverrides) reqBody.adetailerOverrides = adOverrides;
-  const wdOverrides = buildWanDiffusionOverrides();
-  if (wdOverrides) reqBody.wanDiffusionOverrides = wdOverrides;
-  // v0.76.0: local_diffusion + generation overrides.
-  const ldOverrides = buildLocalDiffusionOverrides();
-  if (ldOverrides) reqBody.localDiffusionOverrides = ldOverrides;
-  const genOverrides = buildGenerationOverrides();
-  if (genOverrides) reqBody.generationOverrides = genOverrides;
-  // v0.77.0: scene-length + movie overrides.
-  const slOverrides = buildSceneLengthOverrides();
-  if (slOverrides) reqBody.sceneLengthOverrides = slOverrides;
-  const mvOverrides = buildMovieOverrides();
-  if (mvOverrides) reqBody.movieOverrides = mvOverrides;
-  // v0.78.0: character_bible + production + top-level switches.
-  const cbOverrides = buildCharacterBibleOverrides();
-  if (cbOverrides) reqBody.characterBibleOverrides = cbOverrides;
-  const prOverrides = buildProductionOverrides();
-  if (prOverrides) reqBody.productionOverrides = prOverrides;
-  const tlOverrides = buildTopLevelSwitches();
-  if (tlOverrides) reqBody.topLevelSwitches = tlOverrides;
-  // v0.79.0: lora train extras + loras + quality + image_models.
-  const lteOverrides = buildLoraTrainExtras();
-  if (lteOverrides) reqBody.loraTrainExtras = lteOverrides;
-  const loOverrides = buildLorasOverrides();
-  if (loOverrides) reqBody.lorasOverrides = loOverrides;
-  const qlOverrides = buildQualityOverrides();
-  if (qlOverrides) reqBody.qualityOverrides = qlOverrides;
-  const imOverrides = buildImageModelsOverrides();
-  if (imOverrides) reqBody.imageModelsOverrides = imOverrides;
+  // v0.86.0: all advanced override blocks are collected by a single
+  // shared helper so the render-submit and finalize paths stay in
+  // lockstep (the drift between them is exactly what left finalize
+  // dropping these blocks before this release).
+  Object.assign(reqBody, collectOverrideBlocks());
 
   let resp = null;
   let data = null;
@@ -4484,6 +4548,12 @@ async function finalizeRender(row, btnEl) {
     if (Object.keys(finalizeCastLoras).length > 0) {
       finalizeBody.castLoras = finalizeCastLoras;
     }
+    // v0.86.0: forward every advanced override block on finalize too.
+    // Wan I2V + assembly (which finalize runs) reads wan_diffusion,
+    // face_lock, adetailer, prompt_templates, etc; before this they were
+    // only sent on the render-submit body, so a finalize ran with pod
+    // defaults. The finalize route already reads all these camelCase keys.
+    Object.assign(finalizeBody, collectOverrideBlocks());
     const hasBody = Object.keys(finalizeBody).length > 0;
     resp = await fetch(
       "/api/storyboard/renders/" + encodeURIComponent(row.id) + "/finalize",

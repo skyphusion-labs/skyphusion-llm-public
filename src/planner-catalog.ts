@@ -7,21 +7,30 @@
 //
 // Adding a model: append its id to PLANNING_MODEL_IDS; the row must
 // already exist in MODELS. The catalog test (tests/planner-catalog.
-// test.ts) fails fast if an id is dangling.
+// test.ts) fails fast if an id is dangling. Note the dispatch constraint:
+// the planner can only reach providers plannerProviderFor() maps to a real
+// path (anthropic, xai, google, workers-ai/aiRun). Bedrock chat models are
+// NOT addable here, they need AWS SigV4 via callBedrockNova, which the
+// planner does not wire up.
 
 import { MODELS, type ModelEntry } from "./models";
 
-export type PlanningProvider = "anthropic" | "xai" | "workers-ai";
+export type PlanningProvider = "anthropic" | "xai" | "google" | "workers-ai";
 
 const PLANNING_MODEL_IDS: readonly string[] = [
   // Anthropic (Unified Billing)
+  "anthropic/claude-opus-4-8",
   "anthropic/claude-opus-4-7",
   "anthropic/claude-sonnet-4-6",
   "anthropic/claude-haiku-4-5",
+  // OpenAI (Unified Billing; rides aiRun like the main chat path)
+  "openai/gpt-5.5",
+  // Google (Unified Billing; dispatched via callGemini, not the bare aiRun
+  // else-branch, because Gemini needs the systemInstruction + contents body)
+  "google/gemini-3.1-pro",
   // xAI BYOK
   "xai/grok-4.3",
   "xai/grok-4.20-multi-agent-0309",
-  "xai/grok-build-0.1",
   // Workers AI text (frontier; v0.89.0 added Kimi K2.6, Gemma 4 26B,
   // Qwen3 30B MoE so users have open-weight options alongside the
   // BYOK frontier models)
@@ -43,11 +52,14 @@ export function findPlanningModel(id: string): ModelEntry | undefined {
   return PLANNING_MODELS.find((m) => m.id === id);
 }
 
-// Maps a planning-catalog ModelEntry to one of the three dispatch paths.
-// Workers AI is the default when no explicit provider is set on the
-// ModelEntry (matches src/index.ts's chat path).
+// Maps a planning-catalog ModelEntry to one of the dispatch paths.
+// Workers AI (aiRun) is the default when no explicit provider is set on the
+// ModelEntry, and also carries OpenAI, which rides aiRun with a plain
+// {messages} body (matches src/index.ts's chat path). Google is split out
+// because Gemini needs its own request body via callGemini.
 export function plannerProviderFor(model: ModelEntry): PlanningProvider {
   if (model.provider === "anthropic") return "anthropic";
   if (model.provider === "xai") return "xai";
+  if (model.provider === "google") return "google";
   return "workers-ai";
 }

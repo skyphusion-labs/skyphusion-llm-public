@@ -58,6 +58,29 @@ describe("PLANNING_MODELS", () => {
   it("includes Qwen3 30B MoE", () => {
     expect(PLANNING_MODELS.some((m) => m.id === "@cf/qwen/qwen3-30b-a3b-fp8")).toBe(true);
   });
+
+  // v0.94.0: Conrad asked to add the frontier hosted flagships (Opus 4.8,
+  // GPT-5.5, Gemini 3.1 Pro) and to drop the Grok Build coding model. Pin
+  // them so a future curation pass cannot silently regress the decision.
+  it("includes Claude Opus 4.8", () => {
+    expect(PLANNING_MODELS.some((m) => m.id === "anthropic/claude-opus-4-8")).toBe(true);
+  });
+
+  it("includes GPT-5.5", () => {
+    expect(PLANNING_MODELS.some((m) => m.id === "openai/gpt-5.5")).toBe(true);
+  });
+
+  it("includes Gemini 3.1 Pro", () => {
+    expect(PLANNING_MODELS.some((m) => m.id === "google/gemini-3.1-pro")).toBe(true);
+  });
+
+  it("excludes the Grok Build coding model", () => {
+    expect(PLANNING_MODELS.some((m) => m.id === "xai/grok-build-0.1")).toBe(false);
+  });
+
+  it("excludes all Bedrock models (no planner dispatch path)", () => {
+    expect(PLANNING_MODELS.some((m) => m.provider === "bedrock")).toBe(false);
+  });
 });
 
 describe("findPlanningModel", () => {
@@ -96,6 +119,18 @@ describe("plannerProviderFor", () => {
 
   it("maps Workers AI rows (no explicit provider) to 'workers-ai'", () => {
     const m = PLANNING_MODELS.find((x) => !x.provider);
+    expect(m).toBeDefined();
+    if (m) expect(plannerProviderFor(m)).toBe("workers-ai");
+  });
+
+  it("maps google provider rows to 'google'", () => {
+    const m = PLANNING_MODELS.find((x) => x.provider === "google");
+    expect(m).toBeDefined();
+    if (m) expect(plannerProviderFor(m)).toBe("google");
+  });
+
+  it("maps openai provider rows to 'workers-ai' (they ride aiRun)", () => {
+    const m = PLANNING_MODELS.find((x) => x.provider === "openai");
     expect(m).toBeDefined();
     if (m) expect(plannerProviderFor(m)).toBe("workers-ai");
   });

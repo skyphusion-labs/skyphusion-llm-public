@@ -1,7 +1,8 @@
 // Storyboard planner dispatcher (v0.28.0).
 //
 // Takes a brief + character bible + model selection, dispatches to one of
-// callAnthropic (Unified Billing), callXai (BYOK), or aiRun (Workers AI binding) for
+// callAnthropic (Unified Billing), callGemini (Unified Billing), callXai
+// (BYOK), or aiRun (Workers AI / OpenAI binding) for
 // a single non-streaming completion, strips ```json fences, JSON.parses
 // the result, runs validateStoryboard, and returns the validated
 // StoryboardValidated or the error list. Does NOT submit anything to
@@ -15,6 +16,7 @@
 
 import type { Env } from "./env";
 import { callAnthropic } from "./providers/anthropic";
+import { callGemini } from "./providers/google";
 import { callXai } from "./providers/xai";
 import { aiRun, aiLogId } from "./ai-binding";
 import { extractOutput, detectProviderFailure } from "./output-extract";
@@ -105,10 +107,18 @@ export async function planStoryboard(
       const r = await callXai(env, modelEntry, messages);
       result = r.raw;
       logId = r.logId;
+    } else if (provider === "google") {
+      // Gemini hoists the system prompt to systemInstruction (like Anthropic),
+      // so hand it to callGemini separately and put only the user content in
+      // messages. callGemini builds the Gemini-specific contents body.
+      const messages = [{ role: "user", content: userMessage }];
+      const r = await callGemini(env, modelEntry, systemPrompt, messages);
+      result = r.raw;
+      logId = r.logId;
     } else {
-      // Workers AI binding (env.AI.run via aiRun). Same system-as-first-
-      // message convention as xAI; Workers AI's chat input accepts the
-      // OpenAI-style role+content shape across the @cf/... text models.
+      // Workers AI / OpenAI binding (env.AI.run via aiRun). Same system-as-
+      // first-message convention as xAI; the binding accepts the OpenAI-style
+      // role+content shape across the @cf/... and openai/... text models.
       const messages = [
         { role: "system", content: systemPrompt },
         { role: "user", content: userMessage },
@@ -231,6 +241,11 @@ export async function refineStoryboard(
         { role: "user", content: userMessage },
       ];
       const r = await callXai(env, modelEntry, messages);
+      result = r.raw;
+      logId = r.logId;
+    } else if (provider === "google") {
+      const messages = [{ role: "user", content: userMessage }];
+      const r = await callGemini(env, modelEntry, systemPrompt, messages);
       result = r.raw;
       logId = r.logId;
     } else {

@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.94.0
+
+Storyboard-planner picker synced with the frontier hosted flagships and pruned of a model that does not belong.
+
+### Why
+
+The planner catalog had drifted from the main MODELS list: Claude Opus 4.8 (the newest flagship) was missing, and Grok Build 0.1, a coding-tuned model, had no business in a narrative storyboard picker. With every paid provider now on Cloudflare Unified Billing, the OpenAI and Google frontier models are also first-class planner options.
+
+### What ships
+
+- `src/planner-catalog.ts`: added `anthropic/claude-opus-4-8`, `openai/gpt-5.5`, and `google/gemini-3.1-pro`; removed `xai/grok-build-0.1`. Added `google` to `PlanningProvider` and `plannerProviderFor`.
+- `src/planner.ts`: added a `google` dispatch branch (both plan + refine sites) that calls `callGemini` with the system prompt hoisted to `systemInstruction`. OpenAI rides the existing `aiRun` else-branch with a plain `{messages}` body, same as the main chat path. Bedrock chat models remain intentionally excluded (no SigV4 dispatch in the planner).
+- `tests/planner-catalog.test.ts`: pinned the three new entries, pinned Grok Build and all Bedrock rows as excluded, and added `plannerProviderFor` cases for the google and openai paths.
+
+### Output discipline
+
+No API-level JSON mode is used; the guardrail is the existing strip-fences -> `JSON.parse` -> `validateStoryboard` chain, which rejects any off-schema output as a failed plan rather than passing it to the renderer. The curated frontier choices maximize first-pass schema compliance; reasoning, coding, and sub-10B models stay out because they degrade it.
+
 ## v0.93.0
 
 Anthropic chat moves from BYOK to Cloudflare Unified Billing. Requests now bill through Cloudflare instead of a personal Anthropic key.

@@ -16,13 +16,16 @@ from aiohttp import ClientSession, ClientTimeout, web
 from PIL import Image
 
 # rembg is intentionally NOT imported at module load. `import rembg` pulls in
-# pymatting, which JIT-compiles ~46s of numba kernels on a cold cache (the
-# image bakes a warm NUMBA_CACHE_DIR so it's normally ~1.5s, but even that is
-# import work). Doing it before web.run_app binds :8000 risks tripping the
-# container runtime's port-ready check ("not listening on :8000"), which is
-# exactly what broke this container. We bind first, then warm rembg in a
-# background task (see _warm_on_startup); the first import lands inside the
-# lazy session path. /health never touches rembg at all.
+# pymatting, which JIT-compiles numba kernels on import (~46s on a cold cache,
+# ~1.5s on the baked cache). Doing that before web.run_app binds :8000 trips the
+# container runtime's port-ready check ("not listening on :8000").
+#
+# We do NOT warm at startup either: a background warm thread, on the small-core
+# CF Container instance, contends for the GIL and DELAYS the bind across several
+# port-ready polls until the cold-cache compile finishes (the cache is compiled
+# for the build host's CPU, so it can miss on CF). The sibling audio container
+# has no startup warm and cold-starts fine, so we match it: bind first, import
+# rembg lazily on the first /portrait/prep. /health never touches rembg.
 
 PORT = int(os.environ.get("PORT", "8000"))
 DOWNLOAD_TIMEOUT_S = 30
@@ -116,23 +119,9 @@ def _process(data, background):
     return buf.getvalue(), img.size[0], img.size[1]
 
 
-async def _warm_on_startup(app):
-    # Fire-and-forget warm of the rembg import + ORT session in a worker
-    # thread, scheduled AFTER aiohttp binds the port. This keeps the (normally
-    # ~1.5s, worst-case ~46s on a numba-cache miss) import off the activation
-    # critical path: the runtime sees :8000 bound immediately, and by the time
-    # the first /portrait/prep arrives the session is usually already built.
-    loop = asyncio.get_running_loop()
-    # run_in_executor returns a Future that is already scheduled on the default
-    # thread pool; we keep a reference so it isn't GC'd. (Do NOT wrap it in
-    # create_task: run_in_executor yields a Future, not a coroutine.)
-    app["warm_task"] = loop.run_in_executor(None, _get_session)
-
-
 app = web.Application()
 app.router.add_get("/health", health)
 app.router.add_post("/portrait/prep", prep)
-app.on_startup.append(_warm_on_startup)
 
 if __name__ == "__main__":
     log.info("image-prep listening on 0.0.0.0:%d", PORT)

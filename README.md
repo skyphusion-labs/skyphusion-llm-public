@@ -3,18 +3,21 @@
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Typecheck](https://github.com/SkyPhusion/skyphusion-llm-public/actions/workflows/typecheck.yml/badge.svg)](https://github.com/SkyPhusion/skyphusion-llm-public/actions/workflows/typecheck.yml)
 
-A multimodal AI playground deployed as a single Cloudflare Worker. 33 chat models across 5 providers, image / TTS / STT / video / music generation, cross-model artifact reuse within a conversation (v0.21.7), RAG over files of any type (v0.23.0), projects that scope a knowledge base and system prompt, Discord chat-log ingestion, opt-in web search via Tavily and Wikipedia, SSE streaming on supported chat models, and multi-turn conversations. One web UI behind Cloudflare Access, per-user history, R2 for all binary artifacts.
+A multimodal AI playground deployed as a single Cloudflare Worker. 35 chat models across 5 providers, **hands-free voice chat** (talk to any model and hear it reply), image / TTS / STT / video / music generation, cross-model artifact reuse within a conversation (v0.21.7), RAG over files of any type (v0.23.0), projects that scope a knowledge base and system prompt, Discord chat-log ingestion, opt-in web search via Tavily and Wikipedia, SSE streaming on supported chat models, and multi-turn conversations. One web UI behind Cloudflare Access, per-user history, R2 for all binary artifacts.
 
 <p align="center">
-  <img src="docs/screenshot-desktop.jpg" alt="Desktop UI: image generation with FLUX-1 schnell" width="800"><br><br>
-  <img src="docs/screenshot-mobile.jpg" alt="Mobile UI: Claude Haiku 4.5 chat" width="280">
+  <img src="docs/screenshot-desktop.jpg" alt="Desktop UI: image generation with Nano Banana Pro" width="800"><br><br>
+  <img src="docs/screenshot-mobile.jpg" alt="Mobile UI: image generation with Nano Banana Pro" width="280">
 </p>
+
+> ### 🎙️ Talk to the models, out loud
+> Pick **any of the 35 chat models**, tap the mic, and have a real spoken conversation. Your speech is transcribed by Deepgram Flux, sent to the model through the normal chat path, and the reply is **spoken back** with Aura-2 TTS, hands-free, end to end on Cloudflare, no third-party STT/TTS services. Works with every model on the list and saves to history like any other chat. See [Voice chat](#voice-chat).
 
 ## What this is
 
 A working template for the Cloudflare AI stack. One Worker, no framework, no build step beyond TypeScript. The interesting parts are the patterns, not the model count:
 
-- **Unified `env.AI.run()` binding** drives every modality through one call surface: chat, vision input, image gen, TTS, STT, video gen (Unified Billing), and music gen.
+- **Unified `env.AI.run()` binding** drives every modality through one call surface: chat, vision input, image gen, TTS, STT, conversational STT + voice chat (Flux over a WebSocket), video gen (Unified Billing), and music gen.
 - **Per-provider dispatch helpers** for Anthropic Claude (Unified Billing), xAI Grok (BYOK), and Gemini, each transforming our internal `messages` shape into the provider's format. OpenAI and Workers AI ride the `env.AI.run` binding directly.
 - **SSE streaming** (v0.13.0+) for chat models on all five providers: Anthropic native SSE, Workers AI OpenAI-compatible SSE, xAI OpenAI-compatible SSE, OpenAI proxied (binding-based, v0.21.1), and Gemini (binding-based, v0.21.4).
 - **AI Gateway** wraps every call for observability, caching, and rate-limiting.
@@ -22,11 +25,11 @@ A working template for the Cloudflare AI stack. One Worker, no framework, no bui
 - **Cloudflare Workflows** owns long-running Unified Billing video and music generation (30s to 3min jobs). The `LongRunWorkflow` class holds the blocking `env.AI.run` call alive across step boundaries that `ctx.waitUntil` cannot.
 - **Cloudflare Access** gates the entire worker URL. The worker reads `Cf-Access-Authenticated-User-Email` to scope history per user; R2 objects carry `customMetadata.user_email` so cross-user access is impossible even if a UUID is guessed.
 - **Client-side video keyframe extraction** sends 8 evenly-spaced frames to vision-capable chat models instead of uploading the full video file.
-- **Collapsible model picker** (v0.15.0) groups the ~50 catalog entries across 6 modalities with capability badges (vision, stream) inline.
+- **Searchable model picker** (v0.111.0) groups the ~50 catalog entries across 7 modalities with capability badges (vision, stream) inline; type to filter by name.
 
 ## Features
 
-**Chat (33 models across 5 providers; all stream-capable):**
+**Chat (35 models across 5 providers; all stream-capable):**
 - Workers AI: Llama 4 Scout, Llama 3.x family, Qwen3 30B / QwQ 32B / Qwen2.5 Coder 32B, DeepSeek R1, Mistral Small 3.1, Gemma 4 26B / Gemma 3 12B, Granite 4 Micro, Nemotron 3 120B, GLM-4.7 Flash, Hermes 2 Pro, GPT-OSS 120B / 20B, Kimi K2.6
 - Anthropic (Unified Billing): Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 4.6, Haiku 4.5 (all streaming)
 - xAI BYOK: Grok 4.3, Grok 4.20 (Multi-Agent and Reasoning), Grok Build 0.1 (all streaming as of v0.16.0)
@@ -41,7 +44,9 @@ A working template for the Cloudflare AI stack. One Worker, no framework, no bui
 
 **Text-to-speech:** Aura-2 EN / ES, MeloTTS.
 
-**Speech-to-text:** Whisper Large v3 Turbo / Whisper / Whisper Tiny EN.
+**Speech-to-text:** Whisper Large v3 Turbo / Whisper / Whisper Tiny EN (one-shot transcription), plus **Deepgram Flux** conversational/streaming STT with live turn detection over a WebSocket (v0.108.0).
+
+**Voice chat: talk to any model, hear it reply (v0.118.0):** a mic button on any chat model starts a hands-free loop, your speech is transcribed by Flux, each finished turn is sent to the selected model through the normal chat path, and the reply is spoken back via Aura-2 TTS. Works with all 35 chat models, the conversation saves to history like any other, and the whole loop runs on Cloudflare (no third-party STT/TTS). See [Voice chat](#voice-chat).
 
 **RAG (Vectorize):** upload files of any type via the sidebar (v0.23.0), or a `.zip` to import many files at once (v0.25.0, each inner file becomes its own document). PDFs get per-page extraction and spreadsheets (`.xlsx`/`.xls`) per-sheet; every other file is read as UTF-8 text (CSV, JSON, HTML, source code, logs, etc.). Binary formats that don't decode to text (e.g. `.docx`, images) are rejected. The worker chunks, embeds via BGE-base, and stores vectors in Vectorize plus text in D1. Toggle "use my docs" per turn to fold the top-5 nearest chunks into the system prompt before the LLM call.
 
@@ -55,7 +60,7 @@ A working template for the Cloudflare AI stack. One Worker, no framework, no bui
 
 **Multi-turn conversations:** `conversation_id` plus `turn_index` on chat rows. Continuing a conversation pulls prior turns and assembles a full message history for the next call. Mixed-model conversations allowed (start with Llama, continue with Claude). Text-only on continuation; prior images, audio, and video are not re-sent.
 
-**UI:** collapsible model picker with per-modality groups and capability badges (v0.15.0), capability-aware mode switching (vision-only attachment types; image-mode UI re-skin to "negative prompt"; TTS / STT / video / music hide irrelevant inputs), FLUX.2 reference image attach UI (v0.16.0), per-turn web-search toggle (v0.17.0), per-user replay-able history with attachments and generated artifacts, Enter to send / Shift+Enter for newline.
+**UI (focus-mode redesign, v0.110.0+):** a single centered conversation column with a floating composer; the sidebar (searchable history, projects, documents) is a slide-in overlay; a searchable model picker (type to filter, v0.111.0); a ⚙ popover for the system prompt + retrieval toggles and an account menu in the top bar; a paperclip attach button and a voice-chat mic. Capability-aware mode switching (vision-only attachment types; image-mode re-skins to "negative prompt"; TTS / STT / video / music / voice hide irrelevant inputs), FLUX.2 reference-image attach UI (v0.16.0), per-turn web-search toggle (v0.17.0), per-user replay-able history with attachments and generated artifacts, Enter to send / Shift+Enter for newline. Mobile-optimized (safe-area insets, touch targets, no iOS zoom).
 
 **Auth:** Cloudflare Access on the worker URL. Per-user history and R2 ownership checks via `Cf-Access-Authenticated-User-Email`. Free up to 50 seats on Zero Trust.
 
@@ -215,6 +220,8 @@ The worker is the only public surface. R2 is private; the worker streams objects
 | GET    | `/api/models`             | List available models with capability flags (`streaming`, `vision`, `group`) |
 | POST   | `/api/chat`               | Run a model. Dispatches by model type. |
 | POST   | `/api/chat/stream`        | SSE streaming variant for chat models flagged `streaming: true` |
+| GET/WS | `/api/stt/stream`         | WebSocket for conversational STT (Deepgram Flux via the `SttSession` DO); persists the transcript to history on close |
+| POST   | `/api/tts`                | Synthesize text to speech (Aura-2) and stream the audio back (no history row); used by the voice-chat loop |
 | GET    | `/api/conversations`      | List the caller's conversations (grouped by `conversation_id`, includes each conversation's `project_id`) |
 | GET    | `/api/conversations/:id`  | Full transcript for a conversation |
 | DELETE | `/api/conversations/:id`  | Cascade delete of all turns plus R2 artifacts |
@@ -243,6 +250,7 @@ The worker is the only public surface. R2 is private; the worker streams objects
 - `image`: text-to-image generation. The system prompt field becomes the negative prompt. FLUX.2 models additionally accept up to 4 reference images (v0.16.0). Output is a JPEG/PNG in R2; `openai/gpt-image-1.5` outputs a transparent RGBA PNG when `OPENAI_API_KEY` is set (v0.22.1), opaque otherwise.
 - `tts`: text-to-speech. Output is audio (MP3 or model-default container) in R2.
 - `stt`: speech-to-text transcription. Input audio, output text.
+- `voice`: conversational/streaming STT (Deepgram Flux). A live WebSocket session, not a request/response turn; powers the standalone `/stt.html` panel and the [voice chat](#voice-chat) loop. Special-cased on both routing and UI (the chat path rejects it with a pointer to `/api/stt/stream`).
 - `video`: text-to-video generation. Long-running (30s-3min); see "Long-running jobs" below.
 - `music`: text-to-music generation. Long-running (30s-90s); see "Long-running jobs" below.
 
@@ -442,6 +450,43 @@ Three Whisper variants are exposed:
 - `@cf/openai/whisper-tiny-en` (fast, English-only, beta)
 
 Whisper is hosted on Workers AI (no Unified Billing needed).
+
+## Voice chat
+
+Talk to any of the 35 chat models and hear it talk back, hands-free. This is one
+of the headline features: a full **speech in, speech out** loop over any text
+model on the list, running entirely on Cloudflare with no third-party STT/TTS.
+
+**Use it:** select a chat model, click the mic button in the composer (it only
+appears for chat models), and start talking. When you finish a thought, the model
+answers in the transcript and the answer is spoken aloud. Then it resumes
+listening. The mic pulses while live; click it again to stop. A status line shows
+the state (listening / thinking / speaking). The conversation is saved to history
+exactly like a typed chat, so you can scroll back or continue it by text later.
+
+**How it works:**
+- **STT (Deepgram Flux).** `@cf/deepgram/flux` is a WebSocket-only conversational
+  STT model with built-in turn detection. The browser opens a WebSocket to
+  `/api/stt/stream`, which the worker forwards to a per-session **`SttSession`
+  Durable Object**. The DO opens the upstream Flux socket via
+  `env.AI.run("@cf/deepgram/flux", { ... }, { websocket: true })` and bridges
+  audio up (linear16 PCM @ 16 kHz) and turn events down. It accepts the browser
+  socket with the **Hibernation API** and persists the final transcript to D1 on
+  close (a plain Worker has no reliable post-101 hook to write history).
+- **The loop.** On each `EndOfTurn` event, the client sends the utterance to the
+  selected chat model through the normal send path (full conversation context,
+  RAG, projects, web search all apply), then POSTs the reply to **`/api/tts`**,
+  which synthesizes it with **Aura-2** and streams the audio straight back (no
+  history row, since the loop speaks every reply). The mic is muted while the
+  model is thinking/speaking so it does not transcribe its own voice.
+
+**No setup:** both Flux and Aura-2 are Workers AI models on the `env.AI` binding,
+so voice chat needs no extra keys or services beyond the base deploy.
+
+A standalone transcription-only panel lives at `/stt.html` (same Flux engine,
+saves transcripts to history). Conversational/voice models are surfaced as a
+`type: "voice"` catalog entry, special-cased on both the routing and UI sides
+(they are a live session, not a request/response turn).
 
 ## Music generation (MiniMax Music 2.6)
 

@@ -21,9 +21,12 @@ pipeline {
   agent {
     docker {
       image 'node:22'
-      // Run as root inside the container so npm can write the workspace-local
-      // cache/HOME without uid-mapping permission errors.
-      args '-u root:root'
+      // Run as the Jenkins uid (the docker-pipeline default), NOT root. Running as
+      // root made npm write root-owned files into the bind-mounted workspace
+      // (.npm cache/logs, node_modules); the host `jenkins` user then could not
+      // delete them on the next checkout, failing every subsequent build with
+      // "Failed to clean the workspace / Operation not permitted". HOME below
+      // points npm at a writable workspace dir, so it works fine as non-root.
     }
   }
 
@@ -90,14 +93,15 @@ pipeline {
           sh 'npm run deploy'
         }
       }
-    }
-  }
-
-  post {
-    always {
-      // Don't leave the injected config or node_modules in the workspace.
-      sh 'rm -f wrangler.toml || true'
-      deleteDir()              // core step; no Workspace Cleanup plugin needed
+      post {
+        // Scrub the injected secret file. A stage-level post runs in the stage's
+        // agent context, so it can't hit the missing-node-context error a top-level
+        // post would if an earlier stage failed before the agent came up. The git
+        // checkout wipes the rest of the workspace at the start of each build.
+        always {
+          sh 'rm -f wrangler.toml || true'
+        }
+      }
     }
   }
 }

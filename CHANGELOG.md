@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.122.4
+
+CI fix (Jenkins only, no worker change): the `skyphusion-ci` pipeline ran its
+`node:22` Docker agent as root (`args '-u root:root'`), so npm wrote root-owned
+files (`.npm` cache/logs, `node_modules`) into the bind-mounted workspace. The
+next build's git checkout runs as the host `jenkins` user, which cannot delete
+those root-owned files, so every build after the first failed at "Failed to clean
+the workspace / Operation not permitted" before any stage ran. Drop the
+`-u root:root` so the container runs as the Jenkins uid (`HOME=$WORKSPACE` already
+makes npm work without root); files are now jenkins-owned and cleanable. Also move
+the `wrangler.toml` scrub into the Deploy stage's own `post` (a top-level `post`
+`sh` threw `MissingContextVariableException` when a build failed before the agent
+came up). The already-poisoned `skyphusion-ci_main` workspace was cleared on the
+runner by hand (root-owned files predating this fix).
+
+### Code
+- `Jenkinsfile`: drop `-u root:root` from the docker agent; move `wrangler.toml` cleanup to the Deploy stage `post`.
+- `package.json`: version 0.122.3 -> 0.122.4.
+
 ## v0.122.3
 
 Deployment hygiene (no runtime changes): standardize the committed resource names

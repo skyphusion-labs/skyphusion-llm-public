@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.121.0
+
+Feature: video-finish Cloudflare Container. The render pipeline's tail (concat
+the per-shot clips, optional film-style xfade crossfades, mux the soundtrack,
+faststart) is pure CPU ffmpeg that used to run on GPU-billed pod seconds; it now
+runs on a CPU-only container, the third sibling to the audio-beat-sync and
+image-prep containers. `containers/video-finish/` (Python + aiohttp + ffmpeg)
+exposes POST /finish { clips:[{url,targetSeconds?}], audioUrl?, outputUrl, ... }
+and faithfully ports vivijure-serverless assemble.py (normalize scale/pad/fps/
+libx264, hard concat or pairwise xfade 0.1-1.5, audio mux aac 192k -shortest
++faststart, 1-frame tail-trim on hard cuts). New Worker route POST
+/api/video/finish presigns the clip + soundtrack GETs and the output PUT and
+calls the container with the same warm-/health + retry-on-503 cold-start guard
+as image-prep (src/video-finish.ts, src/containers/video-finish.ts, VIDEO_FINISH
+binding, wrangler [[containers]] + migration v6). No JIT/model cache to bake
+(ffmpeg is a static binary); the only warm is a build-time libx264 sanity-encode.
+9 unit tests (tests/video-finish.test.ts; parse + cold-start guard). Container
+image built + validated on real libx264 (3-clip xfade+audio, hard+silent). This
+is the standalone route; rewiring the pod render flow to call it instead of
+assembling on-GPU is a follow-up.
+
 ## v0.120.0
 
 Frontend: modernize the Vivijure storyboard planner chrome and add a guided

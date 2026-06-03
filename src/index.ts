@@ -22,6 +22,7 @@ import type { WorkflowEvent } from "cloudflare:workers";
 // this re-exported from the worker entry so the binding can resolve it.
 export { AudioBeatSyncContainer } from "./containers/audio-beat-sync";
 export { ImagePrepContainer } from "./containers/image-prep";
+export { VideoFinishContainer } from "./containers/video-finish";
 export { SttSession } from "./stt-session";
 import type { ProviderStreamEvent } from "./parsers/types";
 import type { ModelType, Provider, ModelEntry } from "./models";
@@ -66,6 +67,7 @@ import {
   parseBeatTimingInput,
   type BeatTimingInput,
 } from "./beat-timing";
+import { parseVideoFinishInput, runVideoFinish } from "./video-finish";
 import { findPlanningModel, PLANNING_MODELS } from "./planner-catalog";
 import { serializeStoryboardYaml } from "./planner-yaml";
 import type { SlotId } from "./storyboard-validate";
@@ -527,6 +529,12 @@ export default {
     // that there is no jobId/poll dance. See docs/audio-beat-sync-container.md.
     if (url.pathname === "/api/audio/analyze" && request.method === "POST") {
       return handleAudioAnalyze(request, env);
+    }
+    // v0.120.0: video finishing. Assemble per-shot clips (+ optional soundtrack)
+    // into the final MP4 on the CPU-only VIDEO_FINISH Cloudflare Container
+    // (ffmpeg), off the GPU pod. See containers/video-finish/.
+    if (url.pathname === "/api/video/finish" && request.method === "POST") {
+      return handleVideoFinish(request, env);
     }
     // v0.32.0: submit a render job to the vivijure-serverless RunPod endpoint.
     if (url.pathname === "/api/storyboard/render" && request.method === "POST") {
@@ -1614,6 +1622,29 @@ interface RenderSubmitRequest {
   imageModelsOverrides?: unknown;
   // v0.82.0 (Phase 13): prompt_templates (vivijure-serverless 0.4.49+).
   promptTemplatesOverrides?: unknown;
+}
+
+// v0.120.0: video finishing on the CPU-only VIDEO_FINISH Cloudflare Container.
+// Presign the per-shot clips (+ optional soundtrack) and the output MP4, POST to
+// the container's /finish; it assembles (concat / xfade / audio mux) with ffmpeg
+// and PUTs the result. Moves the render tail off GPU-billed pod seconds.
+async function handleVideoFinish(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  let raw: unknown;
+  try {
+    raw = await request.json();
+  } catch {
+    return json({ ok: false, error: "Invalid JSON" }, { status: 400 });
+  }
+  const parsed = parseVideoFinishInput(raw);
+  if (!parsed.ok) {
+    return json({ ok: false, error: parsed.errors.join("; ") }, { status: 400 });
+  }
+  const res = await runVideoFinish(env, parsed.value);
+  if (!res.ok) {
+    return json({ ok: false, error: res.error, user: userEmail }, { status: res.status });
+  }
+  return json({ ok: true, ...(res.result as object), user: userEmail });
 }
 
 // v0.105.0: audio beat-sync. Submit an analyze_audio job; poll mirrors the

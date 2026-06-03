@@ -86,6 +86,19 @@ image = "./containers/image-prep/Dockerfile"
 max_instances = 5
 instance_type = "standard-1"
 
+# v0.121.0: CPU ffmpeg video-finish container. Worker presigns R2 GET (per-shot
+# clips + optional soundtrack) + PUT (final MP4) and POSTs to /finish; assembles
+# concat / crossfade / audio mux off the GPU pod. Source: containers/video-finish/.
+[[durable_objects.bindings]]
+name = "VIDEO_FINISH"
+class_name = "VideoFinishContainer"
+
+[[containers]]
+class_name = "VideoFinishContainer"
+image = "./containers/video-finish/Dockerfile"
+max_instances = 3
+instance_type = "standard-1"
+
 # v0.108.0: per-session DO wrapping a @cf/deepgram/flux conversational STT
 # WebSocket; persists the final transcript to /history on close. Source:
 # src/stt-session.ts.
@@ -104,6 +117,10 @@ new_sqlite_classes = ["ImagePrepContainer"]
 [[migrations]]
 tag = "v3"
 new_sqlite_classes = ["SttSession"]
+
+[[migrations]]
+tag = "v4"
+new_sqlite_classes = ["VideoFinishContainer"]
 
 # Per-instance observability for the worker (lets you tail logs in the
 # dashboard). Workflows have their own dashboard surface; this enables it

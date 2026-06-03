@@ -51,6 +51,11 @@ export interface Env {
   // R2 GET/PUT and POSTs to /portrait/prep at bundle time; moves rembg off the
   // GPU pod. See docs/image-prep-container.md.
   IMAGE_PREP: DurableObjectNamespace;
+  // v0.120.0: Container DO for CPU ffmpeg video finishing (class
+  // VideoFinishContainer in src/containers/video-finish.ts). Worker presigns R2
+  // GET (per-shot clips + optional soundtrack) and PUT (final MP4) and POSTs to
+  // /finish; moves clip concat / crossfade / audio mux off the GPU pod.
+  VIDEO_FINISH: DurableObjectNamespace;
   // v0.108.0: per-session Durable Object that wraps a @cf/deepgram/flux
   // conversational STT WebSocket so the final transcript persists to /history
   // on close (a plain Worker has no reliable post-101 hook to write D1). Class

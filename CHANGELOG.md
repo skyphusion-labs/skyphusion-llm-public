@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.113.0
+
+Two mobile fixes for the model dropdown.
+
+- **Opening it shifted the screen off-center**: the wider (v0.112.0) panel is
+  `position: absolute` anchored to the centered trigger, so it overflowed the
+  right edge and caused horizontal scroll. On mobile it's now pinned as a
+  contained sheet under the topbar (`position: fixed`, anchored to the topbar's
+  bottom so it survives notch safe-area height).
+- **The on-screen keyboard popped up on every open** because the search box was
+  auto-focused. Auto-focus is now gated to precise-pointer (desktop) devices, so
+  touch users get the dropdown without an unwanted keyboard.
+
 ## v0.112.0
 
 Fixes for the v0.111.0 frontpage polish.

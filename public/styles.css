@@ -4418,8 +4418,18 @@ body::before {
   /* a roomier text box on phones */
   .composer-field textarea { min-height: 3rem; }
   .composer { padding: 0.45rem 0.45rem 0.45rem 0.5rem; }
-  /* keep the (now wider) model dropdown inside the viewport */
-  .model-picker-panel { min-width: 0; max-width: calc(100vw - 1.2rem); }
+  /* keep the (now wider) model dropdown inside the viewport: pin it as a
+     contained sheet under the topbar instead of an absolute dropdown anchored
+     to the centered trigger (which overflowed the right edge and shifted the
+     whole screen off-center). The .topbar's backdrop-filter makes it the
+     containing block for this fixed panel, so top:100% = the topbar's bottom
+     edge (robust to the safe-area-inset height on notched phones); left/right
+     0.6rem are relative to the topbar's full-width box. */
+  .model-picker-panel {
+    position: fixed; top: calc(100% + 4px); left: 0.6rem; right: 0.6rem;
+    min-width: 0; width: auto; max-width: none;
+    max-height: 72vh;
+  }
 }
 
 /* coarse-pointer (touch) devices: never rely on hover-only affordances */

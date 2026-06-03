@@ -63,7 +63,11 @@ const modelSelect = (function buildModelPicker() {
   function setOpen(open) {
     panel.hidden = !open;
     trigger.setAttribute("aria-expanded", open ? "true" : "false");
-    if (open) setTimeout(() => search.focus(), 0);
+    // Auto-focus the search box only on precise-pointer (desktop) devices; on
+    // touch this would pop the on-screen keyboard every time the picker opens.
+    if (open && window.matchMedia && window.matchMedia("(hover: hover) and (pointer: fine)").matches) {
+      setTimeout(() => search.focus(), 0);
+    }
   }
 
   function updateTriggerLabel() {

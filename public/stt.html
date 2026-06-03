@@ -28,27 +28,19 @@
                  border-radius: 8px; }
     .stt-debug-row { padding: 1px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
     summary { cursor: pointer; opacity: 0.8; }
+    .stt-page-header { margin-bottom: 0.5rem; }
+    .stt-back { font-size: 0.85rem; opacity: 0.7; text-decoration: none; }
+    .stt-back:hover { opacity: 1; }
   </style>
 </head>
 <body class="planner-body">
-  <header class="wv-topbar">
-    <a class="wv-topbar-logo" href="/" aria-label="Vivijure home">
-      <span class="wv-topbar-logo-wave">Wave</span><span class="wv-topbar-logo-vryn">vryn</span>
-    </a>
-    <nav class="wv-topbar-nav" aria-label="primary">
-      <a href="/cast.html">cast</a>
-      <a href="/planner.html">storyboard planner</a>
-      <a href="/stt.html" class="is-active">voice</a>
-      <a href="/">chat</a>
-    </nav>
-    <button id="wv-topbar-user" type="button" class="wv-topbar-user" title="signed-in user">
-      <span class="wv-topbar-user-dot" aria-hidden="true"></span>
-      <span id="wv-topbar-user-email" class="wv-topbar-user-email wv-topbar-user-empty">loading…</span>
-    </button>
-  </header>
-
+  <!-- Conversational STT is a skyphusion-llm playground feature, not part of
+       the Vivijure video pipeline, so it does not carry the Vivijure topbar. -->
   <main class="stt-layout">
-    <header><h1>conversational STT</h1></header>
+    <header class="stt-page-header">
+      <a href="/" class="stt-back">&larr; back to chat</a>
+      <h1>conversational STT</h1>
+    </header>
     <p class="stt-status">
       Real-time speech recognition with turn detection, powered by Deepgram Flux
       (<code>@cf/deepgram/flux</code>) over a WebSocket. Click start, allow the mic, and talk.
@@ -70,7 +62,6 @@
     </details>
   </main>
 
-  <script src="/topbar.js"></script>
   <script src="/voice-widget.js"></script>
   <script src="/stt.js"></script>
 </body>

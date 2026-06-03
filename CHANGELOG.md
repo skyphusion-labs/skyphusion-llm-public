@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.109.0
+
+- `public/stt.html`: drop the Vivijure topbar (logo + cast/storyboard-planner
+  nav + user pill) and the `topbar.js` it pulled in. Conversational STT is a
+  skyphusion-llm playground feature, not part of the Vivijure video pipeline, so
+  it shouldn't carry that chrome. Replaced with a plain "back to chat" link. The
+  "voice" cross-links in the genuine Vivijure tools' topbars (cast/planner) stay
+  (they parallel the existing "chat" cross-link to the playground).
+
 ## v0.108.0
 
 Finishes conversational STT (`@cf/deepgram/flux`): the live mic session now

@@ -16,8 +16,9 @@
 // Catalog conventions for adding a new model:
 //   - Use the upstream's canonical ID for the prefix
 //     (anthropic/, xai/, openai/, google/, @cf/<vendor>/, etc.)
-//   - Include "BYOK" or "needs CF credits" in the label so the picker
-//     makes the billing model obvious to the user
+//   - Keep labels clean: do NOT put billing markers like "BYOK" or "needs CF
+//     credits" in the label (they were removed in v0.111.0); the worker knows
+//     the billing path from `provider` / `byok_alias`
 //   - Set streaming: true if the model can stream and your provider's
 //     stream parser handles it (Anthropic, xAI, OpenAI, Google, Workers AI
 //     are all covered)
@@ -72,10 +73,10 @@ export const MODELS: ModelEntry[] = [
   { id: "anthropic/claude-haiku-4-5",                   label: "Claude Haiku 4.5 (Anthropic)",         group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
 
   // xAI / Grok (BYOK via Bearer auth or stored keys, routed through AI Gateway)
-  { id: "xai/grok-4.3",                                 label: "Grok 4.3 (xAI, BYOK)",                       group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai", streaming: true },
-  { id: "xai/grok-4.20-multi-agent-0309",               label: "Grok 4.20 Multi-Agent (xAI, BYOK)",          group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai", streaming: true },
-  { id: "xai/grok-4.20-0309-reasoning",                 label: "Grok 4.20 Reasoning (xAI, BYOK)",            group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai", streaming: true },
-  { id: "xai/grok-build-0.1",                           label: "Grok Build 0.1 (xAI, BYOK, coding)",         group: "Chat \u00b7 xAI",       type: "chat", capabilities: [],         provider: "xai", streaming: true },
+  { id: "xai/grok-4.3",                                 label: "Grok 4.3 (xAI)",                       group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai", streaming: true },
+  { id: "xai/grok-4.20-multi-agent-0309",               label: "Grok 4.20 Multi-Agent (xAI)",          group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai", streaming: true },
+  { id: "xai/grok-4.20-0309-reasoning",                 label: "Grok 4.20 Reasoning (xAI)",            group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai", streaming: true },
+  { id: "xai/grok-build-0.1",                           label: "Grok Build 0.1 (xAI, coding)",         group: "Chat \u00b7 xAI",       type: "chat", capabilities: [],         provider: "xai", streaming: true },
 
   // Frontier
   { id: "@cf/moonshotai/kimi-k2.6",                     label: "Kimi K2.6 (1T)",               group: "Chat \u00b7 Frontier", type: "chat", capabilities: ["vision"], streaming: true },
@@ -93,10 +94,10 @@ export const MODELS: ModelEntry[] = [
   // against gpt-5.5 in v0.21.1, including token-usage on the final frame.
   // capabilities is empty: multimodal-in through the proxied binding is
   // unverified, so the attach affordance stays off.
-  { id: "openai/gpt-5.5",                               label: "GPT-5.5 (OpenAI, needs CF credits)",          group: "Chat \u00b7 OpenAI",   type: "chat", capabilities: [], provider: "openai", streaming: true },
-  { id: "openai/gpt-5.4",                               label: "GPT-5.4 (OpenAI, needs CF credits)",          group: "Chat \u00b7 OpenAI",   type: "chat", capabilities: [], provider: "openai", streaming: true },
-  { id: "openai/gpt-5.4-mini",                          label: "GPT-5.4 mini (OpenAI, needs CF credits)",     group: "Chat \u00b7 OpenAI",   type: "chat", capabilities: [], provider: "openai", streaming: true },
-  { id: "openai/o4-mini",                               label: "o4-mini (OpenAI, reasoning, needs CF credits)", group: "Chat \u00b7 OpenAI", type: "chat", capabilities: [], provider: "openai", streaming: true },
+  { id: "openai/gpt-5.5",                               label: "GPT-5.5 (OpenAI)",          group: "Chat \u00b7 OpenAI",   type: "chat", capabilities: [], provider: "openai", streaming: true },
+  { id: "openai/gpt-5.4",                               label: "GPT-5.4 (OpenAI)",          group: "Chat \u00b7 OpenAI",   type: "chat", capabilities: [], provider: "openai", streaming: true },
+  { id: "openai/gpt-5.4-mini",                          label: "GPT-5.4 mini (OpenAI)",     group: "Chat \u00b7 OpenAI",   type: "chat", capabilities: [], provider: "openai", streaming: true },
+  { id: "openai/o4-mini",                               label: "o4-mini (OpenAI, reasoning)", group: "Chat \u00b7 OpenAI", type: "chat", capabilities: [], provider: "openai", streaming: true },
   // Meta
   { id: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",     label: "Llama 3.3 70B (fp8)",          group: "Chat \u00b7 Meta",     type: "chat", capabilities: [], streaming: true },
   { id: "@cf/meta/llama-3.2-11b-vision-instruct",       label: "Llama 3.2 11B (vision)",       group: "Chat \u00b7 Meta",     type: "chat", capabilities: ["vision"], streaming: true },
@@ -116,7 +117,7 @@ export const MODELS: ModelEntry[] = [
   // src/providers/google.ts. Streaming via callGeminiStream +
   // interpretGeminiSSEFrame, with a dual-mode delta reconciler (handles
   // incremental or cumulative chunks). Text-only (multimodal vision deferred).
-  { id: "google/gemini-3.1-pro",                        label: "Gemini 3.1 Pro (Google, needs CF credits)", group: "Chat \u00b7 Google",   type: "chat", capabilities: [], provider: "google", streaming: true },
+  { id: "google/gemini-3.1-pro",                        label: "Gemini 3.1 Pro (Google)", group: "Chat \u00b7 Google",   type: "chat", capabilities: [], provider: "google", streaming: true },
   { id: "@cf/google/gemma-3-12b-it",                    label: "Gemma 3 12B (vision, 128K)",   group: "Chat \u00b7 Google",   type: "chat", capabilities: ["vision"], streaming: true },
   { id: "@cf/ibm-granite/granite-4.0-h-micro",          label: "Granite 4.0 Micro (IBM)",      group: "Chat \u00b7 Other",    type: "chat", capabilities: [], streaming: true },
   { id: "@hf/nousresearch/hermes-2-pro-mistral-7b",     label: "Hermes 2 Pro (function calling)", group: "Chat \u00b7 Other", type: "chat", capabilities: [], streaming: true },
@@ -129,7 +130,7 @@ export const MODELS: ModelEntry[] = [
   // ---- Image generation ----
   // Google proxied (Unified Billing): URL-returning, different schema from the
   // @cf models; handled by the provider:"google" branch in runImage (v0.21.2).
-  { id: "google/nano-banana-pro",                       label: "Nano Banana Pro (Google, needs CF credits)",   group: "Image Gen",            type: "image", capabilities: [], provider: "google" },
+  { id: "google/nano-banana-pro",                       label: "Nano Banana Pro (Google)",   group: "Image Gen",            type: "image", capabilities: [], provider: "google" },
   // gpt-image-1.5 (v0.22.0/.1). Transparency is NOT available through the CF
   // proxy: that schema is { prompt, images, quality, size, style } and
   // 7003-rejects background/output_format. So the worker uses a BYOK direct call
@@ -140,7 +141,7 @@ export const MODELS: ModelEntry[] = [
   // recraftv4 is opaque and art-directed (the CF proxy exposes no alpha flag,
   // only an opaque background_color). Strong text rendering and style controls;
   // returns webp. Added for logos/icons-on-bg/styled scenes, NOT transparency.
-  { id: "recraft/recraftv4",                            label: "Recraft V4 (art-directed, opaque, needs CF credits)", group: "Image Gen", type: "image", capabilities: [], provider: "recraft" },
+  { id: "recraft/recraftv4",                            label: "Recraft V4 (art-directed, opaque)", group: "Image Gen", type: "image", capabilities: [], provider: "recraft" },
   { id: "@cf/black-forest-labs/flux-2-klein-9b",        label: "FLUX 2 Klein 9B (frontier)",   group: "Image Gen",            type: "image", capabilities: [] },
   { id: "@cf/black-forest-labs/flux-2-klein-4b",        label: "FLUX 2 Klein 4B (faster)",     group: "Image Gen",            type: "image", capabilities: [] },
   { id: "@cf/black-forest-labs/flux-2-dev",             label: "FLUX 2 Dev (multi-reference)", group: "Image Gen",            type: "image", capabilities: [] },
@@ -170,27 +171,27 @@ export const MODELS: ModelEntry[] = [
   { id: "@cf/deepgram/flux",                            label: "Deepgram Flux (live mic)",     group: "Speech-to-text",       type: "voice", capabilities: [], provider: "workers-ai" },
 
   // ---- Music generation (Unified Billing only) ----
-  { id: "minimax/music-2.6",                            label: "MiniMax Music 2.6 (needs CF credits)", group: "Music Gen",     type: "music", capabilities: [], provider: "minimax" },
+  { id: "minimax/music-2.6",                            label: "MiniMax Music 2.6", group: "Music Gen",     type: "music", capabilities: [], provider: "minimax" },
 
   // ---- Video generation (Cloudflare Unified Billing via env.AI.run) ----
   // All routed through env.AI.run("provider/model", ...) - CF handles auth and
   // billing. No BYOK to xAI/Google/etc needed for these models.
-  { id: "google/veo-3.1",                               label: "Veo 3.1 (Google, needs CF credits)",               group: "Video Gen", type: "video", capabilities: [], provider: "google" },
-  { id: "google/veo-3.1-fast",                          label: "Veo 3.1 Fast (Google, needs CF credits)",          group: "Video Gen", type: "video", capabilities: [], provider: "google" },
-  { id: "google/veo-3",                                 label: "Veo 3 (Google, needs CF credits)",                 group: "Video Gen", type: "video", capabilities: [], provider: "google" },
-  { id: "google/veo-3-fast",                            label: "Veo 3 Fast (Google, needs CF credits)",            group: "Video Gen", type: "video", capabilities: [], provider: "google" },
-  { id: "bytedance/seedance-2.0",                       label: "Seedance 2.0 (ByteDance, needs CF credits)",       group: "Video Gen", type: "video", capabilities: [], provider: "bytedance" },
-  { id: "bytedance/seedance-2.0-fast",                  label: "Seedance 2.0 Fast (ByteDance, needs CF credits)",  group: "Video Gen", type: "video", capabilities: [], provider: "bytedance" },
-  { id: "minimax/hailuo-2.3",                           label: "Hailuo 2.3 (MiniMax, needs CF credits)",           group: "Video Gen", type: "video", capabilities: [], provider: "minimax" },
-  { id: "minimax/hailuo-2.3-fast",                      label: "Hailuo 2.3 Fast (MiniMax, needs CF credits)",      group: "Video Gen", type: "video", capabilities: [], provider: "minimax" },
-  { id: "xai/grok-imagine-video",                       label: "Grok Imagine Video (xAI, BYOK)",                   group: "Video Gen", type: "video", capabilities: [], provider: "xai",      byok_alias: "grok-imagine-video" },
-  { id: "runwayml/gen-4.5",                             label: "Gen-4.5 (RunwayML, needs CF credits)",             group: "Video Gen", type: "video", capabilities: [], provider: "runwayml" },
-  { id: "alibaba/hh1-t2v",                              label: "HappyHorse 1.0 T2V (Alibaba, needs CF credits)", group: "Video Gen", type: "video", capabilities: [], provider: "alibaba" },
+  { id: "google/veo-3.1",                               label: "Veo 3.1 (Google)",               group: "Video Gen", type: "video", capabilities: [], provider: "google" },
+  { id: "google/veo-3.1-fast",                          label: "Veo 3.1 Fast (Google)",          group: "Video Gen", type: "video", capabilities: [], provider: "google" },
+  { id: "google/veo-3",                                 label: "Veo 3 (Google)",                 group: "Video Gen", type: "video", capabilities: [], provider: "google" },
+  { id: "google/veo-3-fast",                            label: "Veo 3 Fast (Google)",            group: "Video Gen", type: "video", capabilities: [], provider: "google" },
+  { id: "bytedance/seedance-2.0",                       label: "Seedance 2.0 (ByteDance)",       group: "Video Gen", type: "video", capabilities: [], provider: "bytedance" },
+  { id: "bytedance/seedance-2.0-fast",                  label: "Seedance 2.0 Fast (ByteDance)",  group: "Video Gen", type: "video", capabilities: [], provider: "bytedance" },
+  { id: "minimax/hailuo-2.3",                           label: "Hailuo 2.3 (MiniMax)",           group: "Video Gen", type: "video", capabilities: [], provider: "minimax" },
+  { id: "minimax/hailuo-2.3-fast",                      label: "Hailuo 2.3 Fast (MiniMax)",      group: "Video Gen", type: "video", capabilities: [], provider: "minimax" },
+  { id: "xai/grok-imagine-video",                       label: "Grok Imagine Video (xAI)",                   group: "Video Gen", type: "video", capabilities: [], provider: "xai",      byok_alias: "grok-imagine-video" },
+  { id: "runwayml/gen-4.5",                             label: "Gen-4.5 (RunwayML)",             group: "Video Gen", type: "video", capabilities: [], provider: "runwayml" },
+  { id: "alibaba/hh1-t2v",                              label: "HappyHorse 1.0 T2V (Alibaba)", group: "Video Gen", type: "video", capabilities: [], provider: "alibaba" },
   // Image-to-video (v0.21.5): requires a source image. Flagged "image-input";
   // runVideo requires body.image_url, and buildGenParams sends the i2v shape.
-  { id: "alibaba/hh1-i2v",                              label: "HappyHorse 1.0 I2V (Alibaba, image-to-video, needs CF credits)", group: "Video Gen", type: "video", capabilities: ["image-input"], provider: "alibaba" },
-  { id: "pixverse/v6",                                  label: "PixVerse v6 (needs CF credits)",                   group: "Video Gen", type: "video", capabilities: [], provider: "pixverse" },
-  { id: "pixverse/v5.6",                                label: "PixVerse v5.6 (needs CF credits)",                 group: "Video Gen", type: "video", capabilities: [], provider: "pixverse" },
-  { id: "vidu/q3-pro",                                  label: "Vidu Q3 Pro (needs CF credits)",                   group: "Video Gen", type: "video", capabilities: [], provider: "vidu" },
-  { id: "vidu/q3-turbo",                                label: "Vidu Q3 Turbo (needs CF credits)",                 group: "Video Gen", type: "video", capabilities: [], provider: "vidu" },
+  { id: "alibaba/hh1-i2v",                              label: "HappyHorse 1.0 I2V (Alibaba, image-to-video)", group: "Video Gen", type: "video", capabilities: ["image-input"], provider: "alibaba" },
+  { id: "pixverse/v6",                                  label: "PixVerse v6",                   group: "Video Gen", type: "video", capabilities: [], provider: "pixverse" },
+  { id: "pixverse/v5.6",                                label: "PixVerse v5.6",                 group: "Video Gen", type: "video", capabilities: [], provider: "pixverse" },
+  { id: "vidu/q3-pro",                                  label: "Vidu Q3 Pro",                   group: "Video Gen", type: "video", capabilities: [], provider: "vidu" },
+  { id: "vidu/q3-turbo",                                label: "Vidu Q3 Turbo",                 group: "Video Gen", type: "video", capabilities: [], provider: "vidu" },
 ];

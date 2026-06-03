@@ -4315,6 +4315,59 @@ body::before {
    the .icon-btn rules above style it now that it lives in the topbar. */
 .sidebar-toggle { position: static; }
 
+/* ---- account accordion (top-right): email/prefs + Vivijure + Voice ---- */
+.account { position: relative; flex: 0 0 auto; }
+.account-menu {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 45;
+  width: min(290px, calc(100vw - 1.2rem));
+  display: flex; flex-direction: column; padding: 0.4rem;
+  background: var(--bg-glass); backdrop-filter: blur(16px) saturate(1.3);
+  border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.account-menu[hidden] { display: none; }
+.account-row {
+  display: flex; align-items: center; gap: 0.7rem;
+  padding: 0.6rem 0.7rem; border-radius: var(--radius-sm);
+  text-decoration: none; color: var(--fg); background: transparent;
+  border: 0; cursor: pointer; text-align: left; width: 100%; font: inherit;
+}
+.account-row:hover { background: var(--bg-elev2); }
+.account-link { flex-direction: column; align-items: flex-start; gap: 0.12rem; }
+.account-user {
+  gap: 0.6rem; border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  border-bottom: 1px solid var(--border-soft); margin-bottom: 0.25rem;
+}
+.account-ico { color: var(--accent); display: grid; place-items: center; flex: 0 0 auto; }
+.account-email { font-size: 0.85rem; color: var(--fg); word-break: break-all; }
+.account-name { font-weight: 600; font-size: 0.92rem; }
+.account-sub { font-size: 0.72rem; color: var(--fg-dim); }
+.account-name-vivijure {
+  background: var(--brand-grad); -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+
+/* ---- history search ---- */
+.history-search {
+  width: 100%; margin: 0 0 0.6rem; padding: 0.5rem 0.75rem;
+  background: var(--bg); color: var(--fg); font: inherit; font-size: 0.85rem;
+  border: 1px solid var(--border); border-radius: var(--radius-pill); outline: none;
+}
+.history-search:focus { border-color: var(--accent); }
+.history-search::placeholder { color: var(--fg-dim); }
+
+/* ---- searchable model picker ---- */
+.model-picker-panel {
+  display: flex; flex-direction: column; padding: 0.5rem;
+  max-height: 66vh; overflow: hidden;
+}
+.model-picker-search {
+  flex: 0 0 auto; width: 100%; margin-bottom: 0.45rem; padding: 0.5rem 0.75rem;
+  background: var(--bg); color: var(--fg); font: inherit; font-size: 0.88rem;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); outline: none;
+}
+.model-picker-search:focus { border-color: var(--accent); }
+.model-picker-search::placeholder { color: var(--fg-dim); }
+.model-picker-results { flex: 1 1 auto; overflow-y: auto; }
+
 /* ---- mobile optimization ---- */
 @media (max-width: 720px) {
   .conv-head, .transcript, .input-area { padding-left: 0.9rem; padding-right: 0.9rem; }

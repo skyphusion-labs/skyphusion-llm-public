@@ -41,6 +41,18 @@ const modelSelect = (function buildModelPicker() {
   panel.setAttribute("role", "listbox");
   panel.hidden = true;
 
+  // v0.111.0: searchable. A filter input over a results container; populate()
+  // fills the results, and typing live-filters items + hides empty groups.
+  const search = document.createElement("input");
+  search.type = "search";
+  search.className = "model-picker-search";
+  search.placeholder = "search models…";
+  search.setAttribute("aria-label", "search models");
+  const results = document.createElement("div");
+  results.className = "model-picker-results";
+  panel.appendChild(search);
+  panel.appendChild(results);
+
   root.appendChild(trigger);
   root.appendChild(panel);
 
@@ -51,6 +63,7 @@ const modelSelect = (function buildModelPicker() {
   function setOpen(open) {
     panel.hidden = !open;
     trigger.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) setTimeout(() => search.focus(), 0);
   }
 
   function updateTriggerLabel() {
@@ -90,7 +103,7 @@ const modelSelect = (function buildModelPicker() {
 
   function populate(grouped) {
     const groupNames = Object.keys(grouped);
-    panel.innerHTML = groupNames.map((group, idx) => {
+    results.innerHTML = groupNames.map((group, idx) => {
       const items = grouped[group];
       const openAttr = idx === 0 ? " open" : "";
       const itemsHtml = items.map((m) =>
@@ -133,6 +146,30 @@ const modelSelect = (function buildModelPicker() {
     }
   });
 
+  function applyFilter() {
+    const q = search.value.trim().toLowerCase();
+    results.querySelectorAll(".model-group").forEach((grp) => {
+      let any = false;
+      grp.querySelectorAll(".model-item").forEach((it) => {
+        const lbl = (it.querySelector(".model-item-label")?.textContent || "").toLowerCase();
+        const li = it.closest("li");
+        const match = !q || lbl.includes(q);
+        if (li) li.style.display = match ? "" : "none";
+        if (match) any = true;
+      });
+      grp.style.display = any ? "" : "none";
+      if (q) grp.open = any; // expand groups with matches while searching
+    });
+  }
+  search.addEventListener("input", applyFilter);
+  // Enter in the search picks the first visible match.
+  search.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    const first = Array.from(results.querySelectorAll(".model-item"))
+      .find((it) => { const li = it.closest("li"); return li && li.style.display !== "none"; });
+    if (first) { setValue(first.dataset.modelId, true); setOpen(false); }
+  });
+
   const shim = {
     get value() { return currentValue; },
     set value(v) { setValue(v, false); },
@@ -153,7 +190,10 @@ const transcriptEl      = $("#transcript");
 const convTitleEl       = $("#conv-title");
 const outputMeta        = $("#output-meta");
 const historyList       = $("#history-list");
-const userBadge         = $("#user-badge");
+const accountEmail      = $("#account-email");
+const accountToggle     = $("#account-toggle");
+const accountMenu       = $("#account-menu");
+const historySearch     = $("#history-search");
 const newChatBtn        = $("#new-chat");
 const fileInput         = $("#file-input");
 const attachBtn         = $("#attach-btn");
@@ -267,7 +307,7 @@ function fmtMeta(chat) {
 async function loadModels() {
   const { models, user } = await api("/api/models");
   state.user = user;
-  userBadge.textContent = user;
+  if (accountEmail) accountEmail.textContent = user;
 
   state.modelsById = {};
   const grouped = {};
@@ -1083,6 +1123,7 @@ async function loadConversations() {
         </li>`;
     })
     .join("");
+  filterHistory(); // re-apply an active history-search query after re-render
 }
 
 async function loadConversation(id) {
@@ -1369,22 +1410,50 @@ function toggleSidebar() {
 sidebarToggle.addEventListener("click", toggleSidebar);
 sidebarBackdrop.addEventListener("click", closeSidebar);
 
-// v0.110.0: settings popover (system prompt + retrieval toggles + active project).
+// v0.110.0/v0.111.0: top-right popovers - the ⚙ settings panel and the account
+// accordion. They are mutually exclusive and both close on outside-click/Escape.
 if (settingsToggle && settingsPanel) {
   settingsToggle.addEventListener("click", (e) => {
     e.stopPropagation();
+    if (accountMenu) accountMenu.hidden = true;
     settingsPanel.hidden = !settingsPanel.hidden;
   });
-  // Close on outside click or Escape.
-  document.addEventListener("click", (e) => {
-    if (settingsPanel.hidden) return;
-    if (settingsPanel.contains(e.target) || settingsToggle.contains(e.target)) return;
-    settingsPanel.hidden = true;
-  });
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !settingsPanel.hidden) settingsPanel.hidden = true;
+}
+if (accountToggle && accountMenu) {
+  accountToggle.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (settingsPanel) settingsPanel.hidden = true;
+    accountMenu.hidden = !accountMenu.hidden;
+    accountToggle.setAttribute("aria-expanded", accountMenu.hidden ? "false" : "true");
   });
 }
+document.addEventListener("click", (e) => {
+  if (settingsPanel && !settingsPanel.hidden && !settingsPanel.contains(e.target) && !(settingsToggle && settingsToggle.contains(e.target))) {
+    settingsPanel.hidden = true;
+  }
+  if (accountMenu && !accountMenu.hidden && !accountMenu.contains(e.target) && !(accountToggle && accountToggle.contains(e.target))) {
+    accountMenu.hidden = true;
+    if (accountToggle) accountToggle.setAttribute("aria-expanded", "false");
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (settingsPanel) settingsPanel.hidden = true;
+  if (accountMenu) { accountMenu.hidden = true; if (accountToggle) accountToggle.setAttribute("aria-expanded", "false"); }
+});
+
+// v0.111.0: client-side history search. Filters the rendered conversation rows
+// by their preview text. filterHistory() is re-applied after loadConversations
+// re-renders the list.
+function filterHistory() {
+  if (!historySearch || !historyList) return;
+  const q = historySearch.value.trim().toLowerCase();
+  historyList.querySelectorAll("li").forEach((li) => {
+    const hay = (li.textContent || "").toLowerCase();
+    li.style.display = !q || hay.includes(q) ? "" : "none";
+  });
+}
+if (historySearch) historySearch.addEventListener("input", filterHistory);
 
 historyList.addEventListener("click", (e) => {
   const del = e.target.closest("[data-conv-delete]");

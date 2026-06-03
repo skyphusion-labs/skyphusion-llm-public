@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.111.0
+
+Follow-up polish on the focus-mode frontpage.
+
+- **Account accordion** (top-right): a person-icon menu whose first row shows the
+  signed-in email (reserved for a future user-preferences screen), then
+  "Vivijure Studio / AI Video Pipeline" and "Voice / Conversational STT". The
+  ⚙ system-prompt/settings button sits to its left. Both popovers are mutually
+  exclusive and close on outside-click / Escape. The Vivijure + voice links left
+  the sidebar (Vivijure is now one entry, no "storyboard"/"cast" split).
+- **Searchable model picker**: a filter box at the top of the dropdown live-
+  filters models by name (hides empty groups; Enter picks the first match).
+- **Cleaned model labels**: removed "(needs CF credits)" and "BYOK" markers from
+  the visible labels (`src/models.ts`); the worker still routes by `provider` /
+  `byok_alias`.
+- **History search**: a search box at the top of the history sidebar filters the
+  conversation list client-side.
+- **Composer placeholder** now reads "enter to send, shift+enter for newline".
+
 ## v0.110.0
 
 Modern "focus-mode" redesign of the playground frontpage, mobile-first, with a

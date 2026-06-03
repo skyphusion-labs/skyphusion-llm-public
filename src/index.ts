@@ -2072,6 +2072,24 @@ async function resolveOffloadedFinish(
     await markFinishFailed(env, view.jobId, res.error);
     return { kind: "pending", note: res.error };
   }
+  // The container PUT the MP4 via a presigned URL, which does NOT carry the
+  // user_email customMetadata that handleArtifact's ownership check requires
+  // (the on-GPU boto3 upload sets it). Re-stamp via the binding so the UI can
+  // fetch + play it; also pins content-type=video/mp4. One-time, on this poll.
+  const ownerEmail = state?.user_email;
+  if (ownerEmail) {
+    try {
+      const obj = await env.R2_RENDERS.get(input.outputKey);
+      if (obj) {
+        await env.R2_RENDERS.put(input.outputKey, obj.body, {
+          httpMetadata: { contentType: "video/mp4" },
+          customMetadata: { user_email: ownerEmail },
+        });
+      }
+    } catch (e) {
+      console.error("video-finish metadata stamp failed:", e);
+    }
+  }
   const r = res.result as { durationSeconds?: number; hasAudio?: boolean };
   out.output_key = input.outputKey;
   if (typeof r.durationSeconds === "number") out.seconds = r.durationSeconds;

@@ -254,12 +254,12 @@ export async function markFinishFailed(env: Env, jobId: string, error: string): 
 export async function getFinishState(
   env: Env,
   jobId: string,
-): Promise<{ finish_state: string | null; output_key: string | null } | null> {
+): Promise<{ finish_state: string | null; output_key: string | null; user_email: string | null } | null> {
   const row = await env.DB.prepare(
-    `SELECT finish_state, output_key FROM renders WHERE job_id = ?`,
+    `SELECT finish_state, output_key, user_email FROM renders WHERE job_id = ?`,
   )
     .bind(jobId)
-    .first<{ finish_state: string | null; output_key: string | null }>();
+    .first<{ finish_state: string | null; output_key: string | null; user_email: string | null }>();
   return row ?? null;
 }
 

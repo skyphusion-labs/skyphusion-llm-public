@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.122.2
+
+Fix: off-GPU finished renders were unviewable in the UI ("No video with supported
+format and MIME type found"). The video-finish container PUTs the assembled MP4
+via a presigned URL, which does not carry the `user_email` customMetadata that
+`handleArtifact`'s ownership check requires (the on-GPU boto3 upload sets it), so
+the artifact fetch 403'd. resolveOffloadedFinish now re-stamps the object via the
+R2_RENDERS binding after assembly (customMetadata.user_email from the render row +
+content-type=video/mp4). getFinishState also returns user_email. One-time, on the
+finishing poll.
+
 ## v0.122.0
 
 Feature: off-GPU video finishing, second half. The render poll now assembles the

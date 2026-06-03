@@ -69,7 +69,64 @@ A working template for the Cloudflare AI stack. One Worker, no framework, no bui
 
 **UI (focus-mode redesign, v0.110.0+):** a single centered conversation column with a floating composer; the sidebar (searchable history, projects, documents) is a slide-in overlay; a searchable model picker (type to filter, v0.111.0); a ⚙ popover for the system prompt + retrieval toggles and an account menu in the top bar; a paperclip attach button and a voice-chat mic. Capability-aware mode switching (vision-only attachment types; image-mode re-skins to "negative prompt"; TTS / STT / video / music / voice hide irrelevant inputs), FLUX.2 reference-image attach UI (v0.16.0), per-turn web-search toggle (v0.17.0), per-user replay-able history with attachments and generated artifacts, Enter to send / Shift+Enter for newline. Mobile-optimized (safe-area insets, touch targets, no iOS zoom).
 
+**Vivijure studio (AI music-video pipeline):** the same Worker doubles as the control plane for an AI music-video pipeline, an LLM storyboard planner, a cast builder with auto background removal, audio beat-sync, and bundle assembly, that hands GPU rendering off to a separate RunPod backend. CPU prep (rembg, librosa) runs on Cloudflare Containers. See [Vivijure studio](#vivijure-studio-ai-music-video-pipeline) below.
+
 **Auth:** Cloudflare Access on the worker URL. Per-user history and R2 ownership checks via `Cf-Access-Authenticated-User-Email`. Free up to 50 seats on Zero Trust.
+
+## Vivijure studio (AI music-video pipeline)
+
+Beyond the chat playground, the same Worker hosts **Vivijure studio**, the control
+plane for an AI music-video pipeline. (Reachable from the top-bar account menu, or
+directly at [`/planner.html`](public/planner.html) and [`/cast.html`](public/cast.html).)
+It plans and preps a project here, then hands the GPU-heavy training and rendering
+off to a separate RunPod serverless backend.
+
+The flow:
+
+1. **Cast** (`/cast.html`, `POST /api/storyboard/character-ref`) build a cast of
+   characters from reference images. Portraits are background-removed automatically
+   by the `image-prep` container (below), so the renderer gets a clean subject.
+2. **Storyboard planner** (`/planner.html`, `POST /api/storyboard/plan` + `/refine`)
+   give a brief and a cast; an LLM (any chat model) plans the film into scenes with
+   per-shot prompts, character slots, a shared style prefix, and an act arc. Output
+   is a validated `storyboard.yaml`. `/api/storyboard/preflight` checks readiness;
+   `/api/storyboard/projects` persists named projects.
+3. **Beat sync** (`POST /api/storyboard/audio-upload`, `POST /api/audio/analyze`)
+   upload a music bed; the `audio-beat-sync` container runs librosa to detect BPM +
+   downbeats and align each shot's timing to the music.
+4. **Bundle** (`POST /api/storyboard/bundle`) assemble the storyboard + cleaned cast
+   portraits + reference images into a `.tar.gz` project bundle, staged to R2.
+5. **Render** (`POST /api/storyboard/render`, `GET /api/storyboard/renders`) submit
+   the bundle to the **vivijure-serverless** RunPod GPU endpoint, which trains
+   per-character LoRAs, renders SDXL keyframes plus image-to-video, exports a silent
+   MP4, and pushes the result back to R2. Render history is tracked in D1.
+
+**CPU prep on Cloudflare Containers.** The prep steps that don't need a GPU run as
+Cloudflare Containers (`containers/`), so the expensive RunPod GPU worker stays
+purely GPU-bound:
+
+- **`image-prep`** (rembg / u2net) removes the background from cast portraits at
+  bundle time. The Worker presigns short-lived R2 GET/PUT URLs (SigV4 over Web
+  Crypto, `src/r2-presign.ts`) so the container reads + writes R2 directly with no
+  binding; the cleaned PNG is content-addressed in R2 and reused across bundles.
+- **`audio-beat-sync`** (librosa) does the beat detection above.
+
+Both bake a CPU-portable numba cache into the image (numba's JIT kernels otherwise
+compile for ~26-46s on a cold cache, which blew the container's port-bind window
+until the cache was pinned with a whole-second source mtime + a generic CPU
+target). Each is fronted by its own Durable Object.
+
+**Setup.** Vivijure studio needs the RunPod endpoint plus R2 S3 credentials (the
+containers reach R2 over the public S3 endpoint):
+
+| Variable | Purpose |
+|---|---|
+| `RUNPOD_API_KEY` / `RUNPOD_ENDPOINT_ID` | submit + poll render jobs on the vivijure-serverless endpoint |
+| `R2_S3_ACCESS_KEY_ID` / `R2_S3_SECRET_ACCESS_KEY` (secrets) | R2 API token (Object R+W) used for presigning |
+| `R2_S3_ENDPOINT` / `R2_S3_BUCKET` (vars) | the R2 S3 endpoint + render bucket |
+
+The GPU half (LoRA training + rendering) is a separate RunPod serverless worker,
+`vivijure-serverless`; this repo is only the control plane.
 
 ## Stack
 

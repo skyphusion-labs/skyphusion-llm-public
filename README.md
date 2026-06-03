@@ -923,4 +923,6 @@ See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
 **Vivijure**, the AI music-video pipeline this project's [Vivijure studio](#vivijure-studio-ai-music-video-pipeline) builds on, and the core concepts behind it, are the work of [@lifelessAI](https://x.com/lifelessAI).
 
+Built and maintained by [SkyPhusion](https://x.com/SkyPhusion).
+
 Built on Cloudflare Workers, Workers AI, AI Gateway, D1, R2, Vectorize, Workflows, and Cloudflare Access. Image generation models courtesy of Black Forest Labs and Leonardo.Ai. Text-to-speech via Deepgram. Speech-to-text via OpenAI Whisper. Web search via Tavily and Wikipedia. With thanks to M for inspiration, UX critique, and locating bug after bug.

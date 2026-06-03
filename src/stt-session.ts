@@ -113,7 +113,9 @@ export class SttSession extends DurableObject<Env> {
     } catch {
       return;
     }
-    const type = (ev.type as string) || (ev.event as string) || "";
+    // Flux nests turn events: {type:"TurnInfo", event:"EndOfTurn", ...}. (It used
+    // to be flat {type:"EndOfTurn"}; the API changed.) Handle both shapes.
+    const type = ev.type === "TurnInfo" ? (ev.event as string) : ((ev.type as string) || (ev.event as string) || "");
     if (type === "EndOfTurn") {
       const text = typeof ev.transcript === "string" ? ev.transcript.trim() : "";
       if (text) {

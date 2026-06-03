@@ -1437,7 +1437,7 @@ function startVoiceChat() {
     onStatus: (s) => { if (!vc.busy) setVoiceStatus(s === "listening" ? "\u{1F3A4} listening… speak" : "\u{1F3A4} " + s); },
     onClose: () => stopVoiceChat(),
     onEvent: (ev) => {
-      const type = ev.type || ev.event || "";
+      const type = window.fluxEventName(ev);
       if (type !== "EndOfTurn" || vc.busy) return;
       const text = (typeof ev.transcript === "string" ? ev.transcript : "").trim();
       if (text) handleUtterance(text);

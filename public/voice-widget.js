@@ -10,6 +10,15 @@
 (function () {
   "use strict";
 
+  // Deepgram Flux nests turn events under {type:"TurnInfo", event:"EndOfTurn"|
+  // "Update"|"StartOfTurn"|...}. (It used to be flat {type:"EndOfTurn"}; the API
+  // changed.) Normalize to the event name, tolerating both shapes.
+  window.fluxEventName = function fluxEventName(ev) {
+    if (!ev) return "";
+    if (ev.type === "TurnInfo") return ev.event || "";
+    return ev.type || ev.event || "";
+  };
+
   window.createMicStreamer = function createMicStreamer(opts) {
     const onEvent = (opts && opts.onEvent) || function () {};
     const onStatus = (opts && opts.onStatus) || function () {};
@@ -136,7 +145,7 @@
 
     function handleEvent(ev) {
       debug(ev);
-      const type = ev.type || ev.event || "";
+      const type = window.fluxEventName(ev);
       const text = transcriptOf(ev);
       switch (type) {
         case "StartOfTurn":

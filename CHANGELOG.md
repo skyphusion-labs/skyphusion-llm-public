@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.118.1
+
+Fix: voice STT broke because Deepgram Flux changed its event shape. Turn events
+are now nested as `{type:"TurnInfo", event:"EndOfTurn", ...}` (they used to be
+flat `{type:"EndOfTurn"}`). Our parsers keyed on `ev.type`, which is now always
+`"TurnInfo"`, so `EndOfTurn` was never detected: the voice-chat loop never sent
+anything, the standalone STT never committed/persisted turns, and the idle
+session eventually died ("socket error"). Added a `fluxEventName()` normalizer
+(tolerates both shapes) used by the widget, the voice-chat loop, and the
+SttSession DO. Verified the upstream socket itself is healthy (101 + Connected +
+TurnInfo events) via a direct WS probe.
+
 ## v0.118.0
 
 **Voice chat: talk to any chat model and hear it reply, hands-free.**

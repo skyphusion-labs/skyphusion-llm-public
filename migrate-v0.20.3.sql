@@ -7,7 +7,7 @@
 --   - project_messages table + indexes (idempotent via IF NOT EXISTS)
 --   - four new columns on chunks (NOT idempotent; run once)
 --
--- Apply: wrangler d1 execute skyphusion-llm-public --remote --file=migrate-v0.20.3.sql
+-- Apply: wrangler d1 execute skyphusion-llm --remote --file=migrate-v0.20.3.sql
 
 CREATE TABLE IF NOT EXISTS project_messages (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,

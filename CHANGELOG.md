@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.122.3
+
+Deployment hygiene (no runtime changes): standardize the committed resource names
+to match production, ship the migration delta v0.122.0 forgot, and split the
+migration runbook out of the README.
+
+- **Resource names.** The committed config/docs referenced placeholder names
+  (`skyphusion-llm-public`) for the D1 database and R2 bucket; production uses
+  `skyphusion-llm` for both, `vivijure` for the `R2_RENDERS` bucket (the same
+  bucket the vivijure-serverless GPU worker reads/writes), and `skyphusion-llm-vec`
+  for Vectorize (already correct). Aligned `wrangler.example.toml` (incl. the worker
+  `name` + `R2_RENDERS` bucket), the CLAUDE.md binding table (and added the missing
+  `R2_RENDERS` row), the README setup commands, and the older migrate files' Apply
+  comments. The package/repo name and `git clone` dir are unchanged. Historical
+  CHANGELOG command examples are left as-is (append-only record).
+- **`migrate-v0.122.0.sql`.** The `renders.finish_state` column (v0.122.0) shipped
+  in `schema.sql` (matching the pervasive trailing-ALTER pattern there) but no
+  per-version delta was provided for existing DBs. Added now.
+- **`MIGRATIONS.md`.** Moved the per-version migration runbook out of the README
+  (now a pointer) into a dedicated guide, and backfilled the delta files the README
+  never documented (v0.34.0, v0.36.0, v0.39.0, v0.40.0, v0.42.0, v0.122.0).
+
+### Code
+- `migrate-v0.122.0.sql` (new): `ALTER TABLE renders ADD COLUMN finish_state TEXT;`.
+- `MIGRATIONS.md` (new): the extracted + backfilled migration runbook.
+- `README.md`: migration section replaced with a one-line pointer; setup commands renamed.
+- `wrangler.example.toml`, `CLAUDE.md`, `migrate-v0.20.0/0.20.2/0.20.3/0.34.0.sql`: name alignment.
+- `package.json`: version 0.122.2 -> 0.122.3.
+
+Apply (existing D1; fresh DBs get the column from `schema.sql`):
+```bash
+wrangler d1 execute skyphusion-llm --remote --file=migrate-v0.122.0.sql
+```
+
+No source/test changes; typecheck clean, 523 tests still green.
+
 ## v0.122.2
 
 Fix: off-GPU finished renders were unviewable in the UI ("No video with supported

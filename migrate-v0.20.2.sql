@@ -8,10 +8,10 @@
 -- cumulative schema.sql against an existing database.
 --
 -- To check whether it has already been applied:
---   wrangler d1 execute skyphusion-llm-public --remote --command "PRAGMA table_info(chats)"
+--   wrangler d1 execute skyphusion-llm --remote --command "PRAGMA table_info(chats)"
 -- and look for a project_id column.
 --
--- Apply: wrangler d1 execute skyphusion-llm-public --remote --file=migrate-v0.20.2.sql
+-- Apply: wrangler d1 execute skyphusion-llm --remote --file=migrate-v0.20.2.sql
 
 ALTER TABLE chats ADD COLUMN project_id INTEGER;
 

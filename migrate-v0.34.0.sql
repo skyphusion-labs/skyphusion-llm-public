@@ -2,7 +2,7 @@
 -- render history. Idempotent (CREATE TABLE IF NOT EXISTS + CREATE INDEX
 -- IF NOT EXISTS), safe to apply to an existing populated DB.
 --
--- Apply: wrangler d1 execute skyphusion-llm-public --remote --file=migrate-v0.34.0.sql
+-- Apply: wrangler d1 execute skyphusion-llm --remote --file=migrate-v0.34.0.sql
 
 CREATE TABLE IF NOT EXISTS renders (
   id                INTEGER PRIMARY KEY AUTOINCREMENT,

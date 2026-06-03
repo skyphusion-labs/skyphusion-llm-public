@@ -192,7 +192,7 @@ npm run db:migrate:local
 ### 3. Create the R2 bucket
 
 ```
-npx wrangler r2 bucket create skyphusion-llm-public
+npx wrangler r2 bucket create skyphusion-llm
 ```
 
 No further config needed; the binding is already in `wrangler.example.toml` (and therefore in your `wrangler.toml` after bootstrap).
@@ -200,7 +200,7 @@ No further config needed; the binding is already in `wrangler.example.toml` (and
 Recommended: add an object-lifecycle rule that expires the `tmp/` prefix, where ZIP import (v0.26.0) stages archives and extracted files. The import workflow deletes these on the normal path; this rule sweeps any objects leaked by a workflow that errors before cleanup. 1 day is the finest R2 granularity and is plenty (live staged objects last seconds to minutes):
 
 ```
-npx wrangler r2 bucket lifecycle add skyphusion-llm-public tmp-staging-cleanup tmp/ --expire-days 1 --force
+npx wrangler r2 bucket lifecycle add skyphusion-llm tmp-staging-cleanup tmp/ --expire-days 1 --force
 ```
 
 Lifecycle rules are per-bucket account config, not declared in `wrangler.toml`, so this is a one-time setup step per deployment.
@@ -641,7 +641,7 @@ npx wrangler vectorize create skyphusion-llm-vec --dimensions=768 --metric=cosin
 # already has tables: it contains non-idempotent ALTER statements that abort
 # the whole transaction on re-run. For an existing deployment, use the
 # per-release delta files instead (see "Migrating an existing deployment").
-npx wrangler d1 execute skyphusion-llm-public --remote --file=schema.sql
+npx wrangler d1 execute skyphusion-llm --remote --file=schema.sql
 ```
 
 ### Constraints
@@ -795,100 +795,9 @@ Full Workers AI catalog: https://developers.cloudflare.com/workers-ai/models/. S
 
 ## Migrating an existing deployment
 
-**Migration philosophy (read this first).** `schema.sql` is the canonical full schema for standing up a *fresh* database. It contains non-idempotent `ALTER TABLE` statements, so re-running it against a database that already has tables will raise `SQLITE_ERROR: duplicate column name` and, because `wrangler d1 execute --file` runs the whole file as one transaction, abort and roll back the entire run. **Never re-run `schema.sql` against an existing database.** To upgrade an existing deployment, apply only the delta for each version you're crossing, using the explicit commands below (or, for releases that ship one, the per-release `migrate-vX.Y.Z.sql` delta file). Apply each version's delta in order, then redeploy.
-
-v0.13.0 onward touched the D1 schema only at v0.20.0, v0.20.2, and v0.20.3; everything else in the v0.13.0 to v0.20.0 range is code-only. The pre-v0.13.0 migrations (v0.7.0 to v0.10.0) are below for anyone upgrading from very old deployments.
-
-For v0.7.0 (video generation):
-
-```
-npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE chats ADD COLUMN status TEXT NOT NULL DEFAULT 'done'"
-npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE chats ADD COLUMN job_id TEXT"
-npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE chats ADD COLUMN job_provider TEXT"
-npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE chats ADD COLUMN job_error TEXT"
-npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE chats ADD COLUMN job_started_at TEXT"
-```
-
-For v0.8.0 (RAG Pass 1):
-
-```
-npx wrangler vectorize create skyphusion-llm-vec --dimensions=768 --metric=cosine
-# Create the documents and chunks tables explicitly. (Historically this step
-# was "--file=schema.sql"; that is no longer safe because today's schema.sql
-# also carries later non-idempotent ALTERs. Use the explicit DDL below.)
-npx wrangler d1 execute skyphusion-llm-public --remote --command "CREATE TABLE IF NOT EXISTS documents (id INTEGER PRIMARY KEY AUTOINCREMENT, user_email TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), filename TEXT NOT NULL, mime TEXT NOT NULL, r2_key TEXT NOT NULL, size_bytes INTEGER NOT NULL, total_chars INTEGER NOT NULL DEFAULT 0, chunk_count INTEGER NOT NULL DEFAULT 0)"
-npx wrangler d1 execute skyphusion-llm-public --remote --command "CREATE TABLE IF NOT EXISTS chunks (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id INTEGER NOT NULL, user_email TEXT NOT NULL, chunk_index INTEGER NOT NULL, text TEXT NOT NULL, vector_id TEXT NOT NULL, FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE)"
-```
-
-For v0.8.1 (RAG Pass 2):
-
-```
-npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE chats ADD COLUMN retrieved_context TEXT"
-```
-
-For v0.8.2 (Phase 3A, RAG over PDF + XLSX):
-
-```
-npm install
-npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE chunks ADD COLUMN page INTEGER"
-npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE chunks ADD COLUMN sheet TEXT"
-```
-
-For v0.10.0 (multi-turn conversations):
-
-```
-npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE chats ADD COLUMN conversation_id TEXT"
-npx wrangler d1 execute skyphusion-llm-public --remote --command "ALTER TABLE chats ADD COLUMN turn_index INTEGER"
-npx wrangler d1 execute skyphusion-llm-public --remote --command "UPDATE chats SET conversation_id = 'legacy-' || id, turn_index = 0 WHERE conversation_id IS NULL"
-npx wrangler d1 execute skyphusion-llm-public --remote --command "CREATE INDEX IF NOT EXISTS idx_chats_conversation ON chats(conversation_id, turn_index)"
-```
-
-For v0.12.0 (wrangler.toml restructure): see the CHANGELOG entry for the exact `[[workflows]]` and `[observability]` blocks to paste into your local `wrangler.toml`, plus the `GATEWAY_ID` move from `[vars]` to a worker secret.
-
-For v0.14.0 (BYOK removal of OpenAI and Google): drop the now-unused secrets if you want a clean state:
-
-```
-npx wrangler secret delete OPENAI_API_KEY
-npx wrangler secret delete GOOGLE_API_KEY
-```
-
-Neither is fatal if left in place; they're just inert.
-
-v0.13.0, v0.15.0, v0.16.0, v0.17.0: no D1 migrations. v0.17.0 adds an optional `TAVILY_API_KEY` secret for the web-search feature; skip it and the feature falls back to Wikipedia only.
-
-v0.18.x, v0.19.x: code-only (provider extractions, SSE refactors, chunker rewrite). No D1 migrations.
-
-For v0.20.0 (projects and knowledge stores): ships the delta file `migrate-v0.20.0.sql`, which adds the `projects` and `project_documents` tables and their indexes. Every statement is `CREATE ... IF NOT EXISTS`, so this one is safely re-runnable, but apply it once:
-
-```
-npx wrangler d1 execute skyphusion-llm-public --remote --file=migrate-v0.20.0.sql
-```
-
-v0.20.1, v0.20.1.1: frontend-only (projects UI, modal hotfix). No D1 migrations.
-
-For v0.20.2 (conversation to project association): ships the delta file `migrate-v0.20.2.sql`, which adds `chats.project_id` and a partial index. The `ALTER` is non-idempotent; run the file exactly once. If you have already added this column, skip it (re-running raises "duplicate column name" and rolls back the run).
-
-v0.21.x, v0.22.0: code/frontend only, no D1 migrations.
-
-For v0.22.1 (transparent image gen): no D1 migration. Re-introduces an OPTIONAL `OPENAI_API_KEY` secret, used only for `openai/gpt-image-1.5` transparent output via a direct OpenAI call (chat is unaffected and still rides Unified Billing). If you ran the v0.14.0 cleanup that deleted this secret, re-add it to enable transparency; skip it and gpt-image-1.5 stays opaque through the proxy:
-
-```
-npx wrangler secret put OPENAI_API_KEY
-```
-
-```
-npx wrangler d1 execute skyphusion-llm-public --remote --file=migrate-v0.20.2.sql
-```
-
-For v0.20.3 (Discord ingestion): this release ships a delta file, `migrate-v0.20.3.sql`, containing the `project_messages` table and the four new `chunks` columns. Apply it once:
-
-```
-npx wrangler d1 execute skyphusion-llm-public --remote --file=migrate-v0.20.3.sql
-```
-
-The `ALTER TABLE chunks ADD COLUMN` statements in it are non-idempotent; run the file exactly once. If you need to verify what applied, `PRAGMA table_info(chunks)` should list `channel`, `authors`, `sent_at_start`, `sent_at_end`.
-
-v0.20.4: frontend-only (Discord import button). No D1 migration.
+Upgrading an existing deployment? The full per-version migration runbook (delta
+files, exact `wrangler d1 execute` commands, and the "never re-run `schema.sql`"
+reasoning) lives in **[MIGRATIONS.md](MIGRATIONS.md)**.
 
 ## Local type check
 

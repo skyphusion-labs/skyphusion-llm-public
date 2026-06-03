@@ -1,4 +1,4 @@
-name = "skyphusion-llm-public"
+name = "skyphusion-llm"
 main = "src/index.ts"
 compatibility_date = "2026-05-01"
 
@@ -10,18 +10,18 @@ compatibility_date = "2026-05-01"
 binding = "AI"
 
 # D1 database for chat history. Fill in database_id after running:
-#   npx wrangler d1 create skyphusion-llm-public
+#   npx wrangler d1 create skyphusion-llm
 [[d1_databases]]
 binding = "DB"
-database_name = "skyphusion-llm-public"
+database_name = "skyphusion-llm"
 database_id = "PLACEHOLDER_RUN_wrangler_d1_create_THEN_PASTE_HERE"
 
 # R2 bucket for input + output artifacts (images, audio, video frames).
 # Create with:
-#   npx wrangler r2 bucket create skyphusion-llm-public
+#   npx wrangler r2 bucket create skyphusion-llm
 [[r2_buckets]]
 binding = "R2"
-bucket_name = "skyphusion-llm-public"
+bucket_name = "skyphusion-llm"
 
 # v0.39.1: separate bucket for storyboard / render artifacts. The
 # vivijure-serverless GPU worker writes bundles, renders, and project
@@ -31,10 +31,10 @@ bucket_name = "skyphusion-llm-public"
 # `R2` untouched. Point both bindings at the same bucket if you do
 # not want the split.
 # Create with:
-#   npx wrangler r2 bucket create skyphusion-llm-renders
+#   npx wrangler r2 bucket create vivijure
 [[r2_buckets]]
 binding = "R2_RENDERS"
-bucket_name = "skyphusion-llm-renders"
+bucket_name = "vivijure"
 
 # Vectorize index for RAG document embeddings. 768 dimensions matches
 # @cf/baai/bge-base-en-v1.5; cosine similarity.

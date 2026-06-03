@@ -68,8 +68,9 @@ Declared in `wrangler.example.toml` (the committed template; the real `wrangler.
 | Binding | Type | Purpose |
 |---|---|---|
 | `AI` | `[ai]` | Unified AI binding — Workers AI models directly + Unified Billing partners through AI Gateway. BYOK providers bypass it. |
-| `DB` | `[[d1_databases]]` (`skyphusion-llm-public`) | Chat metadata, conversations, RAG chunk text, projects. Fill in `database_id` after `wrangler d1 create`. |
-| `R2` | `[[r2_buckets]]` (`skyphusion-llm-public`) | All binary artifacts (input + generated output). |
+| `DB` | `[[d1_databases]]` (`skyphusion-llm`) | Chat metadata, conversations, RAG chunk text, projects. Fill in `database_id` after `wrangler d1 create`. |
+| `R2` | `[[r2_buckets]]` (`skyphusion-llm`) | All binary artifacts (input + generated output). |
+| `R2_RENDERS` | `[[r2_buckets]]` (`vivijure`) | Storyboard/render artifacts (bundles, renders, project-state tarballs) the vivijure-serverless GPU worker reads/writes; the Worker serves them back via `/api/artifact` + `/api/storyboard/*` (v0.39.1). Point it at the same bucket as `R2` if you do not want the split. |
 | `VEC` | `[[vectorize]]` (`skyphusion-llm-vec`) | RAG embeddings, 768-dim (`@cf/baai/bge-base-en-v1.5`), cosine. |
 | `ASSETS` | `[assets]` (`./public`) | Static frontend served via Workers Assets. |
 | `LONGRUN` | `[[workflows]]` (`skyphusion-longrun` / `LongRunWorkflow`) | Durable execution for long-running video/music gen (v0.12.0). |

@@ -6,7 +6,7 @@
 -- run this against an existing database, never the cumulative schema.sql
 -- (which carries later non-idempotent ALTERs that abort the transaction).
 --
--- Apply: wrangler d1 execute skyphusion-llm-public --remote --file=migrate-v0.20.0.sql
+-- Apply: wrangler d1 execute skyphusion-llm --remote --file=migrate-v0.20.0.sql
 
 CREATE TABLE IF NOT EXISTS projects (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,

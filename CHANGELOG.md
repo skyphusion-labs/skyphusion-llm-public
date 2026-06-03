@@ -11,6 +11,13 @@ R2_RENDERS binding after assembly (customMetadata.user_email from the render row
 content-type=video/mp4). getFinishState also returns user_email. One-time, on the
 finishing poll.
 
+### Code
+- `src/index.ts`: `resolveOffloadedFinish` re-stamps the assembled MP4 via the `R2_RENDERS` binding (customMetadata.user_email from the render row + content-type=video/mp4) right after the container finishes.
+- `src/renders-db.ts`: `getFinishState` also selects `user_email`.
+- `package.json`: version 0.122.0 -> 0.122.2.
+
+typecheck clean; 523/523 tests pass.
+
 ## v0.122.0
 
 Feature: off-GPU video finishing, second half. The render poll now assembles the
@@ -93,6 +100,35 @@ image built + validated on real libx264 (3-clip xfade+audio, hard+silent). This
 is the standalone route; rewiring the pod render flow to call it instead of
 assembling on-GPU is a follow-up.
 
+### Code
+- `containers/video-finish/` (new): `app.py` (aiohttp `/health` + POST `/finish`, ffmpeg assembly), `Dockerfile` (python:3.11-slim + ffmpeg + build-time libx264 sanity-encode), `requirements.txt`, `.dockerignore`.
+- `src/video-finish.ts` (new): `parseVideoFinishInput` + `callVideoFinish` (warm-/health + retry-on-503) + `runVideoFinish` (presign + call).
+- `src/containers/video-finish.ts` (new): `VideoFinishContainer` DO wrapper.
+- `src/index.ts`: POST `/api/video/finish` route + `handleVideoFinish`; export the DO class.
+- `src/env.ts`: `VIDEO_FINISH` binding.
+- `tests/video-finish.test.ts` (new): 9 tests (input parse + cold-start guard).
+- `wrangler.example.toml`: `VIDEO_FINISH` binding + `[[containers]]` + migration.
+- `package.json`: version 0.120.0 -> 0.121.0.
+
+New bindings (add to your `wrangler.toml`; migration tag = your next free tag):
+```toml
+[[durable_objects.bindings]]
+name = "VIDEO_FINISH"
+class_name = "VideoFinishContainer"
+
+[[containers]]
+class_name = "VideoFinishContainer"
+image = "./containers/video-finish/Dockerfile"
+max_instances = 3
+instance_type = "standard-1"
+
+[[migrations]]
+tag = "v6"
+new_sqlite_classes = ["VideoFinishContainer"]
+```
+
+typecheck clean; 520/520 tests pass.
+
 ## v0.120.0
 
 Frontend: modernize the Vivijure storyboard planner chrome and add a guided
@@ -129,6 +165,16 @@ response. New pure module `src/beat-timing.ts` (parse + prompt block + stamp),
 11 unit tests in `tests/beat-timing.test.ts`. No change to the audio container or
 the GPU pod; this is purely the planner-side bridge that was previously missing
 (the beat plan was returned to the client but never consumed by planning).
+
+### Code
+- `src/beat-timing.ts` (new): `parseBeatTimingInput` + `buildBeatTimingBlock` + `applyBeatTiming` (pure).
+- `src/index.ts`: `/api/storyboard/plan` accepts `beatPlan`, injects the prompt block, stamps timing after validation, surfaces `timingWarnings`.
+- `src/planner.ts`: `PlanStoryboardArgs.beatBlock` threaded into the planning user message.
+- `src/planner-prompt.ts`: `buildPlanningUserMessage` optional 3rd `beatBlock` arg.
+- `tests/beat-timing.test.ts` (new): 11 tests.
+- `package.json`: version 0.118.1 -> 0.119.0.
+
+typecheck clean; 511/511 tests pass.
 
 ## v0.118.1
 

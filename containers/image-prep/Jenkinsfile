@@ -1,0 +1,90 @@
+// Jenkins pipeline for the image-prep Cloudflare Container.
+// Builds the image and smoke-tests it (build -> run -> poll /health -> tear down).
+// This validates the Dockerfile + the rembg/pymatting numba-cache warmup layer in
+// isolation; the actual deploy still happens via `wrangler deploy` in the root
+// Jenkinsfile, which is what publishes the container image to Cloudflare.
+//
+// Note: /health binds immediately (rembg is imported lazily on first /portrait/prep,
+// not at startup), so the health poll returns fast even though the image bakes a
+// ~170 MB u2net model + numba cache. The build itself is the slow part here.
+//
+// Runs on a node with a usable Docker daemon (the mindcrime-ci box). NOT a docker
+// agent -- we build images, so we need the host daemon, not a container sandbox.
+//
+// Job setup: point a Pipeline job at this Script Path
+// (containers/image-prep/Jenkinsfile) and add an SCM path filter so only changes
+// under containers/image-prep/ trigger it.
+
+pipeline {
+  agent any
+
+  options {
+    timeout(time: 20, unit: 'MINUTES')
+    disableConcurrentBuilds()
+    timestamps()
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+  }
+
+  environment {
+    DOCKER_BUILDKIT = '1'                       // the Dockerfile uses `# syntax=...`
+    CONTAINER_DIR   = 'containers/image-prep'
+    IMAGE_NAME      = 'skyphusion-image-prep'
+    // Match Cloudflare Containers' runtime arch so the build catches arch issues
+    // (e.g. the numba-cache portability fix) on the same target prod uses.
+    PLATFORM        = 'linux/amd64'
+  }
+
+  stages {
+    stage('Build') {
+      steps {
+        sh '''
+          set -eu
+          docker build --platform "$PLATFORM" \
+            -f "$CONTAINER_DIR/Dockerfile" \
+            -t "$IMAGE_NAME:ci-$BUILD_NUMBER" \
+            "$CONTAINER_DIR"
+        '''
+      }
+    }
+
+    stage('Smoke test (/health)') {
+      steps {
+        sh '''
+          set -eu
+          IMG="$IMAGE_NAME:ci-$BUILD_NUMBER"
+          NAME="ci-$IMAGE_NAME-$BUILD_NUMBER"
+
+          docker rm -f "$NAME" >/dev/null 2>&1 || true
+          # Ephemeral host port (127.0.0.1:0) so parallel/repeat builds never collide.
+          docker run -d --name "$NAME" -p 127.0.0.1:0:8000 "$IMG"
+
+          PORT="$(docker port "$NAME" 8000/tcp | head -n1 | sed 's/.*://')"
+          echo "started $NAME, /health on http://127.0.0.1:$PORT/health"
+
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then ok=1; break; fi
+            sleep 2
+          done
+
+          if [ "$ok" -ne 1 ]; then
+            echo "health check FAILED after ~60s; container logs:"
+            docker logs "$NAME" || true
+            exit 1
+          fi
+          echo "health OK"
+        '''
+      }
+    }
+  }
+
+  post {
+    always {
+      sh '''
+        NAME="ci-$IMAGE_NAME-$BUILD_NUMBER"
+        docker rm -f "$NAME" >/dev/null 2>&1 || true
+        docker rmi "$IMAGE_NAME:ci-$BUILD_NUMBER" >/dev/null 2>&1 || true
+      '''
+    }
+  }
+}

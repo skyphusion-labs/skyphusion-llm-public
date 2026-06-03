@@ -98,6 +98,42 @@ export function parseVideoFinishInput(
   return { ok: true, value: out };
 }
 
+// Map the pod's off-GPU finish manifest (rp_handler's job output, snake_case)
+// into a VideoFinishInput. Returns null if the manifest is unusable (no clips /
+// no output_key). The pod sets output_key to the DESIRED final key. finish_params
+// is snake_case (trim_join_frames); we translate to the container's camelCase.
+export function finishInputFromPodOutput(out: Record<string, unknown>): VideoFinishInput | null {
+  const clipsRaw = out.clips;
+  const outputKey = out.output_key;
+  if (!Array.isArray(clipsRaw) || clipsRaw.length === 0) return null;
+  if (typeof outputKey !== "string" || !outputKey) return null;
+  const clips: VideoFinishClip[] = [];
+  for (const c of clipsRaw) {
+    if (!c || typeof c !== "object") return null;
+    const key = (c as { key?: unknown }).key;
+    if (typeof key !== "string" || !key) return null;
+    const clip: VideoFinishClip = { key };
+    const ts = (c as { target_seconds?: unknown }).target_seconds;
+    if (typeof ts === "number" && Number.isFinite(ts) && ts > 0) clip.targetSeconds = ts;
+    clips.push(clip);
+  }
+  const input: VideoFinishInput = { clips, outputKey };
+  if (typeof out.audio_key === "string" && out.audio_key) input.audioKey = out.audio_key;
+  const fp = (out.finish_params && typeof out.finish_params === "object" && !Array.isArray(out.finish_params)
+    ? (out.finish_params as Record<string, unknown>)
+    : {});
+  const n = (v: unknown): number | undefined =>
+    typeof v === "number" && Number.isFinite(v) ? v : undefined;
+  if (n(fp.width) !== undefined) input.width = fp.width as number;
+  if (n(fp.height) !== undefined) input.height = fp.height as number;
+  if (n(fp.fps) !== undefined) input.fps = fp.fps as number;
+  if (n(fp.crf) !== undefined) input.crf = fp.crf as number;
+  if (n(fp.crossfade) !== undefined) input.crossfade = fp.crossfade as number;
+  if (n(fp.trim_join_frames) !== undefined) input.trimJoinFrames = fp.trim_join_frames as number;
+  if (typeof fp.preset === "string") input.preset = fp.preset;
+  return input;
+}
+
 // Call the container's /finish with the same cold-start guard as callImagePrep:
 // a cheap /health warms the bind window, then retry the heavy /finish on a 503.
 // Returns the container Response, or null on a network error.

@@ -206,6 +206,63 @@ export async function updateRenderFromView(env: Env, view: RunpodJobView): Promi
     .run();
 }
 
+// v0.122.0: off-GPU finish bookkeeping. When a render used finish_offloaded, the
+// pod returns clips (no assembled MP4); the Worker assembles via the video-finish
+// container on poll-completion. finish_state (NULL -> 'finishing' -> 'done' |
+// 'failed') is the idempotency lock so concurrent polls don't double-run the
+// container.
+
+// Atomically claim the finish for this job. Returns true iff THIS caller won the
+// claim (flipped finish_state to 'finishing'); a concurrent poll that lost gets
+// false and should report "still finishing". 'failed' is re-claimable (retry).
+export async function claimFinish(env: Env, jobId: string): Promise<boolean> {
+  const now = nowSeconds();
+  const res = await env.DB.prepare(
+    `UPDATE renders SET finish_state = 'finishing', updated_at = ?
+     WHERE job_id = ? AND COALESCE(finish_state, '') NOT IN ('finishing', 'done')`,
+  )
+    .bind(now, jobId)
+    .run();
+  return (res.meta?.changes ?? 0) === 1;
+}
+
+export async function markFinishDone(
+  env: Env,
+  jobId: string,
+  outputKey: string,
+  outputJson: string,
+): Promise<void> {
+  const now = nowSeconds();
+  await env.DB.prepare(
+    `UPDATE renders SET output_key = ?, output_json = ?, status = 'COMPLETED',
+       finish_state = 'done', completed_at = COALESCE(completed_at, ?), updated_at = ?
+     WHERE job_id = ?`,
+  )
+    .bind(outputKey, outputJson, now, now, jobId)
+    .run();
+}
+
+export async function markFinishFailed(env: Env, jobId: string, error: string): Promise<void> {
+  const now = nowSeconds();
+  await env.DB.prepare(
+    `UPDATE renders SET finish_state = 'failed', error = ?, updated_at = ? WHERE job_id = ?`,
+  )
+    .bind(error.slice(0, 2000), now, jobId)
+    .run();
+}
+
+export async function getFinishState(
+  env: Env,
+  jobId: string,
+): Promise<{ finish_state: string | null; output_key: string | null } | null> {
+  const row = await env.DB.prepare(
+    `SELECT finish_state, output_key FROM renders WHERE job_id = ?`,
+  )
+    .bind(jobId)
+    .first<{ finish_state: string | null; output_key: string | null }>();
+  return row ?? null;
+}
+
 // v0.42.0: defensive parse of a locked-shots array stored as JSON in
 // the renders.locked_shots_json column OR coming in over the wire on
 // a PATCH. Drops non-string + empty + duplicate entries; clamps the

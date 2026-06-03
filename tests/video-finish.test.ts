@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { callVideoFinish, parseVideoFinishInput } from "../src/video-finish";
+import {
+  callVideoFinish,
+  finishInputFromPodOutput,
+  parseVideoFinishInput,
+} from "../src/video-finish";
 import type { Env } from "../src/env";
 
 describe("parseVideoFinishInput", () => {
@@ -43,6 +47,49 @@ describe("parseVideoFinishInput", () => {
   it("rejects a bad preset / numeric type", () => {
     expect(parseVideoFinishInput({ clips: ["a.mp4"], outputKey: "o", crf: "18" }).ok).toBe(false);
     expect(parseVideoFinishInput({ clips: ["a.mp4"], outputKey: "o", preset: 5 }).ok).toBe(false);
+  });
+});
+
+describe("finishInputFromPodOutput", () => {
+  const podOut = {
+    finish_offloaded: true,
+    output_key: "renders/p/full-abc123.mp4",
+    audio_key: "audio/track.mp3",
+    clips: [
+      { key: "renders/p/job/clips/shot_01.mp4", shot_id: "shot_01", target_seconds: 6.04 },
+      { key: "renders/p/job/clips/shot_02.mp4", shot_id: "shot_02" },
+    ],
+    finish_params: {
+      width: 1920, height: 1080, fps: 24, crf: 18, preset: "medium",
+      crossfade: 0.5, trim_join_frames: 1,
+    },
+  };
+
+  it("maps the pod manifest (snake_case) to a VideoFinishInput (camelCase)", () => {
+    const input = finishInputFromPodOutput(podOut);
+    expect(input).not.toBeNull();
+    if (!input) return;
+    expect(input.outputKey).toBe("renders/p/full-abc123.mp4");
+    expect(input.audioKey).toBe("audio/track.mp3");
+    expect(input.clips).toEqual([
+      { key: "renders/p/job/clips/shot_01.mp4", targetSeconds: 6.04 },
+      { key: "renders/p/job/clips/shot_02.mp4" },
+    ]);
+    expect(input.width).toBe(1920);
+    expect(input.crossfade).toBe(0.5);
+    expect(input.trimJoinFrames).toBe(1); // snake trim_join_frames -> camel
+    expect(input.preset).toBe("medium");
+  });
+
+  it("works with no audio", () => {
+    const input = finishInputFromPodOutput({ ...podOut, audio_key: undefined });
+    expect(input?.audioKey).toBeUndefined();
+  });
+
+  it("returns null on a missing output_key or empty clips", () => {
+    expect(finishInputFromPodOutput({ ...podOut, output_key: undefined })).toBeNull();
+    expect(finishInputFromPodOutput({ ...podOut, clips: [] })).toBeNull();
+    expect(finishInputFromPodOutput({ ...podOut, clips: [{ shot_id: "x" }] })).toBeNull();
   });
 });
 

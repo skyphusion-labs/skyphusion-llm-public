@@ -285,6 +285,12 @@ CREATE INDEX IF NOT EXISTS renders_by_user_project
   ON renders(user_email, project_id, submitted_at DESC)
   WHERE project_id IS NOT NULL;
 
+-- v0.122.0: off-GPU video-finish idempotency lock. NULL on a normal (on-GPU
+-- assembled) render; 'finishing' -> 'done' | 'failed' on a finish_offloaded
+-- render whose final MP4 is assembled by the video-finish container on
+-- poll-completion. Same non-idempotent ADD COLUMN caveat as project_id above.
+ALTER TABLE renders ADD COLUMN finish_state TEXT;
+
 -- ---------- Persisted cast (v0.46.0) ----------
 --
 -- One row per persisted character, scoped per user_email. Survives across

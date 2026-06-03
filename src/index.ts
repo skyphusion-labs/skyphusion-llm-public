@@ -67,7 +67,7 @@ import {
   parseBeatTimingInput,
   type BeatTimingInput,
 } from "./beat-timing";
-import { parseVideoFinishInput, runVideoFinish } from "./video-finish";
+import { finishInputFromPodOutput, parseVideoFinishInput, runVideoFinish } from "./video-finish";
 import { findPlanningModel, PLANNING_MODELS } from "./planner-catalog";
 import { serializeStoryboardYaml } from "./planner-yaml";
 import type { SlotId } from "./storyboard-validate";
@@ -85,13 +85,18 @@ import {
   parseAudioBeatPlan,
   type AudioAnalyzeRequest,
   type RenderSubmitArgs,
+  type RunpodJobView,
 } from "./runpod-submit";
 import {
+  claimFinish,
   countOtherRowsWithOutputKey,
   deleteRenderRow,
+  getFinishState,
   getRenderByIdForUser,
   insertRender,
   listRendersForUser,
+  markFinishDone,
+  markFinishFailed,
   normalizeLockedShots,
   setRenderLabel,
   setRenderLockedShots,
@@ -2020,6 +2025,61 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
   });
 }
 
+// v0.122.0: off-GPU finish orchestration. When a render used finish_offloaded,
+// the pod returns the per-shot clips but no assembled MP4; on RunPod COMPLETED we
+// assemble it via the video-finish container exactly once (D1-locked) and patch
+// output_key onto the view. Returns how the poll handler should respond:
+//   passthrough -> not an offloaded job (or not yet COMPLETED); normal flow.
+//   finished    -> view.output.output_key now points at the assembled MP4.
+//   pending     -> still assembling (lost the claim, or this call kicked it off
+//                  and it failed); report IN_PROGRESS so the client keeps polling.
+async function resolveOffloadedFinish(
+  env: Env,
+  view: RunpodJobView,
+): Promise<{ kind: "passthrough" } | { kind: "finished" } | { kind: "pending"; note?: string }> {
+  const out =
+    view.output && typeof view.output === "object" && !Array.isArray(view.output)
+      ? (view.output as Record<string, unknown>)
+      : null;
+  if (
+    view.status !== "COMPLETED" ||
+    !out ||
+    out.finish_offloaded !== true ||
+    !Array.isArray(out.clips)
+  ) {
+    return { kind: "passthrough" };
+  }
+
+  // Already assembled by an earlier poll? Serve the stored key.
+  const state = await getFinishState(env, view.jobId);
+  if (state?.finish_state === "done" && state.output_key) {
+    out.output_key = state.output_key;
+    return { kind: "finished" };
+  }
+
+  // Claim the finish (idempotency lock). A concurrent poll that loses reports
+  // "still finishing" without re-running the container.
+  const won = await claimFinish(env, view.jobId);
+  if (!won) return { kind: "pending", note: "assembling final video" };
+
+  const input = finishInputFromPodOutput(out);
+  if (!input) {
+    await markFinishFailed(env, view.jobId, "off-GPU finish manifest unusable");
+    return { kind: "pending", note: "finish manifest unusable" };
+  }
+  const res = await runVideoFinish(env, input);
+  if (!res.ok) {
+    await markFinishFailed(env, view.jobId, res.error);
+    return { kind: "pending", note: res.error };
+  }
+  const r = res.result as { durationSeconds?: number; hasAudio?: boolean };
+  out.output_key = input.outputKey;
+  if (typeof r.durationSeconds === "number") out.seconds = r.durationSeconds;
+  if (typeof r.hasAudio === "boolean") out.has_audio = r.hasAudio;
+  await markFinishDone(env, view.jobId, input.outputKey, JSON.stringify(out));
+  return { kind: "finished" };
+}
+
 async function handleRenderPoll(
   request: Request,
   env: Env,
@@ -2046,6 +2106,25 @@ async function handleRenderPoll(
       { ok: false, errors: [result.error], user: userEmail },
       { status: 502 },
     );
+  }
+
+  // v0.122.0: off-GPU finish. Assemble the final MP4 via the video-finish
+  // container on completion (idempotent). While it assembles, report IN_PROGRESS
+  // so the client keeps polling and we do NOT persist a COMPLETED row without an
+  // assembled output_key.
+  const finish = await resolveOffloadedFinish(env, result.view);
+  if (finish.kind === "pending") {
+    return json({
+      ok: true,
+      jobId: result.view.jobId,
+      status: "IN_PROGRESS",
+      statusRaw: "FINISHING",
+      output: result.view.output,
+      error: finish.note ?? null,
+      executionTimeMs: result.view.executionTimeMs,
+      delayTimeMs: result.view.delayTimeMs,
+      user: userEmail,
+    });
   }
 
   // v0.34.0: persist the latest snapshot. No-op when there is no row

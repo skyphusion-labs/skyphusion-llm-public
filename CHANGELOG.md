@@ -1,5 +1,66 @@
 # Changelog
 
+## v0.122.0
+
+Feature: off-GPU video finishing, second half. The render poll now assembles the
+final MP4 on the video-finish container instead of the GPU pod. When a render ran
+with `finish_offloaded` (vivijure-serverless 0.4.77), the pod returns the per-shot
+clips + a finish manifest but no assembled MP4; on RunPod COMPLETED,
+`handleRenderPoll` calls the video-finish container exactly once and patches
+`output_key` onto the result. Idempotency is a D1 lock: a new `renders.finish_state`
+column (NULL -> 'finishing' -> 'done' | 'failed'); `claimFinish` is an atomic
+compare-and-swap so concurrent polls don't double-run the container, and a poll
+that loses the claim (or one that kicked off a still-running assemble) reports
+`IN_PROGRESS`/`FINISHING` so the client keeps polling without a COMPLETED row
+landing before the MP4 exists. `finishInputFromPodOutput` maps the pod's
+snake_case manifest (incl. `trim_join_frames` -> `trimJoinFrames`) to the
+container contract. renders-db helpers: claimFinish / markFinishDone /
+markFinishFailed / getFinishState. +3 unit tests (12 total in video-finish).
+Default (no flag) renders are unchanged: on-GPU assembly stays the path + fallback.
+
+Also shipped in this release: Jenkins CI on the mindcrime-ci box, alongside the
+existing self-hosted GitHub Actions runner. The root `Jenkinsfile` mirrors `ci.yml`
+(npm ci -> typecheck -> test) inside a `node:22` Docker agent and adds a deploy
+stage gated to `main` behind a manual approval `input` (30-min timeout so an
+unattended build aborts rather than hanging). Deploy injects the gitignored
+`wrangler.toml` from a Jenkins Secret file credential (`skyphusion-wrangler-toml`)
+and authenticates with the existing `CLOUDFLARE_API_TOKEN` Secret text credential;
+it never touches Worker secrets (`wrangler deploy` doesn't push them). Three
+per-container pipelines (`containers/<name>/Jenkinsfile`) each build their
+Cloudflare Container image (`docker build --platform linux/amd64`, BuildKit on for
+the `# syntax=` Dockerfiles) and smoke-test it (run on an ephemeral host port, poll
+`/health` for ~60s, dump logs on failure), then tear down the container + image in
+`post`. The deploy gate uses `beforeInput true` so only `main` builds prompt for
+approval (Jenkins evaluates `input` before `when` by default, which would otherwise
+prompt on every PR). The four jobs are wired as multibranch pipelines on the runner
+with same-repo branch + origin-PR discovery only (no fork-PR builds, mirroring the
+fork guard in `ci.yml`).
+
+### Code
+- `src/index.ts`: `handleRenderPoll` off-GPU finish (one container call on COMPLETED) + `finishInputFromPodOutput` manifest mapping.
+- `src/renders-db.ts`: `claimFinish` (atomic CAS) / `markFinishDone` / `markFinishFailed` / `getFinishState`.
+- `src/video-finish.ts`: container-contract tweaks for the poll-driven finish.
+- `schema.sql`: `renders.finish_state` column (NULL -> 'finishing' -> 'done' | 'failed').
+- `tests/video-finish.test.ts`: +3 tests (12 in this file).
+- `Jenkinsfile` (new): root CI + manual-approval deploy pipeline (Docker `node:22` agent).
+- `containers/audio-beat-sync/Jenkinsfile` (new): build + `/health` smoke test.
+- `containers/image-prep/Jenkinsfile` (new): build + `/health` smoke test.
+- `containers/video-finish/Jenkinsfile` (new): build + `/health` smoke test.
+- `package.json`: version 0.121.0 -> 0.122.0.
+
+Schema (apply to existing D1 before deploy; fresh DBs get it from `schema.sql`):
+```sql
+ALTER TABLE renders ADD COLUMN finish_state TEXT;
+```
+
+Jenkins credentials (set on the mindcrime-ci runner; both deploy-stage creds now in place):
+- `skyphusion-wrangler-toml` (Secret file): the real `wrangler.toml` (`database_id` +
+  `account_id`); copied into the workspace before deploy.
+- `CLOUDFLARE_API_TOKEN` (Secret text): Cloudflare API token with Edit Workers perms
+  (already present on the runner).
+
+typecheck clean; 523/523 tests pass.
+
 ## v0.121.0
 
 Feature: video-finish Cloudflare Container. The render pipeline's tail (concat

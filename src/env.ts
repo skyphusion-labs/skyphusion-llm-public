@@ -51,6 +51,11 @@ export interface Env {
   // R2 GET/PUT and POSTs to /portrait/prep at bundle time; moves rembg off the
   // GPU pod. See docs/image-prep-container.md.
   IMAGE_PREP: DurableObjectNamespace;
+  // v0.108.0: per-session Durable Object that wraps a @cf/deepgram/flux
+  // conversational STT WebSocket so the final transcript persists to /history
+  // on close (a plain Worker has no reliable post-101 hook to write D1). Class
+  // SttSession in src/stt-session.ts. One DO instance per session (newUniqueId).
+  STT_SESSION: DurableObjectNamespace;
   // v0.93.0: Anthropic moved off BYOK to Cloudflare Unified Billing, so there
   // is no longer an ANTHROPIC_API_KEY; it authorizes via CF_AIG_TOKEN below.
   XAI_API_KEY?: string;       // optional; preferred is to store in AI Gateway dashboard

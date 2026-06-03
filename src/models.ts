@@ -24,7 +24,9 @@
 //   - For BYOK video: set byok_alias to the provider's model name and
 //     leave provider set to the provider's slug
 
-export type ModelType = "chat" | "image" | "tts" | "video" | "stt" | "music";
+// "voice" = conversational/streaming STT (a live WebSocket session, not a
+// one-shot request like "stt"); handled out of /api/chat via /api/stt/stream.
+export type ModelType = "chat" | "image" | "tts" | "video" | "stt" | "music" | "voice";
 export type Provider =
   | "workers-ai"
   | "anthropic"
@@ -161,8 +163,11 @@ export const MODELS: ModelEntry[] = [
   { id: "@cf/openai/whisper",                           label: "Whisper (general purpose)",    group: "Speech-to-text",       type: "stt",   capabilities: [] },
   { id: "@cf/openai/whisper-tiny-en",                   label: "Whisper Tiny EN (fast, beta)", group: "Speech-to-text",       type: "stt",   capabilities: [] },
   { id: "@cf/deepgram/nova-3",                          label: "Deepgram Nova-3 (accurate)",   group: "Speech-to-text",       type: "stt",   capabilities: [] },
-  // Note: @cf/deepgram/flux is websocket-only (error 8006 over the
-  // request/response binding), so it is not offered on the runStt path.
+  // @cf/deepgram/flux is websocket-only (error 8006 over the request/response
+  // binding), so it is NOT a one-shot "stt" model. It is a live "voice" session:
+  // selecting it opens the mic streamer (/api/stt/stream), not the /api/chat
+  // composer. type "voice" is special-cased on both the routing and UI sides.
+  { id: "@cf/deepgram/flux",                            label: "Deepgram Flux (live mic)",     group: "Speech-to-text",       type: "voice", capabilities: [], provider: "workers-ai" },
 
   // ---- Music generation (Unified Billing only) ----
   { id: "minimax/music-2.6",                            label: "MiniMax Music 2.6 (needs CF credits)", group: "Music Gen",     type: "music", capabilities: [], provider: "minimax" },

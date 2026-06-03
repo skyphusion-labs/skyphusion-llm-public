@@ -1,5 +1,40 @@
 # Changelog
 
+## v0.108.0
+
+Finishes conversational STT (`@cf/deepgram/flux`): the live mic session now
+persists to history, shows up as a first-class "voice" model, and is reachable
+from the main chat composer (not just the standalone `/stt.html` page).
+
+### What ships
+
+- **`SttSession` Durable Object** (`src/stt-session.ts`). `/api/stt/stream`
+  forwards the WS upgrade to a per-session DO (`newUniqueId`) instead of a plain
+  Worker relay. The DO accepts the browser socket via the Hibernation API,
+  bridges to the upstream flux socket (audio up / Deepgram events down),
+  accumulates each `EndOfTurn` into DO SQLite (hibernation-safe; the in-memory
+  outbound upstream socket is not, but an active session streams continuously
+  and never idles long enough to hibernate, with a guard if it does), and on
+  close writes one `chats` row (`model_type: "voice"`) so the session lands in
+  `/history`. New `STT_SESSION` binding + `v5` migration (`new_sqlite_classes`).
+- **`type: "voice"`** model type + a `@cf/deepgram/flux` catalog entry. It is a
+  live session, not a request/response turn, so `/api/chat` rejects it with a
+  pointer to the WS endpoint; the UI special-cases it.
+- **Composer mic affordance.** Selecting the voice model swaps the text composer
+  for an inline live panel (start/stop, live captions, committed turns).
+  Conversations from voice sessions show a 🎙 icon in the history sidebar.
+- **`public/voice-widget.js`**: the STT client (mic capture, linear16 PCM
+  resample, WS, turn rendering) extracted into a reusable factory shared by
+  `/stt.html` and the composer. Removed the TEMP `/api/stt/selftest` probe.
+
+### Notes
+
+- `buildTranscript` + `sanitizeCloseCode` are split into `src/stt-util.ts` (no
+  `cloudflare:workers` import) so they unit-test in the node pool. 500 tests pass.
+- Verified live earlier: the upstream flux handshake works and the DO binding
+  resolves; a real mic round-trip + the history row should be confirmed in the
+  browser post-deploy.
+
 ## v0.107.0
 
 CPU-bound media prep moves off the GPU pod onto Cloudflare Containers: audio beat

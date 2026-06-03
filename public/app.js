@@ -161,6 +161,13 @@ const attachHint        = $("#attach-hint");
 const attachments       = $("#attachments");
 const attachRow         = $("#attach-row");
 const inputArea         = document.querySelector(".input-area");
+// v0.108.0: live "voice" (conversational STT) composer affordance.
+const voicePanel        = $("#voice-panel");
+const voiceStartBtn     = $("#voice-start");
+const userInputField    = $("#user-input-field");
+const bottomRow         = document.querySelector(".bottom-row");
+const systemPromptField = systemPromptLabel ? systemPromptLabel.closest("label") : null;
+let voiceWidget         = null; // lazily mounted once a voice model is first selected
 const useDocsRow        = $("#use-docs-row");
 const useDocsCheckbox   = $("#use-docs");
 const useWebSearchRow      = $("#use-web-search-row");
@@ -319,6 +326,14 @@ function updateAffordance() {
   useWebSearchRow.hidden = true;
   fileInput.style.display = ""; // default shown; some branches set accept/visibility
 
+  // v0.108.0: default to the normal composer; the "voice" branch swaps it for
+  // the live mic panel. Restoring here covers switching away from a voice model.
+  if (voicePanel) voicePanel.hidden = true;
+  if (userInputField) userInputField.style.display = "";
+  if (bottomRow) bottomRow.style.display = "";
+  if (systemPromptField) systemPromptField.style.display = "";
+  if (voiceWidget && voiceWidget.isRunning()) voiceWidget.stop();
+
   if (m.type === "image") {
     systemPromptLabel.textContent = "negative prompt";
     systemPrompt.placeholder = "things to avoid in the image (optional)";
@@ -385,6 +400,24 @@ function updateAffordance() {
     attachRow.style.display = "none";
     state.pendingAttachments = [];
     renderAttachments();
+  } else if (m.type === "voice") {
+    // Conversational STT: swap the text composer for the live mic panel. The
+    // session streams to the SttSession DO over /api/stt/stream and persists the
+    // final transcript to history when you stop.
+    if (systemPromptField) systemPromptField.style.display = "none";
+    if (userInputField) userInputField.style.display = "none";
+    if (bottomRow) bottomRow.style.display = "none";
+    state.pendingAttachments = [];
+    renderAttachments();
+    if (voicePanel) voicePanel.hidden = false;
+    if (!voiceWidget && typeof window.createVoiceWidget === "function" && voiceStartBtn) {
+      voiceWidget = window.createVoiceWidget({
+        startBtn: voiceStartBtn,
+        statusEl: $("#voice-status"),
+        liveEl: $("#voice-live"),
+        turnsEl: $("#voice-turns"),
+      });
+    }
   } else {
     // chat
     systemPromptLabel.textContent = "system prompt";
@@ -1015,6 +1048,7 @@ async function loadConversations() {
       else if (c.first_model_type === "video") icons.push(`<span title="video gen">\u{1F3AC}</span>`);
       else if (c.first_model_type === "music") icons.push(`<span title="music gen">\u{1F3B5}</span>`);
       else if (c.first_model_type === "stt")   icons.push(`<span title="transcript">\u{1F4DD}</span>`);
+      else if (c.first_model_type === "voice") icons.push(`<span title="voice session">\u{1F399}</span>`);
       if (c.turn_count > 1) icons.push(`<span class="turn-count" title="${c.turn_count} turns">${c.turn_count}\u00b7</span>`);
       const iconBlock = icons.length ? `<span class="attach-icon">${icons.join(" ")}</span>` : `<span></span>`;
 

@@ -86,6 +86,13 @@ image = "./containers/image-prep/Dockerfile"
 max_instances = 5
 instance_type = "standard-1"
 
+# v0.108.0: per-session DO wrapping a @cf/deepgram/flux conversational STT
+# WebSocket; persists the final transcript to /history on close. Source:
+# src/stt-session.ts.
+[[durable_objects.bindings]]
+name = "STT_SESSION"
+class_name = "SttSession"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["AudioBeatSyncContainer"]
@@ -93,6 +100,10 @@ new_sqlite_classes = ["AudioBeatSyncContainer"]
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["ImagePrepContainer"]
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["SttSession"]
 
 # Per-instance observability for the worker (lets you tail logs in the
 # dashboard). Workflows have their own dashboard surface; this enables it

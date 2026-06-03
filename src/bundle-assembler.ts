@@ -29,6 +29,7 @@ import {
 } from "./storyboard-validate";
 import { serializeStoryboardYaml } from "./planner-yaml";
 import { emitTar, type TarFile } from "./tar-emit";
+import { presignR2Get, presignR2Put } from "./r2-presign";
 
 // One training image, supplied either as a pre-staged R2 object key
 // (preferred for large sets to avoid base64 inflation through the worker
@@ -168,6 +169,113 @@ async function gzipBytes(bytes: Uint8Array): Promise<Uint8Array> {
   return out;
 }
 
+// ---- image-prep container: background-remove a cast portrait ----
+//
+// Cast portraits go through the IMAGE_PREP Cloudflare Container (rembg) before
+// landing in the bundle, so the renderer gets a clean alpha PNG instead of a
+// backgrounded one. The cleaned result is content-addressed in R2
+// (cast-clean/<sha256>.png) so repeat bundles of the same portrait reuse it.
+// The container has no R2 binding: we presign a GET (source) + PUT (dest) and
+// it streams both, then we read the cleaned bytes back to write into the tar.
+
+async function sha256HexBytes(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const b = new Uint8Array(digest);
+  let s = "";
+  for (let i = 0; i < b.length; i++) s += b[i].toString(16).padStart(2, "0");
+  return s;
+}
+
+// Call the image-prep container with a cold-start guard. A cheap /health ping
+// rides out the port-bind window, and we retry the heavier /portrait/prep on a
+// 503 (a fully-cold container can 503 when a heavy request races its bind, as
+// seen in live testing). backoffMs is injectable so tests don't actually wait.
+// Returns the container Response, or null on a network error.
+export async function callImagePrep(
+  env: Env,
+  payload: { inputUrl: string; outputUrl: string; outputKey: string; background: "alpha" | "black" },
+  opts: { retries?: number; backoffMs?: number } = {},
+): Promise<Response | null> {
+  const retries = opts.retries ?? 3;
+  const backoffMs = opts.backoffMs ?? 1500;
+  const stub = env.IMAGE_PREP.get(env.IMAGE_PREP.idFromName("singleton"));
+  const init = {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  };
+  // Warm the singleton so the prep call below lands on a bound container.
+  try {
+    await stub.fetch("https://container/health");
+  } catch {
+    /* best effort; the retry loop below still covers a cold start */
+  }
+  let resp: Response | null = null;
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      resp = await stub.fetch("https://container/portrait/prep", init);
+    } catch {
+      resp = null;
+    }
+    if (resp && resp.status !== 503) return resp;
+    if (attempt < retries - 1) {
+      await new Promise((r) => setTimeout(r, backoffMs)); // container still binding
+    }
+  }
+  return resp;
+}
+
+// Background-remove one portrait. Returns cleaned RGBA PNG bytes, or null if the
+// container path fails (the caller falls back to the original bytes rather than
+// failing the whole bundle; today the pod still rembg's portraits, so an
+// un-cleaned portrait degrades gracefully).
+async function prepPortraitBytes(
+  env: Env,
+  bytes: Uint8Array,
+  sourceKey: string | undefined,
+): Promise<Uint8Array | null> {
+  try {
+    const hash = await sha256HexBytes(bytes);
+    const cleanKey = `cast-clean/${hash}.png`;
+    const cached = await env.R2_RENDERS.get(cleanKey);
+    if (cached) return new Uint8Array(await cached.arrayBuffer());
+
+    // The container fetches the source over HTTP, so it must be an R2 object.
+    // Reuse the portrait's own R2 key when it has one; otherwise stage the bytes
+    // (a portrait supplied as an inline data URL has no key to presign).
+    let srcKey = sourceKey;
+    if (!srcKey) {
+      srcKey = `cast-clean/src/${hash}.png`;
+      await env.R2_RENDERS.put(srcKey, bytes, { httpMetadata: { contentType: "image/png" } });
+    }
+    const inputUrl = await presignR2Get(env, srcKey, 300);
+    const outputUrl = await presignR2Put(env, cleanKey, 300);
+    const resp = await callImagePrep(env, {
+      inputUrl,
+      outputUrl,
+      outputKey: cleanKey,
+      background: "alpha",
+    });
+    if (!resp || !resp.ok) {
+      console.warn(
+        `image-prep failed (status ${resp ? resp.status : "network"}) for ${cleanKey}; using original portrait`,
+      );
+      return null;
+    }
+    const out = await env.R2_RENDERS.get(cleanKey);
+    if (!out) {
+      console.warn(`image-prep reported ok but ${cleanKey} missing in R2; using original portrait`);
+      return null;
+    }
+    return new Uint8Array(await out.arrayBuffer());
+  } catch (err) {
+    console.warn(
+      `image-prep threw (${err instanceof Error ? err.message : String(err)}); using original portrait`,
+    );
+    return null;
+  }
+}
+
 export async function assembleBundle(
   env: Env,
   args: AssembleBundleArgs,
@@ -227,10 +335,14 @@ export async function assembleBundle(
       errors.push(portraitResolved.error);
       continue;
     }
+    // Background-remove the portrait via the image-prep container before it
+    // goes into the bundle. Best-effort: on container failure we fall back to
+    // the original bytes rather than fail the whole bundle.
+    const cleanedPortrait = await prepPortraitBytes(env, portraitResolved.bytes, portraitSrc.key);
     const portraitFilename = safeCharFilename(slot, ref.name);
     files.push({
       name: `characters/${portraitFilename}`,
-      content: portraitResolved.bytes,
+      content: cleanedPortrait ?? portraitResolved.bytes,
     });
 
     // Training refs at characters/refs/<SLOT>/ref_NN.<ext>. Each image's

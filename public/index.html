@@ -129,11 +129,15 @@
             <span id="user-input-label" class="sr-only">your input</span>
             <textarea id="user-input" rows="1" placeholder="enter to send, shift+enter for newline"></textarea>
           </label>
+          <button id="voice-chat-toggle" type="button" class="composer-mic" title="voice chat (talk to the model, hear it reply)" aria-label="voice chat" hidden>
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4"/></svg>
+          </button>
           <button id="run" type="button" class="composer-send" title="send" aria-label="send">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20V5M6 11l6-6 6 6"/></svg>
           </button>
         </div>
         <div class="composer-foot">
+          <span id="voice-chat-status" class="voice-chat-status"></span>
           <span id="attach-hint" class="hint"></span>
         </div>
       </div>

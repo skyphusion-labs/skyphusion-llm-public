@@ -216,6 +216,9 @@ let voiceWidget         = null; // lazily mounted once a voice model is first se
 const composerEl        = document.querySelector(".composer");
 const settingsToggle    = $("#settings-toggle");
 const settingsPanel     = $("#settings-panel");
+// v0.118.0: voice-chat (talk to the model, hear the reply).
+const voiceChatToggle   = $("#voice-chat-toggle");
+const voiceChatStatus   = $("#voice-chat-status");
 const useDocsRow        = $("#use-docs-row");
 const useDocsCheckbox   = $("#use-docs");
 const useWebSearchRow      = $("#use-web-search-row");
@@ -383,6 +386,10 @@ function updateAffordance() {
   // The attach hint now sits in the composer foot (separate from the attach
   // button), so clear it by default; branches that allow attachments set it.
   attachHint.textContent = "";
+  // v0.118.0: the voice-chat mic is a chat-only affordance. Stop an active
+  // session if we switch away from a chat model.
+  if (voiceChatToggle) voiceChatToggle.hidden = m.type !== "chat";
+  if (m.type !== "chat" && vc.active) stopVoiceChat();
 
   if (m.type === "image") {
     systemPromptLabel.textContent = "negative prompt";
@@ -1395,6 +1402,107 @@ async function run() {
     runBtn.disabled = false;
     attachBtn.disabled = false;
   }
+}
+
+// ---------- Voice chat (v0.118.0): talk to any chat model, hear the reply ----
+//
+// Hands-free loop: mic -> STT (flux, via createMicStreamer) -> on each finished
+// turn (EndOfTurn) send the utterance to the selected chat model through the
+// normal run() path, then speak the reply via /api/tts (Aura-2). The mic is
+// muted while the model is thinking/speaking so it doesn't transcribe the
+// assistant's own voice. Works with whatever chat model is selected.
+const vc = { active: false, streamer: null, busy: false, player: null };
+
+function setVoiceStatus(text) {
+  if (voiceChatStatus) voiceChatStatus.textContent = text || "";
+}
+
+function updateVoiceButton() {
+  if (!voiceChatToggle) return;
+  voiceChatToggle.classList.toggle("is-live", vc.active);
+  voiceChatToggle.title = vc.active
+    ? "stop voice chat"
+    : "voice chat (talk to the model, hear it reply)";
+}
+
+function startVoiceChat() {
+  if (vc.active) return;
+  const m = currentModel();
+  if (!m || m.type !== "chat") return;
+  if (typeof window.createMicStreamer !== "function") return;
+  vc.active = true;
+  updateVoiceButton();
+  setVoiceStatus("\u{1F3A4} starting…");
+  vc.streamer = window.createMicStreamer({
+    onStatus: (s) => { if (!vc.busy) setVoiceStatus(s === "listening" ? "\u{1F3A4} listening… speak" : "\u{1F3A4} " + s); },
+    onClose: () => stopVoiceChat(),
+    onEvent: (ev) => {
+      const type = ev.type || ev.event || "";
+      if (type !== "EndOfTurn" || vc.busy) return;
+      const text = (typeof ev.transcript === "string" ? ev.transcript : "").trim();
+      if (text) handleUtterance(text);
+    },
+  });
+}
+
+function stopVoiceChat() {
+  vc.active = false;
+  if (vc.streamer) { vc.streamer.stop(); vc.streamer = null; }
+  if (vc.player) { try { vc.player.pause(); } catch (_) {} vc.player = null; }
+  vc.busy = false;
+  updateVoiceButton();
+  setVoiceStatus("");
+}
+
+async function handleUtterance(text) {
+  vc.busy = true;
+  if (vc.streamer) vc.streamer.setMuted(true); // don't transcribe the spoken reply
+  setVoiceStatus("\u{1F4AD} thinking…");
+  try {
+    userInput.value = text;
+    await run();
+    const last = state.currentTurns[state.currentTurns.length - 1];
+    const reply = last && typeof last.output === "string" ? last.output.trim() : "";
+    if (reply && vc.active) await speak(reply);
+  } catch (_) {
+    // run() surfaces its own errors in the transcript; just resume listening.
+  } finally {
+    vc.busy = false;
+    if (vc.active && vc.streamer) {
+      vc.streamer.setMuted(false);
+      setVoiceStatus("\u{1F3A4} listening… speak");
+    }
+  }
+}
+
+async function speak(text) {
+  setVoiceStatus("\u{1F50A} speaking…");
+  let url = null;
+  try {
+    const resp = await fetch("/api/tts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!resp.ok) return;
+    const blob = await resp.blob();
+    url = URL.createObjectURL(blob);
+    vc.player = new Audio(url);
+    await new Promise((res) => {
+      vc.player.onended = res;
+      vc.player.onerror = res;
+      vc.player.play().catch(res);
+    });
+  } catch (_) {
+    /* TTS failed; skip speaking but keep the conversation going */
+  } finally {
+    if (url) URL.revokeObjectURL(url);
+    vc.player = null;
+  }
+}
+
+if (voiceChatToggle) {
+  voiceChatToggle.addEventListener("click", () => (vc.active ? stopVoiceChat() : startVoiceChat()));
 }
 
 function closeSidebar() {

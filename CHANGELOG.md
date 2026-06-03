@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.118.0
+
+**Voice chat: talk to any chat model and hear it reply, hands-free.**
+
+A mic button in the composer (chat models only) starts a hands-free loop: your
+speech is transcribed by the Flux STT container, each finished turn is sent to
+the selected chat model through the normal send path, and the reply is spoken
+back via Deepgram Aura-2 TTS, end to end on Cloudflare. The mic mutes itself
+while the model is thinking/speaking so it doesn't transcribe the reply, then
+resumes listening. Works with all 35 chat models; the conversation lands in
+history like any other.
+
+- `src/index.ts`: `POST /api/tts` synthesizes text to speech (Aura-2) and streams
+  the audio bytes straight back, with NO chats row (unlike the tts model path),
+  since the loop speaks every reply.
+- `public/voice-widget.js`: extracted `createMicStreamer` (mic -> linear16 PCM ->
+  /api/stt/stream, with mute) shared by the standalone STT panel and the loop.
+- `public/app.js`: the voice-chat controller (STT turn -> run() -> /api/tts ->
+  play), a composer mic button with a live pulse + status line.
+
 ## v0.117.0
 
 - **Send button actually round + arrow dead-center now**: the v0.116.0 styling

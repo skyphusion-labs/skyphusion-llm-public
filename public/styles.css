@@ -4294,6 +4294,23 @@ body::before {
 #run.composer-send:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.08); }
 #run.composer-send:active:not(:disabled) { transform: translateY(0) scale(0.96); }
 #run.composer-send:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
+
+/* v0.118.0: voice-chat mic button (talk to the model, hear the reply) */
+.composer-mic {
+  width: 38px; height: 38px; flex: 0 0 auto; padding: 0; border: 0;
+  border-radius: var(--radius-pill); background: transparent; color: var(--fg-dim);
+  cursor: pointer; display: grid; place-items: center;
+  transition: background 0.15s, color 0.15s;
+}
+.composer-mic[hidden] { display: none; }
+.composer-mic svg { display: block; }
+.composer-mic:hover { background: var(--bg-elev2); color: var(--fg); }
+.composer-mic.is-live { background: var(--error); color: #fff; animation: vc-pulse 1.5s ease-in-out infinite; }
+@keyframes vc-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 107, 138, 0.55); }
+  50% { box-shadow: 0 0 0 7px rgba(255, 107, 138, 0); }
+}
+.voice-chat-status { font-size: 0.78rem; color: var(--accent); font-weight: 600; }
 .composer-foot {
   display: flex; align-items: center; gap: 0.75rem;
   padding: 0.4rem 0.6rem 0; min-height: 1rem;

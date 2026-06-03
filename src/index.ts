@@ -422,6 +422,13 @@ export default {
     if (url.pathname === "/api/chat/stream" && request.method === "POST") {
       return handleChatStream(request, env, ctx);
     }
+    // v0.118.0: lightweight TTS endpoint for the voice-chat loop. Synthesizes
+    // text to speech (Deepgram Aura-2) and streams the audio bytes straight
+    // back, WITHOUT persisting a chats row (unlike the tts MODEL path through
+    // /api/chat). Used to speak the LLM's reply in hands-free voice chat.
+    if (url.pathname === "/api/tts" && request.method === "POST") {
+      return handleTtsSpeak(request, env);
+    }
     // v0.29.1: planner catalog endpoint. Subset of /api/models filtered to
     // the planning-eligible rows so the planner UI picker does not re-render
     // the full 38-model chat catalog.
@@ -4173,6 +4180,34 @@ async function runImage(request: Request, env: Env, model: ModelEntry, body: Cha
 }
 
 // ---------- TTS ----------
+
+// v0.118.0: speak arbitrary text via Aura-2 and stream the audio back. No D1
+// row (the voice-chat loop calls this for every assistant reply; persisting
+// each one would flood history). Caps length and restricts the voice to the
+// two Aura-2 catalog entries.
+const TTS_VOICES = new Set(["@cf/deepgram/aura-2-en", "@cf/deepgram/aura-2-es"]);
+async function handleTtsSpeak(request: Request, env: Env): Promise<Response> {
+  let body: { text?: string; voice?: string };
+  try {
+    body = await request.json<{ text?: string; voice?: string }>();
+  } catch {
+    return json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  const text = typeof body.text === "string" ? body.text.trim().slice(0, 4000) : "";
+  if (!text) return json({ error: "text required" }, { status: 400 });
+  const voice = body.voice && TTS_VOICES.has(body.voice) ? body.voice : "@cf/deepgram/aura-2-en";
+  try {
+    const resp = await aiRun(env, voice, { text, prompt: text }, true /* returnRawResponse */);
+    if (!(resp instanceof Response)) {
+      return json({ error: "TTS returned non-Response shape" }, { status: 502 });
+    }
+    const mime = resp.headers.get("content-type") || "audio/mpeg";
+    const bytes = new Uint8Array(await resp.arrayBuffer());
+    return new Response(bytes, { headers: { "content-type": mime, "cache-control": "no-store" } });
+  } catch (err) {
+    return json({ error: `TTS failed: ${err instanceof Error ? err.message : String(err)}` }, { status: 502 });
+  }
+}
 
 async function runTts(request: Request, env: Env, model: ModelEntry, body: ChatRequest): Promise<Response> {
   const userEmail = getUserEmail(request);

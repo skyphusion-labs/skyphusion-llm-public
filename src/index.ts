@@ -18,6 +18,9 @@ import { getDocumentProxy } from "unpdf";
 import * as XLSX from "xlsx";
 import { WorkflowEntrypoint, WorkflowStep } from "cloudflare:workers";
 import type { WorkflowEvent } from "cloudflare:workers";
+// v0.107.0: Container DO class for audio beat analysis. The CF runtime needs
+// this re-exported from the worker entry so the binding can resolve it.
+export { AudioBeatSyncContainer } from "./containers/audio-beat-sync";
 import type { ProviderStreamEvent } from "./parsers/types";
 import type { ModelType, Provider, ModelEntry } from "./models";
 import { MODELS } from "./models";
@@ -507,6 +510,17 @@ export default {
     // action shipped in vivijure-serverless 0.4.59). Mirrors the render pair.
     if (url.pathname === "/api/audio/analyze" && request.method === "POST") {
       return handleAudioAnalyzeSubmit(request, env);
+    }
+    // TEMP (v0.107.0): probe the beat-sync container's /health to confirm it
+    // activates + serves. Remove once the sync /analyze path is wired.
+    if (url.pathname === "/api/audio/container-health" && request.method === "GET") {
+      const stub = env.AUDIO_BEAT_SYNC.get(env.AUDIO_BEAT_SYNC.idFromName("singleton"));
+      try {
+        const r = await stub.fetch("https://container/health");
+        return json({ ok: true, containerStatus: r.status, body: await r.text() });
+      } catch (err) {
+        return json({ ok: false, error: err instanceof Error ? err.message : String(err) }, { status: 502 });
+      }
     }
     const aj = url.pathname.match(/^\/api\/audio\/analyze\/([A-Za-z0-9_-]+)$/);
     if (aj && request.method === "GET") {

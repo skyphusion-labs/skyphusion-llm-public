@@ -61,6 +61,24 @@ name = "skyphusion-longrun"
 binding = "LONGRUN"
 class_name = "LongRunWorkflow"
 
+# v0.107.0: CPU-only librosa audio beat-sync container. The Worker presigns an
+# R2 GET URL and POSTs it to the container's /analyze. Source lives at
+# containers/audio-beat-sync/. Uses new_sqlite_classes per the official CF
+# container template.
+[[durable_objects.bindings]]
+name = "AUDIO_BEAT_SYNC"
+class_name = "AudioBeatSyncContainer"
+
+[[containers]]
+class_name = "AudioBeatSyncContainer"
+image = "./containers/audio-beat-sync/Dockerfile"
+max_instances = 3
+instance_type = "standard"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["AudioBeatSyncContainer"]
+
 # Per-instance observability for the worker (lets you tail logs in the
 # dashboard). Workflows have their own dashboard surface; this enables it
 # for the rest of the worker too.

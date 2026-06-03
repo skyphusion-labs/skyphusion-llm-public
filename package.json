@@ -33,6 +33,7 @@
     "wrangler": "^4.0.0"
   },
   "dependencies": {
+    "@cloudflare/containers": "0.0.30",
     "unpdf": "^1.6.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   }

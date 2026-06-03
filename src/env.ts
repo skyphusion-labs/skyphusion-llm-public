@@ -31,6 +31,11 @@ export interface Env {
   // instance invokes env.AI.run (long-running), downloads the artifact,
   // uploads to R2, and finalizes the D1 row across retryable steps.
   LONGRUN: Workflow;
+  // v0.107.0: Cloudflare Container DO for CPU-only audio beat analysis
+  // (librosa). The cast/planner audio flow presigns an R2 GET URL and POSTs
+  // it to the container's /analyze; class is AudioBeatSyncContainer in
+  // src/containers/audio-beat-sync.ts. Replaces the reverted GPU pod action.
+  AUDIO_BEAT_SYNC: DurableObjectNamespace;
   // v0.93.0: Anthropic moved off BYOK to Cloudflare Unified Billing, so there
   // is no longer an ANTHROPIC_API_KEY; it authorizes via CF_AIG_TOKEN below.
   XAI_API_KEY?: string;       // optional; preferred is to store in AI Gateway dashboard

@@ -1,5 +1,13 @@
 # Audio beat-sync — Worker-side wiring spec
 
+> **Backend pivoted.** The pod action this spec pairs with was reverted
+> in `vivijure-serverless 0.4.60` (no reason to spin a GPU pod to read
+> an MP3). The current backend is a Cloudflare Container; see
+> `audio-beat-sync-container.md` for the live spec. The Worker
+> contracts and planner UI sections below mostly still apply, but the
+> submit/poll dance is replaced by a single synchronous POST in the
+> container spec. Treat this file as historical context.
+
 Pairs with the pod action shipped in `vivijure-serverless 0.4.59`. Implementable end-to-end from this doc without further questions; mirrors the existing `/api/storyboard/render` flow.
 
 ## Goal

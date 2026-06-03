@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.112.0
+
+Fixes for the v0.111.0 frontpage polish.
+
+- **Model dropdown stayed open**: the new `.model-picker-panel { display: flex }`
+  overrode the UA `[hidden]{display:none}` the picker toggles with, so it never
+  closed. Added a `.model-picker-panel[hidden]{display:none}` guard (same guard
+  audited for the voice panel, which had the same latent trap).
+- **Squished model labels**: widened the dropdown (min 340px, up to 460px) and
+  let labels wrap to their full text instead of truncating onto one line.
+- **Composer text box**: taller baseline (and taller still on phones) so it
+  doesn't squish on mobile.
+- Restored the voice (conversational STT) panel styling that was dropped when
+  the inline `<style>` was removed during the v0.110.0 rewrite.
+
 ## v0.111.0
 
 Follow-up polish on the focus-mode frontpage.

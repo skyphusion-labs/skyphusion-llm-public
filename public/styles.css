@@ -4273,8 +4273,8 @@ body::before {
 .composer-field textarea {
   width: 100%; border: 0; background: transparent; color: var(--fg);
   font-family: inherit; font-size: 16px; line-height: 1.5; /* 16px: no iOS zoom-on-focus */
-  padding: 0.5rem 0.25rem; resize: none; outline: none;
-  min-height: 1.5rem; max-height: 40vh; field-sizing: content;
+  padding: 0.55rem 0.35rem; resize: none; outline: none;
+  min-height: 2.6rem; max-height: 40vh; field-sizing: content;
 }
 .composer-send {
   width: 38px; height: 38px; flex: 0 0 auto; border: 0; border-radius: var(--radius-pill);
@@ -4289,6 +4289,26 @@ body::before {
   padding: 0.4rem 0.6rem 0; min-height: 1rem;
 }
 .composer-foot .hint { font-size: 0.72rem; color: var(--fg-dim); }
+
+/* voice (conversational STT) composer panel - restored + modernized */
+#voice-panel {
+  display: flex; flex-direction: column; gap: 0.6rem; margin-bottom: 0.5rem;
+  padding: 0.7rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-elev);
+}
+#voice-panel[hidden] { display: none; }
+.voice-controls { display: flex; align-items: center; gap: 0.75rem; }
+#voice-start {
+  font-size: 0.95rem; padding: 0.5rem 1.2rem; border-radius: var(--radius-pill);
+  border: 0; background: var(--brand-grad); color: #0a0e1a; font-weight: 700; cursor: pointer;
+}
+#voice-start.is-live { background: var(--error); color: #fff; }
+.voice-status { font-size: 0.85rem; color: var(--fg-dim); }
+.voice-hint { color: var(--fg-dim); }
+#voice-live {
+  min-height: 3.25rem; font-size: 1.15rem; line-height: 1.5; padding: 0.7rem 0.9rem;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg);
+}
+#voice-turns { display: flex; flex-direction: column; gap: 0.4rem; max-height: 16rem; overflow-y: auto; }
 
 /* sidebar tools: Vivijure as one rich entry, voice as another */
 .sidebar-tools { display: flex; flex-direction: column; gap: 0.45rem; margin: 0.25rem 0 1rem; }
@@ -4358,7 +4378,13 @@ body::before {
 .model-picker-panel {
   display: flex; flex-direction: column; padding: 0.5rem;
   max-height: 66vh; overflow: hidden;
+  /* roomier so full model labels aren't squished onto one cramped line */
+  min-width: 340px; width: max-content; max-width: min(460px, calc(100vw - 1.4rem));
 }
+/* CRITICAL: the picker is toggled via the `hidden` attribute (app.js sets
+   panel.hidden); without this guard the display:flex above keeps it always
+   open (an author display rule beats the UA [hidden]{display:none}). */
+.model-picker-panel[hidden] { display: none; }
 .model-picker-search {
   flex: 0 0 auto; width: 100%; margin-bottom: 0.45rem; padding: 0.5rem 0.75rem;
   background: var(--bg); color: var(--fg); font: inherit; font-size: 0.88rem;
@@ -4367,6 +4393,11 @@ body::before {
 .model-picker-search:focus { border-color: var(--accent); }
 .model-picker-search::placeholder { color: var(--fg-dim); }
 .model-picker-results { flex: 1 1 auto; overflow-y: auto; }
+/* let labels wrap to their full text instead of truncating/squishing */
+.model-picker-results .model-item { align-items: flex-start; }
+.model-picker-results .model-item-label {
+  white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.35;
+}
 
 /* ---- mobile optimization ---- */
 @media (max-width: 720px) {
@@ -4384,6 +4415,11 @@ body::before {
   .settings-panel textarea { font-size: 16px; } /* no iOS zoom-on-focus */
   /* the slide-in sidebar covers most of a phone screen */
   .sidebar { width: min(340px, 92vw); }
+  /* a roomier text box on phones */
+  .composer-field textarea { min-height: 3rem; }
+  .composer { padding: 0.45rem 0.45rem 0.45rem 0.5rem; }
+  /* keep the (now wider) model dropdown inside the viewport */
+  .model-picker-panel { min-width: 0; max-width: calc(100vw - 1.2rem); }
 }
 
 /* coarse-pointer (touch) devices: never rely on hover-only affordances */

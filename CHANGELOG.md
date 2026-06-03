@@ -1,5 +1,49 @@
 # Changelog
 
+## v0.107.0
+
+CPU-bound media prep moves off the GPU pod onto Cloudflare Containers: audio beat
+analysis and cast-portrait background removal now run in CF Containers the Worker
+calls directly, keeping the RunPod worker purely GPU-bound. Both containers were
+built and verified live on Cloudflare.
+
+### What ships
+
+- **Audio beat-sync container** (`containers/audio-beat-sync/`, librosa). `POST
+  /api/audio/analyze` is now a single synchronous call: presign an R2 GET, POST
+  it to the container's `/analyze`, normalize the snake_case plan inline. Drops
+  the v0.105.0 GPU-pod submit/poll pair (the pod `analyze_audio` action was
+  reverted in vivijure-serverless 0.4.60) and the `GET /api/audio/analyze/:jobId`
+  poll route. `planner.js` `analyzeBeats` consumes the result inline (no poll).
+  Removed the dead `submitAnalyzeAudioJob` / `buildAnalyzeAudioPayload` /
+  `AnalyzeAudioJobInput` from `runpod-submit.ts`.
+- **Image-prep container** (`containers/image-prep/`, rembg). Cast portraits go
+  through `IMAGE_PREP`'s `/portrait/prep` at bundle time (`assembleBundle`):
+  presign GET (source) + PUT (cleaned dest), the container removes the background
+  and PUTs an alpha PNG, which we read back into the tar. Content-addressed in R2
+  (`cast-clean/<sha256>.png`) so repeat bundles reuse it. Best-effort: a container
+  failure falls back to the original portrait rather than failing the bundle.
+- **`src/r2-presign.ts`**: R2 (S3-compatible) SigV4 GET/PUT query presigning over
+  Web Crypto, so the containers (which hold no R2 binding) can fetch + write R2
+  objects directly. New env: `R2_S3_ACCESS_KEY_ID`/`R2_S3_SECRET_ACCESS_KEY`
+  (secrets), `R2_S3_ENDPOINT`/`R2_S3_BUCKET` (vars).
+- **Container DO wrappers** (`src/containers/`), `AUDIO_BEAT_SYNC` + `IMAGE_PREP`
+  bindings, and wrangler container/DO/migration config (`new_sqlite_classes`).
+
+### Notes
+
+- Container cold-start was the hard part. Both pin a persistent, CPU-portable
+  numba cache into the image (`NUMBA_CPU_NAME=generic` + a whole-second mtime
+  touch so buildkit's mtime truncation doesn't invalidate it) so first-request
+  JIT is ~1.5s, not ~46s. image-prep also imports rembg lazily (no startup warm,
+  which starved the port-bind on the small-core CF instance). A fully-cold
+  container can still 503 a heavy request racing its bind, so `callImagePrep`
+  warms with `/health` and retries `/portrait/prep` on 503.
+- `tests/audio-analyze.test.ts` (parser) + `tests/image-prep.test.ts` (the 503
+  guard). 496 tests pass.
+- Pod-side follow-up (separate vivijure-serverless commit): strip rembg from
+  `multi_character_regional.py` + the pod Dockerfile once this is in production.
+
 ## v0.106.0
 
 Planner UI for audio beat-sync (consumes the v0.105.0 routes), plus a latent-bug fix uncovered while wiring it.

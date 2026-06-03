@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.114.0
+
+More frontpage polish.
+
+- **Solid popovers**: the account accordion and ⚙ settings menus used a
+  translucent glass background, so page content (e.g. "new conversation") bled
+  through and made them hard to read. Both are now solid. (The sticky topbar
+  stays glassy by design.)
+- **Bigger composer**: the long placeholder ("enter to send, shift+enter for
+  newline") was clipping; raised the text box baseline height (and more on
+  phones) so it shows in full.
+- **Paperclip attach**: replaced the verbose "image, audio (auto-transcribed),
+  video (sampled to frames), or a text file (inlined)" hint with a paperclip
+  icon on the attach button, which reads as "upload a file" without the
+  sentence. (Attachment behavior is unchanged; the STT "audio required" hint and
+  the FLUX.2 reference-image hint stay.)
+
 ## v0.113.0
 
 Two mobile fixes for the model dropdown.

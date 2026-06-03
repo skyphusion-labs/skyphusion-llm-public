@@ -474,19 +474,13 @@ function updateAffordance() {
     userInputLabel.textContent = "your input";
     userInput.placeholder = "type here, enter to send, shift+enter for newline";
     attachRow.style.display = "flex";
-    const vision = (m.capabilities || []).includes("vision");
-    // v0.24.0: chat accepts any file. Text-based files (yaml, json, csv, code,
-    // logs, etc.) are inlined into the prompt for analysis; media handling
-    // depends on the model's vision capability. Empty accept = no picker filter.
-    if (vision) {
-      fileInput.accept = "";
-      attachHint.textContent = "image, audio (auto-transcribed), video (sampled to frames), or a text file (inlined)";
-      attachHint.classList.remove("warn");
-    } else {
-      fileInput.accept = "";
-      attachHint.textContent = "audio (auto-transcribed) or a text file (inlined); pick a vision-capable model for image/video";
-      attachHint.classList.remove("warn");
-    }
+    // v0.24.0: chat accepts any file (empty accept = no picker filter). Vision
+    // models also take images/video; non-vision get audio auto-transcribed +
+    // text files inlined. The paperclip button conveys "attach a file", so no
+    // verbose hint sentence (v0.114.0).
+    fileInput.accept = "";
+    attachHint.textContent = "";
+    attachHint.classList.remove("warn");
     // RAG: show the toggle only when chat is selected AND the user has
     // uploaded at least one document. Without docs there's nothing to retrieve.
     useDocsRow.hidden = state.documentCount === 0;

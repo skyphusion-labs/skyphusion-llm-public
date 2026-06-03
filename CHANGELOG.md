@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.117.0
+
+- **Send button actually round + arrow dead-center now**: the v0.116.0 styling
+  was on a `.composer-send` class, but the button is `id="run"` and two legacy
+  `#run` rules (id-specificity) won, keeping the old `padding` / `border-radius:
+  4px` / `min-height: 44px` (a de-centered rounded square). Raised the selector
+  to `#run.composer-send` so it wins, and zeroed the stray padding/min-height.
+
 ## v0.116.0
 
 - **Modernized the send button**: clean 40px circle with the brand gradient, a

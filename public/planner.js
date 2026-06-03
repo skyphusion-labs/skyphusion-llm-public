@@ -28,6 +28,128 @@ const PERSIST_DEBOUNCE_MS = 500;
 
 const $ = (sel) => document.querySelector(sel);
 
+// ---------- Guided stepper (v0.120.0) ----------
+//
+// The planner is one long pipeline. The stepper shows a single step at a
+// time: every top-level <section> carries a data-step, and showStep()
+// collapses every section whose data-step is not the active step (the
+// .step-hidden class sits on top of each section's own progressive-reveal
+// `hidden`, so the in-step reveal logic is untouched). Steps unlock as
+// prerequisites are met so the user cannot jump to Render before a bundle
+// exists. The state lives in module scope alongside the pipeline state below.
+
+const PLANNER_STEPS = [
+  { id: "plan", label: "Plan" },
+  { id: "cast", label: "Cast & Bundle" },
+  { id: "audio", label: "Audio" },
+  { id: "render", label: "Render" },
+  { id: "history", label: "History" },
+];
+const PLANNER_STEP_ORDER = PLANNER_STEPS.map((s) => s.id);
+
+const stepState = {
+  current: "plan",
+  unlocked: { plan: true, cast: false, audio: false, render: false, history: true },
+};
+
+// Recompute which steps are reachable from the live pipeline state. Plan +
+// History are always open; Cast/Audio open once a storyboard exists; Render
+// opens once a bundle is staged (or a render is already in flight / loaded
+// from history).
+function computeStepUnlocked() {
+  const hasPlan = !!(planState && planState.storyboard);
+  const hasBundle =
+    !!(bundleState && bundleState.bundleKey) || !!(renderState && renderState.jobId);
+  return { plan: true, cast: hasPlan, audio: hasPlan, render: hasBundle, history: true };
+}
+
+function buildStepper() {
+  const rail = $("#planner-steps");
+  if (!rail) return;
+  rail.innerHTML = "";
+  PLANNER_STEPS.forEach((step, i) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "planner-step";
+    btn.dataset.stepId = step.id;
+    const num = document.createElement("span");
+    num.className = "planner-step-num";
+    num.textContent = String(i + 1);
+    const lbl = document.createElement("span");
+    lbl.className = "planner-step-label-long";
+    lbl.textContent = step.label;
+    btn.appendChild(num);
+    btn.appendChild(lbl);
+    btn.addEventListener("click", () => showStep(step.id));
+    rail.appendChild(btn);
+  });
+  const back = $("#planner-step-back");
+  if (back) back.addEventListener("click", () => stepDelta(-1));
+  const next = $("#planner-step-next");
+  if (next) next.addEventListener("click", () => stepDelta(1));
+}
+
+// Reflect unlock state on the rail without changing the active step. If the
+// active step just became locked (e.g. a reset cleared the plan), fall back
+// to the furthest still-unlocked step at or before it.
+function refreshSteps() {
+  stepState.unlocked = computeStepUnlocked();
+  if (!stepState.unlocked[stepState.current]) {
+    const idx = PLANNER_STEP_ORDER.indexOf(stepState.current);
+    let fallback = "plan";
+    for (let i = idx; i >= 0; i--) {
+      if (stepState.unlocked[PLANNER_STEP_ORDER[i]]) {
+        fallback = PLANNER_STEP_ORDER[i];
+        break;
+      }
+    }
+    showStep(fallback);
+    return;
+  }
+  paintStepper();
+}
+
+// Switch the active step: collapse non-active sections, repaint the rail +
+// the back/next buttons, scroll to the top of the column.
+function showStep(id) {
+  if (!stepState.unlocked[id]) return;
+  stepState.current = id;
+  document.querySelectorAll("[data-step]").forEach((el) => {
+    el.classList.toggle("step-hidden", el.dataset.step !== id);
+  });
+  paintStepper();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function paintStepper() {
+  const curIdx = PLANNER_STEP_ORDER.indexOf(stepState.current);
+  document.querySelectorAll("#planner-steps .planner-step").forEach((btn) => {
+    const sid = btn.dataset.stepId;
+    const sIdx = PLANNER_STEP_ORDER.indexOf(sid);
+    btn.classList.toggle("is-active", sid === stepState.current);
+    // a step before the current one that is unlocked reads as "done"
+    btn.classList.toggle("is-done", sIdx < curIdx && !!stepState.unlocked[sid]);
+    btn.disabled = !stepState.unlocked[sid];
+  });
+  const back = $("#planner-step-back");
+  if (back) back.disabled = curIdx <= 0;
+  const next = $("#planner-step-next");
+  if (next) {
+    const nextId = PLANNER_STEP_ORDER[curIdx + 1];
+    next.disabled = !nextId || !stepState.unlocked[nextId];
+  }
+}
+
+// Move relative to the current step, skipping locked steps in the direction
+// of travel.
+function stepDelta(dir) {
+  let i = PLANNER_STEP_ORDER.indexOf(stepState.current) + dir;
+  while (i >= 0 && i < PLANNER_STEP_ORDER.length && !stepState.unlocked[PLANNER_STEP_ORDER[i]]) {
+    i += dir;
+  }
+  if (i >= 0 && i < PLANNER_STEP_ORDER.length) showStep(PLANNER_STEP_ORDER[i]);
+}
+
 // ---------- State (held in module scope across stages) ----------
 
 const planState = {
@@ -2672,6 +2794,9 @@ function renderPlanResult(httpStatus, data, model, characters) {
     showPreflightSection();
     runPreflight();
     showBundleStage(data.storyboard, characters);
+    // v0.120.0: a fresh plan unlocks Cast & Bundle + Audio. Stay on the Plan
+    // step so the user can review the output / refine; the rail lights up.
+    refreshSteps();
     savePersistedState();
     return;
   }
@@ -3072,6 +3197,9 @@ async function bundleNow() {
     setBundleStatus("staged", "success");
     showBundleResult(data);
     showRenderStage();
+    // v0.120.0: a staged bundle unlocks Render; advance there automatically.
+    refreshSteps();
+    showStep("render");
     savePersistedState();
     return;
   }
@@ -3906,15 +4034,19 @@ function renderHistoryList(rows, totalRows) {
 
   if (totalRows === undefined) totalRows = rows ? rows.length : 0;
 
-  // Section hidden only when the user has zero renders period. Filtered-
-  // to-zero still shows the section + filters + "no matches" placeholder
-  // so the user can clear filters.
+  // v0.120.0: the History step always shows its header + filters (it is a
+  // first-class stepper step now, not a trailing block), so zero renders
+  // renders an empty-state placeholder rather than collapsing the section.
+  // Filtered-to-zero shows the same "no matches" placeholder below.
+  section.hidden = false;
   if (totalRows === 0) {
-    section.hidden = true;
     counter.textContent = "";
+    const li = document.createElement("li");
+    li.className = "planner-history-empty";
+    li.textContent = "no renders yet; plan, bundle, and render a storyboard to see it here.";
+    list.appendChild(li);
     return;
   }
-  section.hidden = false;
 
   if (!rows || rows.length === 0) {
     counter.textContent = "showing 0 of " + totalRows;
@@ -4757,6 +4889,9 @@ function rerunBundle(row) {
   $("#planner-render-error").hidden = true;
   $("#planner-render-log-wrap").hidden = true;
   $("#planner-render-output").hidden = true;
+  // v0.120.0: jump to the Render step (this row carried a bundle key forward).
+  refreshSteps();
+  showStep("render");
 
   // Pre-select the same quality tier the original render used so a single
   // click matches the previous run; the user can still flip it before
@@ -4978,6 +5113,9 @@ function resumeRender(row) {
 
   const renderSection = $("#planner-render");
   renderSection.hidden = false;
+  // v0.120.0: jump to the Render step to show this in-flight / past render.
+  refreshSteps();
+  showStep("render");
   $("#planner-render-result").hidden = false;
   $("#planner-render-job-id").textContent = row.job_id;
   setJobStatusBadge(row.status);
@@ -5182,6 +5320,12 @@ document.addEventListener("DOMContentLoaded", () => {
   // The model picker value is set after loadModels resolves (its options
   // are populated by an async fetch).
   const stash = restorePersistedState();
+  // v0.120.0: build the step rail + collapse to the active step now that the
+  // restored pipeline state (planState / bundleState / renderState) determines
+  // which steps are unlocked.
+  buildStepper();
+  stepState.unlocked = computeStepUnlocked();
+  showStep("plan");
   loadModels().then(() => {
     if (stash && stash.planForm && stash.planForm.modelId) {
       const select = $("#planner-model");

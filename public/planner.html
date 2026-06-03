@@ -13,38 +13,62 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body class="planner-body">
-  <!-- v0.66.0: shared Vivijure topbar. Logo wordmark on the left, page nav in
-       the middle, signed-in user pill on the right.
-       v0.67.1: sibling-of-main rather than inside-main so the topbar's blur
-       background spans the full viewport width instead of being clipped to
-       the 960px .planner-layout container. (Also matches the fix needed on
-       the cast page where the grid-template-areas was sending it to the
-       page bottom.) -->
-  <header class="wv-topbar">
-    <a class="wv-topbar-logo" href="/" aria-label="Vivijure home">
-      <span class="wv-topbar-logo-wave">Wave</span><span class="wv-topbar-logo-vryn">vryn</span>
+  <!-- v0.120.0: shared playground chrome (.topbar / .brand / .account-menu),
+       a full-width sticky sibling of <main> so the glass blur spans the
+       viewport instead of being clipped to the 960px .planner-layout column.
+       The page nav lives in the center; the signed-in user + page links sit
+       in the account popover (wired by topbar.js, no app.js on this page). -->
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="skyphusion home">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">skyphusion</span>
     </a>
-    <nav class="wv-topbar-nav" aria-label="primary">
-      <a href="/cast.html">cast</a>
-      <a href="/planner.html" class="is-active">storyboard planner</a>
-      <a href="/stt.html">voice</a>
-      <a href="/">chat</a>
+    <nav class="planner-nav" aria-label="primary">
+      <a href="/">Chat</a>
+      <a href="/planner.html" class="is-active">Vivijure</a>
+      <a href="/cast.html">Cast</a>
+      <a href="/stt.html">Voice</a>
     </nav>
-    <button id="wv-topbar-user" type="button" class="wv-topbar-user" title="signed-in user (User Options coming)">
-      <span class="wv-topbar-user-dot" aria-hidden="true"></span>
-      <span id="wv-topbar-user-email" class="wv-topbar-user-email wv-topbar-user-empty">loading…</span>
-    </button>
+    <div class="account">
+      <button id="account-toggle" type="button" class="icon-btn" aria-haspopup="true" aria-expanded="false" aria-label="Account &amp; tools">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+      </button>
+      <div id="account-menu" class="account-menu" role="menu" hidden>
+        <button id="account-user" class="account-row account-user" type="button" role="menuitem" title="user preferences (coming soon)">
+          <span class="account-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg></span>
+          <span class="account-email" id="account-email">loading&#8230;</span>
+        </button>
+        <a class="account-row account-link" href="/" role="menuitem">
+          <span class="account-name">Chat</span>
+          <span class="account-sub">35-model playground</span>
+        </a>
+        <a class="account-row account-link" href="/cast.html" role="menuitem">
+          <span class="account-name">Cast</span>
+          <span class="account-sub">Character references</span>
+        </a>
+        <a class="account-row account-link" href="/stt.html" role="menuitem">
+          <span class="account-name">Voice</span>
+          <span class="account-sub">Conversational STT</span>
+        </a>
+      </div>
+    </div>
   </header>
   <main class="planner-layout">
     <header class="planner-header">
       <h1>storyboard planner</h1>
     </header>
 
+    <!-- v0.120.0: guided step rail. Each button switches the active step;
+         only the active step's [data-step] sections render. Steps unlock as
+         prerequisites are met (a plan unlocks Cast/Audio; a bundle unlocks
+         Render). Populated + wired in planner.js (buildStepper / showStep). -->
+    <nav id="planner-steps" class="planner-steps" aria-label="storyboard stages"></nav>
+
     <!-- v0.53.0: persisted project picker. Optional; planner still works
          transient (no project picked). Picking a project loads its prefs +
          last saved storyboard; "save to project" stashes the current
          storyboard back into the picked project. -->
-    <section class="planner-project">
+    <section class="planner-project" data-step="plan">
       <header class="planner-project-header">
         <h2 class="planner-stage-title">project</h2>
         <span id="planner-project-status" class="planner-status"></span>
@@ -62,7 +86,7 @@
       </div>
     </section>
 
-    <section class="planner-form">
+    <section class="planner-form" data-step="plan">
       <h2 class="planner-stage-title">plan</h2>
 
       <label class="planner-field">
@@ -86,7 +110,7 @@
       </div>
     </section>
 
-    <section id="planner-output" class="planner-output" hidden>
+    <section id="planner-output" class="planner-output" data-step="plan" hidden>
       <header class="planner-output-header">
         <span id="planner-output-meta"></span>
         <span id="planner-output-state" class="planner-output-state"></span>
@@ -120,7 +144,7 @@
          /api/storyboard/refine and replaces planState.storyboard with the
          returned draft. Stateless: chat history is for the user's display,
          not replayed to the model. Hidden until a plan resolves. -->
-    <section id="planner-refine" class="planner-stage" hidden>
+    <section id="planner-refine" class="planner-stage" data-step="plan" hidden>
       <header class="planner-stage-header">
         <h2 class="planner-stage-title">refine via chat</h2>
         <span id="planner-refine-status" class="planner-status"></span>
@@ -137,7 +161,7 @@
          Mutates planState.storyboard.scenes in-place; debounce-refreshes
          the YAML preview via POST /api/storyboard/yaml. Hidden until a
          successful plan resolves. -->
-    <section id="planner-scenes" class="planner-stage" hidden>
+    <section id="planner-scenes" class="planner-stage" data-step="plan" hidden>
       <header class="planner-stage-header">
         <h2 class="planner-stage-title">scene editor</h2>
         <span id="planner-scenes-status" class="planner-status"></span>
@@ -165,7 +189,7 @@
          /api/storyboard/audio-upload. BPM input + snap buttons mutate
          scene target_seconds; the YAML pane refreshes automatically
          through the v0.49.0 hook. -->
-    <section id="planner-audio" class="planner-stage" hidden>
+    <section id="planner-audio" class="planner-stage" data-step="audio" hidden>
       <header class="planner-stage-header">
         <h2 class="planner-stage-title">audio bed + beat timing</h2>
         <span id="planner-audio-status" class="planner-status"></span>
@@ -239,7 +263,7 @@
          optional R2 HEAD for the bundle / audio. The bundle and
          render submit buttons gate on no preflight errors when the
          panel is open; warnings are advisory and pass through. -->
-    <section id="planner-preflight" class="planner-stage" hidden>
+    <section id="planner-preflight" class="planner-stage" data-step="cast" hidden>
       <header class="planner-stage-header">
         <h2 class="planner-stage-title">preflight</h2>
         <span id="planner-preflight-status" class="planner-status"></span>
@@ -257,7 +281,7 @@
     </section>
 
     <!-- v0.33.0: bundle stage. Revealed after a successful plan. -->
-    <section id="planner-bundle" class="planner-stage" hidden>
+    <section id="planner-bundle" class="planner-stage" data-step="cast" hidden>
       <header class="planner-stage-header">
         <h2 class="planner-stage-title">assemble bundle</h2>
         <span id="planner-bundle-status" class="planner-status"></span>
@@ -277,7 +301,7 @@
     </section>
 
     <!-- v0.33.0: render stage. Revealed after a successful bundle. -->
-    <section id="planner-render" class="planner-stage" hidden>
+    <section id="planner-render" class="planner-stage" data-step="render" hidden>
       <header class="planner-stage-header">
         <h2 class="planner-stage-title">render</h2>
         <button id="planner-notify-toggle" type="button" class="planner-notify-toggle" hidden title="get a browser notification when this render finishes">enable notifications</button>
@@ -1385,7 +1409,7 @@
          v0.67.0: moved to the bottom of the page so the live workflow (plan ->
          bundle -> render) sits at the top and history is a reference area
          below it, not the first thing the user scrolls past every load. -->
-    <section id="planner-history" class="planner-history" hidden>
+    <section id="planner-history" class="planner-history" data-step="history" hidden>
       <header class="planner-history-header">
         <h2 class="planner-stage-title">recent renders</h2>
         <div class="planner-history-tools">
@@ -1405,6 +1429,15 @@
       </div>
       <ul id="planner-history-list" class="planner-history-list"></ul>
     </section>
+
+    <!-- v0.120.0: back / next rail under the active step. Next is gated on
+         the next step being unlocked; it advances through Plan -> Cast &
+         Bundle -> Audio -> Render -> History. Wired in planner.js. -->
+    <div id="planner-stepnav" class="planner-stepnav">
+      <button id="planner-step-back" type="button">&#8592; back</button>
+      <span class="planner-stepnav-spacer"></span>
+      <button id="planner-step-next" type="button" class="planner-stepnav-next">next &#8594;</button>
+    </div>
   </main>
 
   <script src="/topbar.js"></script>

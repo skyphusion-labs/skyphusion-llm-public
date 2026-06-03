@@ -14,6 +14,7 @@
   --border-soft: rgba(255, 255, 255, 0.07);
   --error: #ff6b8a;
   --warn: #f2c14e;
+  --success: #50c878;
   --brand-grad: linear-gradient(120deg, #38e0ff 0%, #6d8cff 48%, #a06bff 100%);
   --radius: 16px;
   --radius-sm: 11px;
@@ -3927,7 +3928,7 @@ textarea:focus {
 }
 
 .planner-preflight-issue-warning .planner-preflight-badge {
-  background: rgba(255, 196, 0, 0.85);
+  background: var(--warn);
   color: var(--bg);
 }
 
@@ -3937,7 +3938,7 @@ textarea:focus {
 }
 
 .planner-preflight-issue-error { border-color: var(--error); }
-.planner-preflight-issue-warning { border-color: rgba(255, 196, 0, 0.5); }
+.planner-preflight-issue-warning { border-color: var(--warn); }
 
 .planner-preflight-scope {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
@@ -4020,9 +4021,9 @@ textarea:focus {
   flex-wrap: wrap;
 }
 
-.cast-gen-status.is-warn { color: rgba(255, 196, 0, 0.95); }
+.cast-gen-status.is-warn { color: var(--warn); }
 .cast-gen-status.is-loading { color: var(--accent); }
-.cast-gen-status.is-success { color: rgba(80, 200, 120, 0.95); }
+.cast-gen-status.is-success { color: var(--success); }
 .cast-gen-status.is-error { color: var(--error); }
 
 /* ---------- v0.66.0: shared Vivijure topbar ---------- */
@@ -4113,7 +4114,7 @@ textarea:focus {
   width: 0.5rem;
   height: 0.5rem;
   border-radius: 50%;
-  background: rgba(80, 200, 120, 0.95);
+  background: var(--success);
   flex-shrink: 0;
 }
 .wv-topbar-user-email {
@@ -4129,6 +4130,131 @@ textarea:focus {
   .wv-topbar { padding: 0.6rem 0.875rem; gap: 0.875rem; }
   .wv-topbar-nav a { padding: 0.35rem 0.5rem; }
   .wv-topbar-user { max-width: 9.5rem; }
+}
+
+/* ============================================================
+   v0.120.0 - planner modern chrome + guided stepper.
+   Reuses the playground .topbar / .brand / .account-menu and
+   adds a horizontal step rail. Only the active step's sections
+   render; the rest collapse via [data-step].step-hidden, on top
+   of each section's own progressive-reveal `hidden`.
+   ============================================================ */
+
+.planner-body .topbar { z-index: 50; }
+
+.planner-nav {
+  flex: 1 1 auto;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.planner-nav::-webkit-scrollbar { display: none; }
+.planner-nav a {
+  color: var(--fg-dim);
+  text-decoration: none;
+  padding: 0.4rem 0.8rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  white-space: nowrap;
+  border-radius: var(--radius-pill);
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.planner-nav a:hover { color: var(--fg); background: var(--bg-elev2); }
+.planner-nav a.is-active { color: var(--fg); background: var(--bg-elev2); }
+
+/* guided step rail (inside the 960px .planner-layout column) */
+.planner-steps {
+  display: flex;
+  gap: 0.45rem;
+  align-items: stretch;
+  margin: 0 0 24px;
+  padding-bottom: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.planner-steps::-webkit-scrollbar { display: none; }
+.planner-step {
+  flex: 1 1 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-elev);
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.planner-step:hover:not(:disabled) { color: var(--fg); border-color: var(--accent); }
+.planner-step-num {
+  display: grid;
+  place-items: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 50%;
+  background: var(--bg-elev2);
+  color: var(--fg-dim);
+  font-size: 0.78rem;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+.planner-step.is-active {
+  color: var(--fg);
+  border-color: transparent;
+  background: var(--bg-elev2);
+  box-shadow: var(--shadow-glow);
+}
+.planner-step.is-active .planner-step-num { background: var(--brand-grad); color: var(--bg); }
+.planner-step.is-done .planner-step-num { background: var(--success); color: var(--bg); }
+.planner-step:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* a step's sections collapse entirely when it is not the active step */
+[data-step].step-hidden { display: none !important; }
+
+/* back / next footer under the active step */
+.planner-stepnav {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 36px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border-soft);
+}
+.planner-stepnav-spacer { flex: 1 1 auto; }
+.planner-stepnav button {
+  padding: 0.6rem 1.15rem;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--fg);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.planner-stepnav button:hover:not(:disabled) { border-color: var(--accent); }
+.planner-stepnav button:disabled { opacity: 0.4; cursor: not-allowed; }
+.planner-stepnav-next {
+  background: var(--brand-grad) !important;
+  border-color: transparent !important;
+  color: var(--bg) !important;
+  box-shadow: var(--shadow-glow);
+}
+
+@media (max-width: 720px) {
+  .planner-nav a { padding: 0.35rem 0.55rem; font-size: 0.82rem; }
+  .planner-step { padding: 0.5rem 0.7rem; font-size: 0.8rem; gap: 0.4rem; }
+  .planner-step-label-long { display: none; }
 }
 
 /* ============================================================

@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.120.0
+
+Frontend: modernize the Vivijure storyboard planner chrome and add a guided
+stepper (Phase 1 of the planner declutter). The legacy `.wv-topbar` is replaced
+with the playground's shared `.topbar` / `.brand` / `.account-menu` chrome
+(gradient brand mark, centered page nav, signed-in user + page links in the
+account popover), wired by a modernized `topbar.js` that now fills
+`#account-email` and drives the popover on pages without `app.js`. The long
+single-column pipeline becomes a five-step rail (Plan, Cast & Bundle, Audio,
+Render, History): only the active step's `[data-step]` sections render (via a
+`.step-hidden` class layered on top of each section's own progressive-reveal
+`hidden`), steps unlock as prerequisites are met (a plan unlocks Cast/Audio, a
+staged bundle unlocks Render and auto-advances there), and a back/next footer
+walks the steps. Pure markup/IA + CSS; no change to the render payload, the
+`render_overrides` contract, or any backend route. Also adds a `--success`
+design token and migrates the few remaining hardcoded status `rgba()` colors
+to it. The History step now always shows its header + an empty-state when there
+are no renders, instead of collapsing.
+
 ## v0.119.0
 
 Feature: beat-synced storyboard planning. `/api/storyboard/plan` now accepts an

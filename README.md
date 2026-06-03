@@ -97,7 +97,8 @@ The flow:
 4. **Bundle** (`POST /api/storyboard/bundle`) assemble the storyboard + cleaned cast
    portraits + reference images into a `.tar.gz` project bundle, staged to R2.
 5. **Render** (`POST /api/storyboard/render`, `GET /api/storyboard/renders`) submit
-   the bundle to the **vivijure-serverless** RunPod GPU endpoint, which trains
+   the bundle to the [**vivijure-serverless**](https://github.com/SkyPhusion/vivijure-serverless)
+   RunPod GPU endpoint, which trains
    per-character LoRAs, renders SDXL keyframes plus image-to-video, exports a silent
    MP4, and pushes the result back to R2. Render history is tracked in D1.
 
@@ -126,7 +127,8 @@ containers reach R2 over the public S3 endpoint):
 | `R2_S3_ENDPOINT` / `R2_S3_BUCKET` (vars) | the R2 S3 endpoint + render bucket |
 
 The GPU half (LoRA training + rendering) is a separate RunPod serverless worker,
-`vivijure-serverless`; this repo is only the control plane.
+[`vivijure-serverless`](https://github.com/SkyPhusion/vivijure-serverless); this
+repo is only the control plane.
 
 ## Stack
 

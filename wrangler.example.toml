@@ -73,7 +73,7 @@ class_name = "AudioBeatSyncContainer"
 class_name = "AudioBeatSyncContainer"
 image = "./containers/audio-beat-sync/Dockerfile"
 max_instances = 3
-instance_type = "standard"
+instance_type = "standard-1"
 
 [[migrations]]
 tag = "v1"
@@ -103,3 +103,11 @@ enabled = true
 #                   NOT use this; it rides Unified Billing.),
 #   TAVILY_API_KEY (optional, v0.17.0; for the web-search retrieval source.
 #                   When unset, web search falls back to Wikipedia only).
+#   R2_S3_ACCESS_KEY_ID + R2_S3_SECRET_ACCESS_KEY (v0.107.0; an R2 API token with
+#                   Object Read+Write on the R2_RENDERS bucket. Used by
+#                   src/r2-presign.ts to mint presigned GET/PUT URLs for the
+#                   container backends. Pair with the [vars] below.)
+#
+# Non-secret [vars] for presigning (add to your wrangler.toml [vars] block):
+#   R2_S3_ENDPOINT = "https://<accountid>.r2.cloudflarestorage.com"
+#   R2_S3_BUCKET   = "<your R2_RENDERS bucket name>"

@@ -27,6 +27,7 @@ import { MODELS } from "./models";
 import type { Env } from "./env";
 import { isRendersKey } from "./r2-routing";
 import { needsAudioCrossBucketCopy } from "./audio-routing";
+import { presignR2Get, presignR2Put } from "./r2-presign";
 import { parseDataUrl, base64ToBytes, bytesToBase64, extFromMime } from "./utils";
 import {
   listCastForUser, getCastById, createCast, updateCast, deleteCast,
@@ -510,6 +511,18 @@ export default {
     // action shipped in vivijure-serverless 0.4.59). Mirrors the render pair.
     if (url.pathname === "/api/audio/analyze" && request.method === "POST") {
       return handleAudioAnalyzeSubmit(request, env);
+    }
+    // TEMP (v0.107.0): presign a PUT+GET for a throwaway key so a shell round
+    // trip can verify R2 SigV4 presigning works. Remove after verification.
+    if (url.pathname === "/api/r2-presign-test" && request.method === "GET") {
+      try {
+        const key = "tmp/presign-test.txt";
+        const putUrl = await presignR2Put(env, key, 300);
+        const getUrl = await presignR2Get(env, key, 300);
+        return json({ ok: true, key, putUrl, getUrl });
+      } catch (err) {
+        return json({ ok: false, error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+      }
     }
     // TEMP (v0.107.0): probe the beat-sync container's /health to confirm it
     // activates + serves. Remove once the sync /analyze path is wired.

@@ -23,6 +23,16 @@ export interface Env {
   // side R2 (`R2`) stays untouched. Point both bindings at the same
   // bucket in wrangler.toml if you don't want the split.
   R2_RENDERS: R2Bucket;
+  // v0.107.0: R2 S3-compatible credentials for SigV4 presigning (src/r2-presign.ts).
+  // The container backends have no R2 binding, so the Worker presigns short-lived
+  // GET/PUT URLs against the R2_RENDERS bucket over the public S3 endpoint.
+  // ACCESS_KEY_ID + SECRET_ACCESS_KEY are secrets (R2 API token, Object R+W on the
+  // bucket); ENDPOINT (https://<accountid>.r2.cloudflarestorage.com) and BUCKET are
+  // non-secret [vars]. All optional so presign-free deploys still typecheck.
+  R2_S3_ACCESS_KEY_ID?: string;
+  R2_S3_SECRET_ACCESS_KEY?: string;
+  R2_S3_ENDPOINT?: string;
+  R2_S3_BUCKET?: string;
   VEC: VectorizeIndex;
   ASSETS: Fetcher;
   GATEWAY_ID: string;

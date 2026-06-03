@@ -216,6 +216,23 @@
         <button id="planner-snap-btn" type="button" class="planner-secondary">snap all scene durations</button>
         <span id="planner-snap-status" class="planner-status"></span>
       </div>
+
+      <!-- v0.106.0: server-side beat analysis (librosa on the GPU pod via
+           POST /api/audio/analyze). Detects BPM + downbeats and applies
+           beat-aligned target_seconds to each scene, so cuts land on the
+           beat without setting BPM by hand. -->
+      <div class="planner-audio-timing">
+        <label class="planner-field">
+          <span>seconds per shot</span>
+          <input id="planner-beat-clip" type="number" min="1" max="30" step="0.5" value="4" />
+        </label>
+        <button id="planner-analyze-beats" type="button" class="planner-secondary">analyze beats (auto)</button>
+        <span id="planner-beat-status" class="planner-status"></span>
+      </div>
+      <div id="planner-beat-result" class="planner-audio-current" hidden>
+        <span id="planner-beat-summary" class="planner-audio-meta"></span>
+        <button id="planner-beat-apply" type="button" class="planner-primary">apply to storyboard</button>
+      </div>
     </section>
 
     <!-- v0.54.0: pre-render preflight. Pure storyboard checks +

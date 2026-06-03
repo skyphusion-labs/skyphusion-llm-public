@@ -148,7 +148,7 @@
     ws = new WebSocket(`${proto}//${location.host}/api/stt/stream`);
     ws.binaryType = "arraybuffer";
 
-    ws.onopen = () => { setStatus("listening — speak now"); interim = ""; renderLive(); beginCapture(); };
+    ws.onopen = () => { setStatus("listening, speak now"); interim = ""; renderLive(); beginCapture(); };
     ws.onmessage = (e) => {
       if (typeof e.data !== "string") return; // events are JSON text; ignore any binary
       let ev;

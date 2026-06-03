@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.106.0
+
+Planner UI for audio beat-sync (consumes the v0.105.0 routes), plus a latent-bug fix uncovered while wiring it.
+
+### What ships
+
+- `public/planner.html` + `public/planner.js`: an "analyze beats (auto)" control in the audio bed section (with a "seconds per shot" input). It POSTs `/api/audio/analyze`, polls `/api/audio/analyze/:jobId` every 2s (60s cap) mirroring the music-gen poll, shows `BPM · shots · duration · note`, and an "apply to storyboard" button that writes the plan's beat-aligned `target_seconds` onto the overlapping scenes (non-destructive: never adds/deletes scenes; reports any count mismatch). Clamps to `STORYBOARD_MAX_SCENES` (50) with a warning. Apply is disabled for duration-mode plans with no per-scene cuts.
+- **Bug fix:** `planner.js` declared `finalizeRender` twice (a sync `(data)` render-poll display fn and an `async (row, btnEl)` finalize-action fn). In sloppy mode the second silently shadowed the first, so render-poll completion (two call sites) was invoking the wrong function. Renamed the poll-display fn to `finalizeRenderPoll` + its callers. (Adding top-level `const`/`let` for the beat-sync code made V8 reject the duplicate outright, which surfaced it; it would otherwise have kept misbehaving silently.)
+
+### Notes
+
+`target_seconds` is the only field written (the renderer consumes it; consecutive durations summing across scenes is what lands cuts on the beat). End-to-end needs the 0.4.59 pod image live on the endpoint. Browser-untested (no mic/audio here); the analyze submit + poll + apply paths should be verified in the planner once an audio bed + the pod image are available.
+
 ## v0.105.0
 
 Audio beat-sync, Worker side (backend). Pairs with the `analyze_audio` pod action in vivijure-serverless 0.4.59; see docs/audio-beat-sync.md. The planner UI hook is a follow-up.

@@ -2181,6 +2181,137 @@ function snapAllScenes() {
 // but lets the browser console inspect the function.
 if (typeof window !== "undefined") window.__plannerHelpers = { snapToBeats };
 
+// ---------- Beat-sync (v0.106.0) ----------
+//
+// Server-side beat analysis: POST /api/audio/analyze submits an analyze_audio
+// RunPod job (librosa beat-tracking on the GPU pod); poll for the plan, then
+// apply its per-scene beat-aligned target_seconds. Mirrors the music-gen
+// submit/poll shape. See docs/audio-beat-sync.md.
+const BEAT_POLL_MS = 2000;
+const BEAT_POLL_MAX_MS = 60000;
+const PLANNER_MAX_SCENES = 50; // mirrors STORYBOARD_MAX_SCENES in src/storyboard-validate.ts
+let beatPollTimer = null;
+let lastBeatPlan = null;
+
+function setBeatStatus(text, kind) {
+  const el = $("#planner-beat-status");
+  if (!el) return;
+  el.textContent = text || "";
+  el.className = "planner-status" + (kind ? " planner-" + kind : "");
+}
+
+async function analyzeBeats() {
+  if (!planState.audioKey) { setBeatStatus("attach or generate an audio bed first.", "error"); return; }
+  const clip = Number($("#planner-beat-clip").value);
+  if (!Number.isFinite(clip) || clip <= 0) { setBeatStatus("seconds per shot must be a positive number.", "error"); return; }
+  if (beatPollTimer) { clearTimeout(beatPollTimer); beatPollTimer = null; }
+  $("#planner-analyze-beats").disabled = true;
+  $("#planner-beat-result").hidden = true;
+  setBeatStatus("submitting analysis...", "loading");
+  try {
+    const resp = await fetch("/api/audio/analyze", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ audioKey: planState.audioKey, clipSeconds: clip, mode: "beat" }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.ok || !data.jobId) {
+      setBeatStatus("submit failed: " + (data.error || "HTTP " + resp.status), "error");
+      $("#planner-analyze-beats").disabled = false;
+      return;
+    }
+    setBeatStatus("analyzing (beat detection)...", "loading");
+    pollBeatJob(data.jobId, Date.now());
+  } catch (err) {
+    setBeatStatus("network error: " + err.message, "error");
+    $("#planner-analyze-beats").disabled = false;
+  }
+}
+
+async function pollBeatJob(jobId, startTs) {
+  try {
+    const resp = await fetch("/api/audio/analyze/" + encodeURIComponent(jobId));
+    const data = await resp.json();
+    if (data.status === "COMPLETED" && data.output) {
+      renderBeatPlan(data.output);
+      $("#planner-analyze-beats").disabled = false;
+      return;
+    }
+    const terminalFail = data.status === "FAILED" || data.status === "CANCELLED"
+      || data.status === "TIMED_OUT" || data.ok === false;
+    if (terminalFail) {
+      setBeatStatus("analysis failed: " + (data.error || data.status || "unknown"), "error");
+      $("#planner-analyze-beats").disabled = false;
+      return;
+    }
+    if (Date.now() - startTs > BEAT_POLL_MAX_MS) {
+      setBeatStatus("timed out after 60s (the job may still finish; try again).", "error");
+      $("#planner-analyze-beats").disabled = false;
+      return;
+    }
+    setBeatStatus("analyzing (" + (data.status || "queued").toLowerCase() + ")...", "loading");
+    beatPollTimer = setTimeout(() => pollBeatJob(jobId, startTs), BEAT_POLL_MS);
+  } catch (err) {
+    if (Date.now() - startTs > BEAT_POLL_MAX_MS) {
+      setBeatStatus("poll error / timeout: " + err.message, "error");
+      $("#planner-analyze-beats").disabled = false;
+      return;
+    }
+    beatPollTimer = setTimeout(() => pollBeatJob(jobId, startTs), BEAT_POLL_MS);
+  }
+}
+
+function renderBeatPlan(plan) {
+  lastBeatPlan = plan;
+  const parts = [];
+  if (typeof plan.bpm === "number") parts.push(plan.bpm.toFixed(1) + " BPM");
+  parts.push((plan.suggestedShots || 0) + " shots");
+  if (typeof plan.durationSeconds === "number") parts.push(plan.durationSeconds.toFixed(1) + "s");
+  let summary = parts.join(" · ");
+  if (plan.note) summary += ": " + plan.note;
+  if ((plan.suggestedShots || 0) > PLANNER_MAX_SCENES) {
+    summary += "  (exceeds the " + PLANNER_MAX_SCENES + "-scene cap; apply will clamp)";
+  }
+  $("#planner-beat-summary").textContent = summary;
+  const canApply = Array.isArray(plan.timedScenes) && plan.timedScenes.length > 0;
+  const applyBtn = $("#planner-beat-apply");
+  applyBtn.disabled = !canApply;
+  applyBtn.title = canApply ? "" : "no per-scene cuts in this mode; use the shot count to replan instead";
+  $("#planner-beat-result").hidden = false;
+  setBeatStatus(canApply ? "ready" : "ready (no per-scene cuts in this mode)", "success");
+}
+
+function applyBeatPlan() {
+  if (!lastBeatPlan || !Array.isArray(lastBeatPlan.timedScenes) || lastBeatPlan.timedScenes.length === 0) {
+    setBeatStatus("no beat plan to apply.", "error");
+    return;
+  }
+  if (!planState.storyboard || !Array.isArray(planState.storyboard.scenes) || planState.storyboard.scenes.length === 0) {
+    setBeatStatus("plan a storyboard first, then apply beats.", "error");
+    return;
+  }
+  const scenes = planState.storyboard.scenes;
+  // Clamp to the scene cap; apply to the overlapping range only (non-
+  // destructive: we never add or delete scenes here). target_seconds is the
+  // field the renderer consumes; consecutive durations summing across scenes
+  // is what lands the cuts on the beat.
+  const timed = lastBeatPlan.timedScenes.slice(0, PLANNER_MAX_SCENES);
+  const n = Math.min(scenes.length, timed.length);
+  for (let i = 0; i < n; i++) {
+    scenes[i].target_seconds = Number(timed[i].targetSeconds.toFixed(2));
+  }
+  renderSceneEditor(planState.storyboard);
+  onSceneChanged();
+  let msg = "applied beat timing to " + n + " scene" + (n === 1 ? "" : "s") + ".";
+  if (timed.length > scenes.length) {
+    msg += " plan has " + timed.length + " shots vs " + scenes.length
+        + " scenes; add/replan to use the rest.";
+  } else if (scenes.length > timed.length) {
+    msg += " " + (scenes.length - timed.length) + " trailing scene(s) left unchanged.";
+  }
+  setBeatStatus(msg, "success");
+}
+
 // ---------- Scene editor (v0.49.0) ----------
 //
 // Mutates planState.storyboard.scenes[i] in place; the bundle stage
@@ -3281,7 +3412,7 @@ function startStream() {
 
     const terminal = ["COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"];
     if (terminal.indexOf(data.status) >= 0) {
-      finalizeRender(data);
+      finalizeRenderPoll(data);
       maybeNotifyTerminal(data);
       closeStream();
       $("#planner-render-btn").disabled = false;
@@ -3341,7 +3472,7 @@ async function pollRender() {
 
   const terminal = ["COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"];
   if (terminal.indexOf(data.status) >= 0) {
-    finalizeRender(data);
+    finalizeRenderPoll(data);
     maybeNotifyTerminal(data);
     $("#planner-render-btn").disabled = false;
     return;
@@ -3511,7 +3642,7 @@ function hideProgressWidget() {
   savePersistedState();
 }
 
-function finalizeRender(data) {
+function finalizeRenderPoll(data) {
   const elapsed = data.executionTimeMs
     ? " · ran for " + formatDuration(data.executionTimeMs)
     : "";
@@ -5157,6 +5288,10 @@ document.addEventListener("DOMContentLoaded", () => {
   if (audioClear) audioClear.addEventListener("click", clearAudio);
   const snapBtn = $("#planner-snap-btn");
   if (snapBtn) snapBtn.addEventListener("click", snapAllScenes);
+  const analyzeBtn = $("#planner-analyze-beats");
+  if (analyzeBtn) analyzeBtn.addEventListener("click", analyzeBeats);
+  const beatApply = $("#planner-beat-apply");
+  if (beatApply) beatApply.addEventListener("click", applyBeatPlan);
   // v0.53.0: project picker + markers export.
   const projPick = $("#planner-project-picker");
   if (projPick) projPick.addEventListener("change", () => {

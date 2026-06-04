@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.135.2
+
+Fix blank "target seconds" boxes in the scene editor. The server populates
+`target_seconds` at plan/refine time (confirmed live: a fresh plan returns it on
+every path), but a storyboard that reaches the editor any other way -- restored
+from saved state, an older project planned before the v0.134.3 backfill shipped,
+or a model that omitted `clip_seconds`/`duration_seconds` -- renders straight
+from saved data with no backfill, so the boxes show empty. Added a client-side
+`backfillTargetSeconds` that mirrors the server's storyboard-validate priority
+(explicit start/end span, else `clip_seconds`, else an even split of
+`duration_seconds`) and runs in `renderSceneEditor` before the rows are built.
+Mutates the storyboard in place so the value persists and flows downstream to
+bundle/render, exactly like the server. No-op when `target_seconds` is already
+set, so fresh plans are unaffected.
+
+### Code
+- `public/planner.js`: add `backfillTargetSeconds(storyboard)`; call it at the
+  top of `renderSceneEditor`.
+- typecheck: `tsc --noEmit` clean. tests: `vitest run` 533 pass. `node --check`
+  on planner.js OK. (Client-only; no TS touched.)
+
 ## v0.135.1
 
 Fix the "bundle staged" panel showing "0 B gzipped, 0 files inside" after a page

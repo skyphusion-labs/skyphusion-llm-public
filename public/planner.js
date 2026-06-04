@@ -3157,6 +3157,37 @@ function buildSceneRow(scene, idx, useChars) {
   return li;
 }
 
+// v0.135.2: client-side mirror of the server's storyboard-validate backfill
+// (src/storyboard-validate.ts). The server populates target_seconds at
+// plan/refine time, but a storyboard that arrives any other way -- restored
+// from saved state, an older project planned before the backfill shipped, or a
+// model that omitted clip_seconds/duration -- renders straight to the scene
+// editor with no backfill and shows blank "target seconds" boxes. Run the same
+// priority here (explicit start/end span, else clip_seconds, else an even split
+// of duration_seconds) so the boxes are never unexpectedly empty. Mutates the
+// storyboard in place so the filled value persists + flows downstream to bundle
+// / render, matching the server. No-op when target_seconds is already set.
+function backfillTargetSeconds(storyboard) {
+  if (!storyboard || !Array.isArray(storyboard.scenes)) return;
+  const clip = storyboard.clip_seconds;
+  const dur = storyboard.duration_seconds;
+  const n = storyboard.scenes.length;
+  let perShot;
+  if (typeof clip === "number" && clip > 0) {
+    perShot = clip;
+  } else if (typeof dur === "number" && dur > 0 && n > 0) {
+    perShot = Math.round((dur / n) * 100) / 100;
+  }
+  for (const s of storyboard.scenes) {
+    if (typeof s.target_seconds === "number") continue;
+    if (typeof s.start === "number" && typeof s.end === "number" && s.end > s.start) {
+      s.target_seconds = Math.round((s.end - s.start) * 100) / 100;
+    } else if (perShot !== undefined) {
+      s.target_seconds = perShot;
+    }
+  }
+}
+
 function renderSceneEditor(storyboard) {
   const section = $("#planner-scenes");
   const list = $("#planner-scenes-list");
@@ -3166,6 +3197,7 @@ function renderSceneEditor(storyboard) {
     section.hidden = true;
     return;
   }
+  backfillTargetSeconds(storyboard);
   const useChars = Array.isArray(storyboard.use_characters) ? storyboard.use_characters : [];
   storyboard.scenes.forEach((scene, idx) => {
     list.appendChild(buildSceneRow(scene, idx, useChars));

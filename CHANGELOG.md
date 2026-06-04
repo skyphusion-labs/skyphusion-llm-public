@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.134.0
+
+"Script my plan" replaces the chat auto-fill. The v0.132.0 behavior dumped each
+raw "ask the model" reply straight into the brief, which is wrong: the brief
+should be a synthesized plan, not a transcript of turns. Removed the auto-fill
+(and the `briefFromChat` ownership flag and its clears) entirely. Added a
+"script my plan" button next to "new conversation" that takes the turn-by-turn
+conversation and asks the selected planning model (one-shot /api/chat, no
+conversation_id so it doesn't pollute the thread) to synthesize a single concise
+production brief -- setting/mood, length, key beats in order, characters and when
+they appear -- and drops that into the brief box, which the Plan step then feeds
+to the storyboard model. The user reviews/edits the brief before hitting plan.
+
+### Code
+- `public/planner.html`: `#planner-chat-script` ("script my plan") button in the
+  chat actions row.
+- `public/planner.js`: removed the sendChat auto-fill + `briefFromChat` (decl,
+  sendChat, clear-brief handler, brief input listener); added `scriptMyPlan()`
+  (summarize transcript -> brief) and its init wiring.
+- `package.json`: version 0.133.3 -> 0.134.0.
+
 ## v0.133.3
 
 Two frontend ergonomics tweaks. (1) The main chat composer now auto-grows to

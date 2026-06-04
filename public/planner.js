@@ -2407,11 +2407,6 @@ async function sendRefine() {
 // async music/video models only). Reuses the .planner-refine-* styling.
 
 let chatInflight = false;
-// v0.132.0: true while the brief textarea holds an auto-filled chat reply (and
-// the user hasn't manually edited it since). Lets sendChat refresh the brief on
-// later turns without clobbering a hand-written brief; the brief 'input'
-// listener clears it the moment the user types.
-let briefFromChat = false;
 
 function setChatStatus(text, kind) {
   const el = $("#planner-chat-status");
@@ -2509,23 +2504,81 @@ async function sendChat() {
   if (data && data.conversation_id) planState.chatConversationId = data.conversation_id;
   planState.chatHistory.push({ role: "assistant", content: reply || "(empty response)", ts: Date.now() });
   renderChatTurns();
-  // v0.132.0: auto-populate the brief with the model's reply so the user does
-  // not copy/paste. Non-destructive: only fill when the brief is empty or was
-  // itself last filled by chat (briefFromChat); a hand-edited brief is left
-  // alone. Programmatic value set does not fire 'input', so the flag stays set.
-  const briefEl = $("#planner-brief");
-  if (briefEl && reply && (!briefEl.value.trim() || briefFromChat)) {
-    briefEl.value = reply;
-    briefFromChat = true;
-    setChatStatus("reply copied into the brief", "success");
-  } else {
-    setChatStatus("", "");
-  }
+  setChatStatus("", "");
   persistSoon();
 
   chatInflight = false;
   $("#planner-chat-send").disabled = false;
   input.focus();
+}
+
+// v0.134.0: "script my plan" -- synthesize the brainstorm chat into a single
+// production brief and drop it in the brief box (which the Plan step then feeds
+// to the storyboard model). Replaces the old v0.132.0 auto-fill that dumped raw
+// per-turn replies into the brief. Summarizes via a one-shot /api/chat on the
+// selected planning model with NO conversation_id (so it does not pollute the
+// chat thread), passing the whole transcript as context.
+async function scriptMyPlan() {
+  if (chatInflight) return;
+  const turns = planState.chatHistory || [];
+  if (!turns.length) {
+    setChatStatus("chat with the model first, then script the plan", "error");
+    return;
+  }
+  const modelEl = $("#planner-model");
+  const model = modelEl ? modelEl.value : "";
+  if (!model) {
+    setChatStatus("pick a planning model above", "error");
+    return;
+  }
+  const transcript = turns
+    .map((t) => (t.role === "user" ? "User: " : "Assistant: ") + (t.content || ""))
+    .join("\n\n");
+  const instruction =
+    "The following is a brainstorming conversation between a user and you about a short film. "
+    + "Synthesize it into a single concise production brief for a storyboard planner: the setting "
+    + "and mood, the approximate length, the key beats in order, and which characters appear and when. "
+    + "Write the brief itself in plain prose with no preamble (do not say 'here is' or address the user).\n\n"
+    + "Conversation:\n\n" + transcript;
+
+  chatInflight = true;
+  const btn = $("#planner-chat-script");
+  if (btn) btn.disabled = true;
+  setChatStatus("scripting your plan...", "loading");
+
+  let resp;
+  let data;
+  try {
+    resp = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model, user_input: instruction }),
+    });
+    data = await resp.json();
+  } catch (err) {
+    setChatStatus("network error: " + err.message, "error");
+    chatInflight = false;
+    if (btn) btn.disabled = false;
+    return;
+  }
+
+  if (!resp.ok || !data || typeof data.output !== "string" || !data.output.trim()) {
+    const msg = data && data.error ? data.error : "HTTP " + (resp ? resp.status : "?");
+    setChatStatus("could not script the plan (" + msg + ")", "error");
+    chatInflight = false;
+    if (btn) btn.disabled = false;
+    return;
+  }
+
+  const briefEl = $("#planner-brief");
+  if (briefEl) {
+    briefEl.value = data.output.trim();
+    persistSoon();
+    briefEl.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+  setChatStatus("plan scripted into the brief; review it, then hit plan", "success");
+  chatInflight = false;
+  if (btn) btn.disabled = false;
 }
 
 // ---------- Audio bed + beat timing (v0.51.0) ----------
@@ -6247,6 +6300,8 @@ document.addEventListener("DOMContentLoaded", () => {
   if (chatSend) chatSend.addEventListener("click", sendChat);
   const chatClear = $("#planner-chat-clear");
   if (chatClear) chatClear.addEventListener("click", clearChat);
+  const chatScript = $("#planner-chat-script");
+  if (chatScript) chatScript.addEventListener("click", scriptMyPlan);
   // v0.133.3: red "clear brief" button (lives on the cast field header, far
   // right). Wipes the brief box and persists the empty state.
   const briefClear = $("#planner-brief-clear");
@@ -6255,8 +6310,6 @@ document.addEventListener("DOMContentLoaded", () => {
       const briefEl = $("#planner-brief");
       if (!briefEl) return;
       briefEl.value = "";
-      // A manual clear takes ownership of the brief (see sendChat / briefFromChat).
-      briefFromChat = false;
       persistSoon();
       briefEl.focus();
     });
@@ -6340,12 +6393,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // v0.38.0: persist on brief / model picker change so the planner's
   // long-form input survives a tab close. Cast field listeners are
   // wired in renderCast().
-  $("#planner-brief").addEventListener("input", () => {
-    // v0.132.0: a manual edit takes ownership of the brief, so chat replies
-    // stop auto-overwriting it (see sendChat / briefFromChat).
-    briefFromChat = false;
-    persistSoon();
-  });
+  $("#planner-brief").addEventListener("input", persistSoon);
   $("#planner-model").addEventListener("change", persistSoon);
   $("#planner-quality-tier").addEventListener("change", persistSoon);
   $("#planner-render-overrides").addEventListener("input", persistSoon);

@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.123.0
+
+Frontend (no worker change): planner render-step declutter, part 1 of 2 (render
+config tiering). The render step opened onto ~8 structured fields plus 16
+always-listed advanced accordions plus two raw-JSON textareas, all stacked. Now
+the default view is the five canonical knobs: quality tier + keyframes-only
+(already there) and a new always-visible common row of seed / lora scale /
+consistency. Everything else collapses into one "advanced settings" disclosure,
+and the two raw-JSON escape hatches (prompt templates + catch-all render
+overrides) move into a separate collapsed "expert: raw JSON" disclosure at the
+bottom so structured knobs aren't buried under free-form JSON. The
+`render_overrides` payload shape is identical: every control still feeds the
+same key and empty still means "use bundle default" (verified the render-section
+control-id set is byte-identical before/after). Part 2 will regroup the 16
+advanced accordions into ~6 domain groups and de-duplicate the redundant copies.
+
+### Code
+- `public/planner.html`: render step restructured into common row +
+  `advanced settings` + `expert: raw JSON`; `#planner-seed` / `#planner-lora-scale`
+  / `#planner-consistency` lifted into `.planner-overrides-common`;
+  `#planner-pt-json` + `#planner-render-overrides` moved into `.planner-overrides-expert`.
+- `public/styles.css`: `.planner-overrides-common` grid + `.planner-overrides-expert`
+  block styling; expert textareas added to the full-width textarea rule.
+- `public/planner.js`: restore + rerun-from-history now open the `expert`
+  disclosure (not `advanced`) for carried-forward raw overrides; no serializer
+  change (`collectOverrideBlocks` / `buildRenderOverrides` untouched).
+- `package.json`: version 0.122.7 -> 0.123.0.
+
 ## v0.122.7
 
 Frontend (no worker change): Vivijure-brand the studio shell. The planner + cast

@@ -599,10 +599,11 @@ function restoreRenderStagePanel(saved) {
   if (typeof saved.renderOverridesText === "string") {
     $("#planner-render-overrides").value = saved.renderOverridesText;
     if (saved.renderOverridesText.trim().length > 0) {
-      const details = $(".planner-overrides-details");
-      if (details) details.open = true;
-      const rawDetails = $(".planner-overrides-raw-details");
-      if (rawDetails) rawDetails.open = true;
+      // v0.123.0: the raw-overrides textarea now lives in the "expert: raw
+      // JSON" disclosure (was nested in "advanced settings"); open that one
+      // so restored raw text is visible on reload.
+      const expert = $(".planner-overrides-expert");
+      if (expert) expert.open = true;
     }
   }
   // v0.40.0: restore the keyframes-only checkbox.
@@ -4906,7 +4907,10 @@ function rerunBundle(row) {
   // present, open the <details> wrapper so the user sees we are carrying
   // them forward (else they would think "no overrides" by default).
   const overridesTextarea = $("#planner-render-overrides");
-  const overridesDetails = $(".planner-overrides-details");
+  // v0.123.0: the raw-overrides textarea moved into "expert: raw JSON"; open
+  // that disclosure (not "advanced settings") so a carried-forward override
+  // is visible.
+  const overridesDetails = $(".planner-overrides-expert");
   if (overridesTextarea) {
     if (
       row.render_overrides

@@ -329,42 +329,44 @@
         <input id="planner-keyframes-only" type="checkbox" />
         <span>render keyframes only (preview before generating motion)</span>
       </label>
-      <!-- v0.35.3 + v0.43.0: render settings panel. Structured fields up
-           top (seed, adetailer, lora scale, consistency mode), raw JSON
-           textarea at the bottom as the power-user escape hatch. Any
-           field left empty / "default" is omitted from render_overrides
-           so the bundle's own defaults win; an explicit value (or any
-           value in the textarea) overrides. Textarea values win on key
-           conflict with the structured fields. -->
+      <!-- v0.123.0: Phase 2 tiering. The five most-touched render knobs
+           (quality tier + keyframes-only above; seed / lora scale /
+           consistency here) sit in an always-visible common row. Every
+           other knob lives in "advanced settings" below, and the two
+           raw-JSON escape hatches move to "expert" at the bottom. The
+           render_overrides payload shape is unchanged: each control still
+           feeds the same key, empty still means "use bundle default". -->
+      <div class="planner-overrides-common">
+        <label class="planner-field">
+          <span>seed</span>
+          <div class="planner-overrides-row">
+            <input id="planner-seed" type="number" inputmode="numeric" placeholder="(random per render)" />
+            <button id="planner-seed-randomize" type="button" class="planner-overrides-secondary">randomize</button>
+          </div>
+        </label>
+        <label class="planner-field">
+          <span>lora scale (character identity strength; typical 0.6 to 1.0)</span>
+          <input id="planner-lora-scale" type="number" step="0.05" min="0" max="1.5" placeholder="0.85 (GPU default)" />
+        </label>
+        <label class="planner-field">
+          <span>consistency mode</span>
+          <select id="planner-consistency">
+            <option value="">(use bundle default)</option>
+            <option value="off">off</option>
+            <option value="standard">standard</option>
+            <option value="strict">strict (locked seed + identity lock + anatomy guards)</option>
+          </select>
+        </label>
+      </div>
       <details class="planner-overrides-details">
-        <summary class="planner-overrides-summary">render settings (advanced, optional)</summary>
+        <summary class="planner-overrides-summary">advanced settings (optional)</summary>
         <div class="planner-overrides-fields">
-          <label class="planner-field">
-            <span>seed</span>
-            <div class="planner-overrides-row">
-              <input id="planner-seed" type="number" inputmode="numeric" placeholder="(random per render)" />
-              <button id="planner-seed-randomize" type="button" class="planner-overrides-secondary">randomize</button>
-            </div>
-          </label>
           <label class="planner-field">
             <span>adetailer face fix on keyframes</span>
             <select id="planner-adetailer">
               <option value="">(use bundle default)</option>
               <option value="on">on</option>
               <option value="off">off</option>
-            </select>
-          </label>
-          <label class="planner-field">
-            <span>lora scale (character identity strength; typical 0.6 to 1.0)</span>
-            <input id="planner-lora-scale" type="number" step="0.05" min="0" max="1.5" placeholder="0.85 (GPU default)" />
-          </label>
-          <label class="planner-field">
-            <span>consistency mode</span>
-            <select id="planner-consistency">
-              <option value="">(use bundle default)</option>
-              <option value="off">off</option>
-              <option value="standard">standard</option>
-              <option value="strict">strict (locked seed + identity lock + anatomy guards)</option>
             </select>
           </label>
           <!-- v0.59.0: named knobs migrated from the legacy studio_api
@@ -1313,13 +1315,16 @@
             the SDXL profile when style_category="None".
           </p>
         </details>
-        <!-- v0.86.0: prompt_templates overrides (vivijure-serverless
-             0.4.49+ prompt_engine.set_template_overrides + hand_fix.
-             set_prompt_overrides). Raw JSON because the shape is a mix
-             of flat strings, a list (framing_hints), and a string-keyed
-             map (act_mood); the route + pod re-validate structure. -->
-        <details class="planner-overrides-raw-details">
-          <summary class="planner-overrides-summary">prompt templates (advanced, JSON)</summary>
+      </details>
+
+      <!-- v0.123.0: expert escape hatches. Two raw-JSON textareas pulled out
+           of "advanced settings" so the structured knobs aren't buried under
+           free-form JSON. prompt_templates_overrides + the catch-all
+           render_overrides JSON (the latter still wins on key conflict). -->
+      <details class="planner-overrides-details planner-overrides-expert">
+        <summary class="planner-overrides-summary">expert: raw JSON</summary>
+        <div class="planner-overrides-expert-block">
+          <span class="planner-overrides-expert-label">prompt templates (JSON)</span>
           <textarea id="planner-pt-json" rows="8" placeholder='{"anatomy_positive_base": "masterpiece, ...", "framing_hints": ["wide shot", "close-up"], "act_mood": {"Climax": "tense, high stakes"}}' spellcheck="false"></textarea>
           <p class="planner-overrides-hint">
             optional JSON object of the <code>prompt_templates</code> shape:
@@ -1331,9 +1336,9 @@
             map). forwarded as <code>prompt_templates_overrides</code>. malformed
             JSON is ignored. leave empty for the pod defaults.
           </p>
-        </details>
-        <details class="planner-overrides-raw-details">
-          <summary class="planner-overrides-summary">raw JSON overrides (wins on conflict)</summary>
+        </div>
+        <div class="planner-overrides-expert-block">
+          <span class="planner-overrides-expert-label">raw JSON overrides (wins on conflict)</span>
           <textarea id="planner-render-overrides" rows="3" placeholder='{"wan_inference_steps": 12, "wan_num_frames": 33}' spellcheck="false"></textarea>
           <p class="planner-overrides-hint">
             optional JSON object merged into the render payload sent to the GPU
@@ -1343,7 +1348,7 @@
             <code>wan_inference_steps</code> (int), <code>wan_num_frames</code> (int),
             <code>style_prefix</code> (string). leave empty for no extra overrides.
           </p>
-        </details>
+        </div>
       </details>
       <div class="planner-actions">
         <button id="planner-render-btn" type="button" class="planner-primary">render</button>

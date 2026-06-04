@@ -2305,6 +2305,7 @@ textarea:focus {
    #planner-render-overrides was styled, so #planner-pt-json fell back to the
    browser's narrow default-cols width. */
 .planner-overrides-raw-details textarea,
+.planner-overrides-expert textarea,
 #planner-render-overrides {
   width: 100%;
   min-height: 7rem;
@@ -2317,6 +2318,31 @@ textarea:focus {
   font-size: 12px;
   line-height: 1.5;
   resize: vertical;
+}
+
+/* v0.123.0: Phase 2 tiering. Always-visible common row of the 3 canonical
+   render knobs (seed / lora scale / consistency), sitting above the
+   collapsed "advanced settings" + "expert: raw JSON" disclosures. */
+.planner-overrides-common {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  margin: 4px 0 14px;
+  padding: 14px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.planner-overrides-common .planner-field { margin: 0; }
+
+.planner-overrides-expert { margin-top: 10px; }
+.planner-overrides-expert-block { margin-bottom: 16px; }
+.planner-overrides-expert-block:last-child { margin-bottom: 0; }
+.planner-overrides-expert-label {
+  display: block;
+  font-size: 12px;
+  color: var(--fg-dim);
+  margin-bottom: 6px;
 }
 
 .planner-overrides-hint {

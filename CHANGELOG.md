@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.134.2
+
+Stop the bundle stage showing a misleading "0 B" for cast-pulled reference rows.
+When a bound cast member's reference set is synthesized into the per-slot upload
+list (`synthesizeUploadsFromCast`) or rehydrated from staged R2 keys after a tab
+close, the rows carry no client-side byte size -- refs are persisted as
+`{key, mime}` only -- so every row rendered `formatBytes(0)` = "0 B", which reads
+as an empty/broken file even though the R2 objects are full-size (verified: a
+1.3 MB portrait + 11 refs at ~0.3-0.5 MB each). Now a row with an unknown size
+renders no size text (its "staged" status already conveys state), and the
+per-slot summary omits the "· 0 B" total when it is zero. Inline uploads, which
+do know their `file.size`, still show real sizes. Cosmetic only; the bundle was
+always assembled by key, so the GPU got the real images regardless.
+
+### Code
+- `public/planner.js`: `renderSlotUploads` row size renders `""` when
+  `entry.size` is falsy; per-slot summary appends the byte total only when > 0.
+- `package.json`: version 0.134.1 -> 0.134.2.
+
 ## v0.134.1
 
 Fix the planner page scrolling sideways once a plan produces long YAML/JSON.

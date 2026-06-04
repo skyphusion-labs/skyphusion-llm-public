@@ -3604,7 +3604,10 @@ function renderSlotList(slot) {
 
     const size = document.createElement("span");
     size.className = "planner-slot-size";
-    size.textContent = formatBytes(entry.size);
+    // v0.134.2: cast-pulled / reloaded rows carry no client-side byte size
+    // (refs are stored as {key, mime}), so don't render a misleading "0 B" that
+    // reads as an empty file. Inline uploads still show their real size.
+    size.textContent = entry.size ? formatBytes(entry.size) : "";
     li.appendChild(size);
 
     const status = document.createElement("span");
@@ -3630,7 +3633,7 @@ function renderSlotList(slot) {
     bundleState.perSlotUploads[slot].length
       + " selected, " + staged + " staged"
       + (errored ? ", " + errored + " failed" : "")
-      + " · " + formatBytes(total);
+      + (total ? " · " + formatBytes(total) : "");
 }
 
 async function bundleNow() {

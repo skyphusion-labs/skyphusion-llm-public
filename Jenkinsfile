@@ -72,22 +72,11 @@ pipeline {
     }
 
     stage('Deploy') {
+      // Auto-deploy: every green build on `main` ships to production. CI must pass
+      // first (a failing typecheck or test never reaches this stage), so there is
+      // no manual approval gate. PR/branch builds are excluded by the `when` below.
       when {
         branch 'main'
-        // Evaluate this guard BEFORE the input prompt; otherwise Jenkins prompts
-        // for deploy approval on every branch/PR build (input runs before when by
-        // default) and only skips the deploy steps after you approve.
-        beforeInput true
-      }
-      // Manual gate: a human must click "Deploy" before production ships.
-      // The 30-min timeout means an unattended build won't sit forever holding
-      // the executor; it aborts the stage instead (build marked ABORTED, not FAILED).
-      options {
-        timeout(time: 30, unit: 'MINUTES')
-      }
-      input {
-        message 'Deploy this commit to production?'
-        ok 'Deploy'
       }
       environment {
         CLOUDFLARE_API_TOKEN = credentials('CLOUDFLARE_API_TOKEN')

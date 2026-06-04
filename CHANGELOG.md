@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.133.2
+
+Visible "back to storyboard planner" link on the cast screen. The cast page
+already linked to /planner.html via the topbar Vivijure brand and an account-
+popover item, but neither reads as "go back," so users got stranded on cast.
+Added an explicit `&#8592; back to storyboard planner` link in the cast header
+(right side of the title row). HTML + CSS only.
+
+### Code
+- `public/cast.html`: back link in `.cast-header`.
+- `public/styles.css`: `.cast-back-link` style.
+- `package.json`: version 0.133.1 -> 0.133.2.
+
 ## v0.133.1
 
 Extend the v0.133.0 picker treatment to the other model-id override fields. The

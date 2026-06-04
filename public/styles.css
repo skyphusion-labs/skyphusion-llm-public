@@ -3223,6 +3223,16 @@ textarea:focus {
   text-transform: lowercase;
 }
 
+/* v0.133.2: visible "back to planner" link in the cast header */
+.cast-back-link {
+  align-self: center;
+  font-size: 13px;
+  color: var(--accent);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.cast-back-link:hover { text-decoration: underline; }
+
 .cast-header-nav {
   display: flex;
   gap: 16px;

@@ -2540,6 +2540,114 @@ textarea:focus {
   font-size: 12px;
 }
 
+/* v0.127.0: render-history organization (folders + tags). */
+.planner-history-facets {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+.planner-history-folder-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg-dim);
+}
+.planner-history-folder-filter select {
+  background: var(--bg-elev);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 12px;
+}
+.planner-history-tagfilter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.planner-history-tagfilter-label { color: var(--fg-dim); }
+.planner-history-tagpill,
+.planner-history-rowtag {
+  border: 1px solid var(--border);
+  background: var(--bg-elev2);
+  color: var(--fg-dim);
+  border-radius: var(--radius-pill);
+  padding: 2px 10px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.planner-history-tagpill:hover,
+.planner-history-rowtag:hover { color: var(--fg); border-color: var(--accent); }
+.planner-history-tagpill.is-active,
+.planner-history-rowtag.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+
+/* row-level folder chip + tag pills in the meta bar */
+.planner-history-folder-chip {
+  font-size: 11px;
+  color: var(--accent-cyan);
+  background: var(--bg-elev2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 1px 9px;
+}
+.planner-history-rowtag { padding: 1px 9px; }
+
+/* expanded-row folder + tags editor */
+.planner-history-organize {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  align-items: flex-end;
+  margin: 8px 0 2px;
+}
+.planner-history-org-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--fg-dim);
+  flex: 1 1 200px;
+}
+.planner-history-org-input {
+  background: var(--bg-elev);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 9px;
+  font: inherit;
+  font-size: 12px;
+}
+.planner-history-org-input:focus { outline: none; border-color: var(--accent); }
+.planner-history-org-suggest {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.planner-history-org-suggest-pill {
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--fg-dim);
+  border-radius: var(--radius-pill);
+  padding: 2px 9px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.planner-history-org-suggest-pill:hover { color: var(--accent); border-color: var(--accent); }
+
 #planner-history-search {
   background: var(--bg-elev);
   color: var(--fg);
@@ -2684,6 +2792,7 @@ textarea:focus {
    The meta bar stays visible and clickable; chevron + inline label
    preview tell the user what they would see if they expanded. */
 .planner-history-item-collapsed .planner-history-label-input,
+.planner-history-item-collapsed .planner-history-organize,
 .planner-history-item-collapsed .planner-history-sub,
 .planner-history-item-collapsed .planner-history-actions,
 .planner-history-item-collapsed .planner-history-keyframes {

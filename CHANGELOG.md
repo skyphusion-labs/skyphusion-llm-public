@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.127.0
+
+Render-history organization, frontend half (Phase 3b, completes Phase 3 and the
+planner modernization). The History step gains folders, tags, and richer search
+over the v0.126.0 backend:
+- **Filter bar**: a folder `<select>` (all / unfiled / each folder present) and
+  a row of clickable tag pills (AND filter: a row must carry every selected
+  tag), both derived from the loaded rows. The existing text search now also
+  matches folder path + tags.
+- **Per-row**: a folder chip + clickable tag pills in the meta bar (click a tag
+  to filter by it), and an expanded-row editor with a datalist-backed folder
+  input and a comma-separated tags input. Tag suggestions (from the user's full
+  tag set via `GET /api/storyboard/renders/tags`) appear as click-to-add pills.
+  Edits PATCH the row and update the list optimistically.
+
+Folder / tag filters are session-only (reset on reload); text + status filters
+persist as before. Frontend only; the v0.126.0 backend + D1 columns carry it.
+
+### Code
+- `public/planner.js`: `historyState.filters.folderPath` + `selectedTags` +
+  `historyState.allTags`; `fetchAllTags` / `historyFolders` / `historyRowTags` /
+  `rebuildHistoryFacets` / `toggleTagFilter` / `patchRenderOrganization` /
+  `buildHistoryOrganizeRow`; `filterRows` extended (folder + tags + search);
+  folder chip + tag pills + organize editor in `buildHistoryRow`; folder-select
+  listener in init.
+- `public/planner.html`: history facets row (folder select + tag-filter
+  container) + folder datalist; search placeholder updated.
+- `public/styles.css`: facet / tag-pill / folder-chip / organize-editor styles;
+  organize editor added to the collapsed-row hide set.
+- `package.json`: version 0.126.0 -> 0.127.0.
+
 ## v0.126.0
 
 Render-history organization, backend half (Phase 3a of the planner

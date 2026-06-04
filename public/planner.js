@@ -4056,6 +4056,9 @@ let historyRefreshTimer = null;
 // v0.37.1: client-side filter state over historyState.rows. text matches
 // project + label substring; status flags gate the three buckets. Default
 // is "everything visible" so a returning user sees all their renders.
+// v0.127.0: sentinel folder-filter value meaning "rows with no folder".
+const HISTORY_UNFILED = " unfiled";
+
 const historyState = {
   rows: [],
   filters: {
@@ -4063,7 +4066,15 @@ const historyState = {
     showInFlight: true,
     showDone: true,
     showFailed: true,
+    // v0.127.0: render-history organization filters (session-only). folderPath
+    // is "" (all) | HISTORY_UNFILED | an exact folder path; selectedTags is a
+    // set of tags a row must ALL carry to pass.
+    folderPath: "",
+    selectedTags: [],
   },
+  // v0.127.0: the user's full distinct tag set (from /renders/tags), for the
+  // tag-input autocomplete datalist. Refreshed on each history load.
+  allTags: [],
   // v0.38.1: per-session set of row ids the user has clicked to expand.
   // Default-collapsed lets the list stay scannable once history grows;
   // clicks toggle individual rows open without leaving the page.
@@ -4097,6 +4108,9 @@ async function loadHistory() {
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     const data = await resp.json();
     historyState.rows = data.renders || [];
+    // v0.127.0: refresh the full tag set for autocomplete (best-effort; a
+    // failure just leaves the datalist showing tags from the loaded rows).
+    fetchAllTags();
     applyHistoryFilters();
     maybeScheduleHistoryRefresh(historyState.rows);
   } catch (err) {
@@ -4115,8 +4129,258 @@ async function loadHistory() {
 // input listeners. No fetch fires when the user types or toggles a
 // checkbox; the row data is already in memory.
 function applyHistoryFilters() {
+  // v0.127.0: rebuild the folder + tag facets from the loaded rows before
+  // filtering so the controls reflect what is actually present.
+  rebuildHistoryFacets();
   const filtered = filterRows(historyState.rows, historyState.filters);
   renderHistoryList(filtered, historyState.rows.length);
+}
+
+// v0.127.0: fetch the user's full distinct tag set for the autocomplete
+// datalist. Best-effort: silent on failure, refreshes the datalist on success.
+async function fetchAllTags() {
+  try {
+    const resp = await fetch("/api/storyboard/renders/tags");
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (Array.isArray(data.tags)) {
+      const next = data.tags.filter((t) => typeof t === "string");
+      // Re-render only if the set actually changed, so the editor's
+      // suggestion pills pick up the full tag set once it arrives.
+      if (next.join(" ") !== historyState.allTags.join(" ")) {
+        historyState.allTags = next;
+        applyHistoryFilters();
+      }
+    }
+  } catch {
+    // leave suggestions as-is
+  }
+}
+
+// Distinct folders present in the loaded rows, sorted.
+function historyFolders() {
+  const set = new Set();
+  for (const r of historyState.rows) {
+    if (typeof r.folder_path === "string" && r.folder_path) set.add(r.folder_path);
+  }
+  return [...set].sort((a, b) => a.localeCompare(b));
+}
+
+// Distinct tags present in the loaded rows, most-frequent first.
+function historyRowTags() {
+  const counts = new Map();
+  for (const r of historyState.rows) {
+    if (!Array.isArray(r.tags)) continue;
+    for (const t of r.tags) counts.set(t, (counts.get(t) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([t]) => t);
+}
+
+// v0.127.0: rebuild the folder <select>, the folder datalist, and the tag-
+// filter pills from the loaded rows. Prunes any active folder / tag filter
+// whose value is no longer present so the controls never reference a vanished
+// facet. Called from applyHistoryFilters (before filtering).
+function rebuildHistoryFacets() {
+  const folders = historyFolders();
+  const sel = $("#planner-history-folder");
+  if (sel) {
+    const cur = historyState.filters.folderPath;
+    sel.innerHTML = "";
+    const add = (value, text) => {
+      const o = document.createElement("option");
+      o.value = value;
+      o.textContent = text;
+      sel.appendChild(o);
+    };
+    add("", "all folders");
+    add(HISTORY_UNFILED, "unfiled");
+    for (const f of folders) add(f, f);
+    if (cur && cur !== HISTORY_UNFILED && !folders.includes(cur)) {
+      historyState.filters.folderPath = "";
+    }
+    sel.value = historyState.filters.folderPath;
+  }
+
+  const fdl = $("#planner-history-folder-list");
+  if (fdl) {
+    fdl.innerHTML = "";
+    for (const f of folders) {
+      const o = document.createElement("option");
+      o.value = f;
+      fdl.appendChild(o);
+    }
+  }
+
+  const tagWrap = $("#planner-history-tagfilter");
+  if (tagWrap) {
+    const tags = historyRowTags();
+    historyState.filters.selectedTags = historyState.filters.selectedTags.filter(
+      (t) => tags.includes(t),
+    );
+    tagWrap.innerHTML = "";
+    if (tags.length > 0) {
+      const label = document.createElement("span");
+      label.className = "planner-history-tagfilter-label";
+      label.textContent = "tags:";
+      tagWrap.appendChild(label);
+      for (const t of tags) {
+        const pill = document.createElement("button");
+        pill.type = "button";
+        pill.className = "planner-history-tagpill";
+        pill.textContent = t;
+        if (historyState.filters.selectedTags.includes(t)) {
+          pill.classList.add("is-active");
+        }
+        pill.addEventListener("click", () => toggleTagFilter(t));
+        tagWrap.appendChild(pill);
+      }
+    }
+  }
+}
+
+// Toggle a tag in the selectedTags filter and re-render.
+function toggleTagFilter(tag) {
+  const arr = historyState.filters.selectedTags;
+  const i = arr.indexOf(tag);
+  if (i >= 0) arr.splice(i, 1);
+  else arr.push(tag);
+  applyHistoryFilters();
+}
+
+// v0.127.0: PATCH folderPath and/or tags on a render row. Returns the parsed
+// response; throws on a non-2xx with the server's error message.
+async function patchRenderOrganization(row, body) {
+  const resp = await fetch(
+    "/api/storyboard/renders/" + encodeURIComponent(row.id),
+    {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!resp.ok) {
+    let msg = "HTTP " + resp.status;
+    try {
+      const d = await resp.json();
+      if (d && d.error) msg = d.error;
+    } catch {
+      // keep the HTTP code
+    }
+    throw new Error(msg);
+  }
+  return resp.json();
+}
+
+// v0.127.0: the expanded-row "organize" editor: a folder input (datalist-
+// backed) plus a comma-separated tags input with click-to-add suggestion
+// pills. Mirrors buildHistoryLabelInput's save-on-blur / Enter / Escape and
+// optimistic-local-update behavior.
+function buildHistoryOrganizeRow(row) {
+  const wrap = document.createElement("div");
+  wrap.className = "planner-history-organize";
+
+  // --- folder ---
+  const folderField = document.createElement("label");
+  folderField.className = "planner-history-org-field";
+  const folderLabel = document.createElement("span");
+  folderLabel.textContent = "folder";
+  const folderInput = document.createElement("input");
+  folderInput.type = "text";
+  folderInput.className = "planner-history-org-input";
+  folderInput.setAttribute("list", "planner-history-folder-list");
+  folderInput.placeholder = "e.g. clients/acme";
+  folderInput.maxLength = 200;
+  folderInput.spellcheck = false;
+  folderInput.value = row.folder_path || "";
+  let folderSaved = row.folder_path || "";
+  const saveFolder = async () => {
+    const next = folderInput.value.trim();
+    if (next === folderSaved) return;
+    try {
+      const data = await patchRenderOrganization(row, { folderPath: next || null });
+      folderSaved = data.folderPath || "";
+      folderInput.value = folderSaved;
+      row.folder_path = folderSaved || null;
+      applyHistoryFilters();
+    } catch (err) {
+      console.error("folder save failed:", err);
+      window.alert("folder save failed: " + err.message);
+      folderInput.value = folderSaved;
+    }
+  };
+  folderInput.addEventListener("blur", saveFolder);
+  folderInput.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") { ev.preventDefault(); folderInput.blur(); }
+    else if (ev.key === "Escape") { ev.preventDefault(); folderInput.value = folderSaved; folderInput.blur(); }
+  });
+  folderField.appendChild(folderLabel);
+  folderField.appendChild(folderInput);
+  wrap.appendChild(folderField);
+
+  // --- tags ---
+  const tagField = document.createElement("label");
+  tagField.className = "planner-history-org-field";
+  const tagLabel = document.createElement("span");
+  tagLabel.textContent = "tags";
+  const tagInput = document.createElement("input");
+  tagInput.type = "text";
+  tagInput.className = "planner-history-org-input";
+  tagInput.placeholder = "comma-separated, e.g. hero, final";
+  tagInput.spellcheck = false;
+  const tagsToStr = (arr) => (Array.isArray(arr) ? arr.join(", ") : "");
+  const parseTags = (s) =>
+    s.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean);
+  tagInput.value = tagsToStr(row.tags);
+  let tagsSaved = tagsToStr(row.tags);
+  const saveTags = async () => {
+    const parsed = parseTags(tagInput.value);
+    if (parsed.join(",") === parseTags(tagsSaved).join(",")) return;
+    try {
+      const data = await patchRenderOrganization(row, { tags: parsed });
+      row.tags = Array.isArray(data.tags) ? data.tags : [];
+      tagsSaved = tagsToStr(row.tags);
+      tagInput.value = tagsSaved;
+      applyHistoryFilters();
+    } catch (err) {
+      console.error("tags save failed:", err);
+      window.alert("tags save failed: " + err.message);
+      tagInput.value = tagsSaved;
+    }
+  };
+  tagInput.addEventListener("blur", saveTags);
+  tagInput.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") { ev.preventDefault(); tagInput.blur(); }
+    else if (ev.key === "Escape") { ev.preventDefault(); tagInput.value = tagsSaved; tagInput.blur(); }
+  });
+  tagField.appendChild(tagLabel);
+  tagField.appendChild(tagInput);
+  wrap.appendChild(tagField);
+
+  // suggestion pills: tags the user has used elsewhere that aren't on this row
+  const onRow = new Set(parseTags(tagInput.value));
+  const suggestions = historyState.allTags.filter((t) => !onRow.has(t));
+  if (suggestions.length > 0) {
+    const sugWrap = document.createElement("div");
+    sugWrap.className = "planner-history-org-suggest";
+    for (const t of suggestions.slice(0, 12)) {
+      const pill = document.createElement("button");
+      pill.type = "button";
+      pill.className = "planner-history-org-suggest-pill";
+      pill.textContent = "+ " + t;
+      pill.addEventListener("click", () => {
+        const cur = parseTags(tagInput.value);
+        if (!cur.includes(t)) cur.push(t);
+        tagInput.value = cur.join(", ");
+        saveTags();
+      });
+      sugWrap.appendChild(pill);
+    }
+    wrap.appendChild(sugWrap);
+  }
+
+  return wrap;
 }
 
 // Pure filter over rows + filter state. Status buckets:
@@ -4138,10 +4402,36 @@ function filterRows(rows, filters) {
     ) {
       if (!filters.showFailed) return false;
     }
+    // v0.127.0: folder filter. "" = all; HISTORY_UNFILED = rows with no
+    // folder; otherwise an exact folder-path match.
+    if (filters.folderPath) {
+      if (filters.folderPath === HISTORY_UNFILED) {
+        if (r.folder_path) return false;
+      } else if ((r.folder_path || "") !== filters.folderPath) {
+        return false;
+      }
+    }
+    // v0.127.0: tag filter. A row must carry EVERY selected tag (AND).
+    if (Array.isArray(filters.selectedTags) && filters.selectedTags.length > 0) {
+      const rowTags = Array.isArray(r.tags) ? r.tags : [];
+      for (const t of filters.selectedTags) {
+        if (!rowTags.includes(t)) return false;
+      }
+    }
     if (text) {
+      // v0.127.0: search now also matches folder path + any tag.
       const project = (r.project || "").toLowerCase();
       const label = (r.label || "").toLowerCase();
-      if (!project.includes(text) && !label.includes(text)) return false;
+      const folder = (r.folder_path || "").toLowerCase();
+      const tags = (Array.isArray(r.tags) ? r.tags.join(" ") : "").toLowerCase();
+      if (
+        !project.includes(text)
+        && !label.includes(text)
+        && !folder.includes(text)
+        && !tags.includes(text)
+      ) {
+        return false;
+      }
     }
     return true;
   });
@@ -4277,6 +4567,32 @@ function buildHistoryRow(r) {
     meta.appendChild(labelPreview);
   }
 
+  // v0.127.0: folder chip + tag pills in the meta bar (visible collapsed and
+  // expanded so the row stays scannable). Tag pills are clickable to filter by
+  // that tag; stopPropagation keeps the click from toggling the row's expand.
+  if (r.folder_path) {
+    const folderChip = document.createElement("span");
+    folderChip.className = "planner-history-folder-chip";
+    folderChip.textContent = r.folder_path;
+    folderChip.title = "folder: " + r.folder_path;
+    meta.appendChild(folderChip);
+  }
+  if (Array.isArray(r.tags) && r.tags.length > 0) {
+    for (const t of r.tags) {
+      const pill = document.createElement("button");
+      pill.type = "button";
+      pill.className = "planner-history-rowtag";
+      pill.textContent = t;
+      pill.title = "filter by tag: " + t;
+      if (historyState.filters.selectedTags.includes(t)) pill.classList.add("is-active");
+      pill.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        toggleTagFilter(t);
+      });
+      meta.appendChild(pill);
+    }
+  }
+
   // Click the meta bar to toggle expand. Action buttons sit outside meta
   // so their clicks never bubble here, and the editable label input lives
   // below the meta bar so clicks there do not collapse the row.
@@ -4294,6 +4610,10 @@ function buildHistoryRow(r) {
   // v0.36.0: inline-editable label. Empty -> placeholder "+ label". Save
   // on blur or Enter; Escape reverts. Failures alert and restore.
   li.appendChild(buildHistoryLabelInput(r));
+
+  // v0.127.0: folder + tags editor (shown when the row is expanded; CSS gates
+  // it the same as the label input + sub line + actions).
+  li.appendChild(buildHistoryOrganizeRow(r));
 
   const sub = document.createElement("div");
   sub.className = "planner-history-sub";
@@ -5654,6 +5974,15 @@ document.addEventListener("DOMContentLoaded", () => {
     applyHistoryFilters();
     savePersistedState();
   });
+  // v0.127.0: folder filter (session-only; not persisted). Tag filters are
+  // wired on the pills themselves in rebuildHistoryFacets.
+  const folderFilter = $("#planner-history-folder");
+  if (folderFilter) {
+    folderFilter.addEventListener("change", (ev) => {
+      historyState.filters.folderPath = ev.target.value;
+      applyHistoryFilters();
+    });
+  }
 
   // v0.35.2: pause auto-refresh while the tab is backgrounded; resume on
   // return with an immediate refresh so the list catches up after a long

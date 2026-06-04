@@ -1417,12 +1417,26 @@
            Text input matches project name + label substring; checkboxes gate
            status buckets. Filtering does not refetch. -->
       <div class="planner-history-filters">
-        <input id="planner-history-search" type="text" placeholder="search project or label" autocomplete="off" />
+        <input id="planner-history-search" type="text" placeholder="search project, label, folder, or tag" autocomplete="off" />
         <label class="planner-history-filter-check"><input type="checkbox" id="planner-filter-inflight" checked /> in-flight</label>
         <label class="planner-history-filter-check"><input type="checkbox" id="planner-filter-done" checked /> done</label>
         <label class="planner-history-filter-check"><input type="checkbox" id="planner-filter-failed" checked /> failed</label>
         <span id="planner-history-counter" class="planner-history-counter"></span>
       </div>
+      <!-- v0.127.0: render-history organization facets. The folder <select>
+           and tag pills are populated from the loaded rows in planner.js
+           (rebuildHistoryFacets); the folder datalist backs each row's
+           folder editor input. -->
+      <div class="planner-history-facets">
+        <label class="planner-history-folder-filter">
+          <span>folder</span>
+          <select id="planner-history-folder">
+            <option value="">all folders</option>
+          </select>
+        </label>
+        <div id="planner-history-tagfilter" class="planner-history-tagfilter"></div>
+      </div>
+      <datalist id="planner-history-folder-list"></datalist>
       <ul id="planner-history-list" class="planner-history-list"></ul>
     </section>
 

@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.131.1
+
+Reposition + restyle the v0.131.0 planner chat per feedback. The "ask the model"
+box now sits directly under the model picker (model -> chat -> brief -> cast)
+inside the plan form, instead of as a separate stage below the plan controls,
+and it reuses the main chat UI's send button (`.composer-send`, the gradient
+arrow) instead of a text "send". To make that button a real shared component,
+its CSS was de-scoped from `#run.composer-send` to `.composer-send` (the main
+chat's `#run` still carries the class, so it is visually unchanged). The chat
+input also now matches the main composer's keybinding: Enter sends, Shift+Enter
+inserts a newline (was Cmd/Ctrl+Enter). No backend change. tsc clean, tests pass.
+
+### Code
+- `public/planner.html`: move `#planner-chat` from a post-form `.planner-stage`
+  section to a `.planner-field` block between the model and brief fields; swap
+  the send button to `.composer-send` + the arrow SVG; new `.planner-chat-head`
+  label/status row.
+- `public/styles.css`: de-scope `#run.composer-send` -> `.composer-send` (5
+  rules) so the send button is reusable; add `.planner-chat-head`.
+- `public/planner.js`: chat input keybinding Enter-to-send / Shift+Enter newline.
+- `package.json`: version 0.131.0 -> 0.131.1.
+
 ## v0.131.0
 
 Freeform "ask the model" chat in the planner. The planner previously exposed the

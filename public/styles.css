@@ -4000,6 +4000,15 @@ textarea:focus {
   align-items: flex-start;
 }
 
+/* v0.131.0: header row for the freeform "ask the model" chat field (label on
+   the left, inline status on the right), mirroring .planner-stage-header. */
+.planner-chat-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .planner-refine-input {
   flex: 1;
   background: var(--bg-elev);
@@ -4583,17 +4592,17 @@ body::before {
 }
 /* id-level selector so it beats the legacy `#run` rules (which set padding +
    border-radius:4px + min-height:44px, making a de-centered rounded square). */
-#run.composer-send {
+.composer-send {
   width: 40px; height: 40px; min-height: 0; flex: 0 0 auto; padding: 0;
   border: 0; border-radius: 50%; margin-left: 0;
   background: var(--brand-grad); color: #0a0e1a;
   cursor: pointer; display: grid; place-items: center; box-shadow: var(--shadow-glow);
   transition: transform 0.12s ease, filter 0.15s ease, opacity 0.15s ease;
 }
-#run.composer-send svg { display: block; } /* no inline-baseline gap: arrow dead-center */
-#run.composer-send:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.08); }
-#run.composer-send:active:not(:disabled) { transform: translateY(0) scale(0.96); }
-#run.composer-send:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
+.composer-send svg { display: block; } /* no inline-baseline gap: arrow dead-center */
+.composer-send:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.08); }
+.composer-send:active:not(:disabled) { transform: translateY(0) scale(0.96); }
+.composer-send:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
 
 /* v0.118.0: voice-chat mic button (talk to the model, hear the reply) */
 .composer-mic {

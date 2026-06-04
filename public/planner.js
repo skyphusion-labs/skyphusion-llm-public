@@ -6200,8 +6200,9 @@ document.addEventListener("DOMContentLoaded", () => {
   if (chatClear) chatClear.addEventListener("click", clearChat);
   const chatInput = $("#planner-chat-input");
   if (chatInput) {
+    // Match the main chat composer: Enter sends, Shift+Enter inserts a newline.
     chatInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         sendChat();
       }

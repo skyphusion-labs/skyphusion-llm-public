@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.131.0
+
+Freeform "ask the model" chat in the planner. The planner previously exposed the
+planning model only through Plan (structured storyboard) and refine (which
+rewrites an existing storyboard); there was no way to just type a prompt and read
+the model's reply in that window. This adds a multi-turn chat thread to the
+planner, always visible and independent of any storyboard, that talks to the
+model selected in the brief's picker via the existing POST /api/chat. Memory is
+server-side: each turn passes conversation_id back so the worker replays prior
+turns from D1; the client keeps only a display log plus the id, persisted across
+tab closes at the top level of the planner stash (so it survives even before a
+storyboard is planned). Reuses the refine thread's styling and pattern. Backend
+unchanged (/api/chat already supported this). No em/en-dashes.
+
+### Code
+- `public/planner.html`: new `#planner-chat` section (turns list, input,
+  send + "new conversation" buttons) after the brief/plan controls; reuses
+  `.planner-refine-*` styling.
+- `public/planner.js`: `planState.chatHistory` + `chatConversationId`;
+  `sendChat` / `renderChatTurns` / `clearChat` / `setChatStatus` mirroring the
+  refine thread; top-level persist in the snapshot + storyboard-independent
+  restore in `restorePersistedState`; init wiring (click, Cmd/Ctrl+Enter,
+  new conversation). `node --check` clean.
+- `package.json`: version 0.130.0 -> 0.131.0.
+
 ## v0.130.0
 
 Populate the planner's per-option `?` help registry. The v0.124.0 affordance was

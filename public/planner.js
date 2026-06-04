@@ -461,6 +461,12 @@ const planState = {
   // v0.50.0: refinement chat history. Each entry is {role: "user"|"assistant",
   // content: string, ts: number}. Display-only; not replayed to the model.
   refineHistory: [],
+  // v0.131.0: freeform "ask the model" chat thread, independent of any
+  // storyboard. chatHistory is the display log ({role, content, ts}); the
+  // model's memory is server-side via chatConversationId, which we pass back
+  // to /api/chat each turn so the worker replays prior turns from D1.
+  chatHistory: [],
+  chatConversationId: null,
   // v0.51.0: audio bed + beat timing. audioKey is the R2 key (under
   // audio/ for BYO uploads or out/ for MiniMax-generated tracks
   // copied across buckets via the cast-style {from_chat_artifact}
@@ -552,6 +558,9 @@ function savePersistedState() {
       // is already a plain object (jobId, kfKey, shotId, rowId,
       // startedAt) so JSON.stringify round-trips it cleanly.
       regenJobs: collectRegenJobs(),
+      // v0.131.0: freeform planner chat. Top-level (not under planResult) so it
+      // survives a tab close even when no storyboard has been planned yet.
+      chat: { history: planState.chatHistory, conversationId: planState.chatConversationId },
       savedAt: Math.floor(Date.now() / 1000),
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
@@ -706,6 +715,13 @@ function restorePersistedState() {
 
   // Plan form fields. Model picker value is set later (after loadModels).
   if (stash.planForm) restorePlanForm(stash.planForm);
+
+  // v0.131.0: freeform chat thread restores independently of any storyboard
+  // (older stashes that predate the field fall back to an empty log).
+  planState.chatHistory = Array.isArray(stash.chat?.history) ? stash.chat.history : [];
+  planState.chatConversationId =
+    typeof stash.chat?.conversationId === "string" ? stash.chat.conversationId : null;
+  renderChatTurns();
 
   // Plan result panel (storyboard JSON + YAML side-by-side view).
   if (stash.planResult) restorePlanResultPanel(stash.planResult);
@@ -2373,6 +2389,122 @@ async function sendRefine() {
 
   refineInflight = false;
   $("#planner-refine-send").disabled = false;
+  input.focus();
+}
+
+// ---------- v0.131.0: freeform "ask the model" chat thread ----------
+//
+// Multi-turn freeform chat with the selected planning model, independent of
+// any storyboard. Each turn POSTs {model, user_input, conversation_id} to
+// /api/chat; the worker replays prior turns from that conversation_id, so the
+// model's memory lives server-side and the client keeps only a display log +
+// the id. The planning models are all chat-type, so /api/chat returns
+// synchronously with {output, conversation_id} (the pending shape is for
+// async music/video models only). Reuses the .planner-refine-* styling.
+
+let chatInflight = false;
+
+function setChatStatus(text, kind) {
+  const el = $("#planner-chat-status");
+  if (!el) return;
+  el.textContent = text || "";
+  el.className = "planner-status" + (kind ? " planner-" + kind : "");
+}
+
+function renderChatTurns() {
+  const list = $("#planner-chat-turns");
+  if (!list) return;
+  list.innerHTML = "";
+  for (const turn of planState.chatHistory || []) {
+    const li = document.createElement("li");
+    li.className = "planner-refine-turn planner-refine-turn-" + turn.role;
+    const role = document.createElement("span");
+    role.className = "planner-refine-role";
+    role.textContent = turn.role === "user" ? "you" : "assistant";
+    li.appendChild(role);
+    const body = document.createElement("div");
+    body.className = "planner-refine-body";
+    body.textContent = turn.content || "";
+    li.appendChild(body);
+    list.appendChild(li);
+  }
+  list.scrollTop = list.scrollHeight;
+}
+
+function clearChat() {
+  planState.chatHistory = [];
+  planState.chatConversationId = null;
+  renderChatTurns();
+  setChatStatus("new conversation", "");
+  persistSoon();
+}
+
+async function sendChat() {
+  if (chatInflight) return;
+  const input = $("#planner-chat-input");
+  const message = (input.value || "").trim();
+  if (!message) return;
+  const modelEl = $("#planner-model");
+  const model = modelEl ? modelEl.value : "";
+  if (!model) {
+    setChatStatus("pick a planning model in the brief above", "error");
+    return;
+  }
+
+  chatInflight = true;
+  $("#planner-chat-send").disabled = true;
+  setChatStatus("thinking...", "loading");
+
+  // Optimistically append the user turn so the log shows what was just sent.
+  planState.chatHistory.push({ role: "user", content: message, ts: Date.now() });
+  renderChatTurns();
+  input.value = "";
+  persistSoon();
+
+  let resp;
+  let data;
+  try {
+    resp = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model,
+        user_input: message,
+        // Continue the same server-side conversation when we have one.
+        conversation_id: planState.chatConversationId || undefined,
+      }),
+    });
+    data = await resp.json();
+  } catch (err) {
+    setChatStatus("network error: " + err.message, "error");
+    planState.chatHistory.push({ role: "assistant", content: "(network error: " + err.message + ")", ts: Date.now() });
+    renderChatTurns();
+    persistSoon();
+    chatInflight = false;
+    $("#planner-chat-send").disabled = false;
+    return;
+  }
+
+  if (!resp.ok) {
+    const msg = data && data.error ? data.error : "HTTP " + resp.status;
+    setChatStatus("error (" + resp.status + ")", "error");
+    planState.chatHistory.push({ role: "assistant", content: "(error " + resp.status + ": " + msg + ")", ts: Date.now() });
+    renderChatTurns();
+    persistSoon();
+    chatInflight = false;
+    $("#planner-chat-send").disabled = false;
+    return;
+  }
+
+  const reply = data && typeof data.output === "string" ? data.output : "";
+  if (data && data.conversation_id) planState.chatConversationId = data.conversation_id;
+  planState.chatHistory.push({ role: "assistant", content: reply || "(empty response)", ts: Date.now() });
+  renderChatTurns();
+  setChatStatus("", "");
+  persistSoon();
+
+  chatInflight = false;
+  $("#planner-chat-send").disabled = false;
   input.focus();
 }
 
@@ -6061,6 +6193,20 @@ document.addEventListener("DOMContentLoaded", () => {
   // v0.50.0: refinement chat send button + Cmd/Ctrl+Enter in the textarea.
   const refineSend = $("#planner-refine-send");
   if (refineSend) refineSend.addEventListener("click", sendRefine);
+  // v0.131.0: freeform chat send + new-conversation + Cmd/Ctrl+Enter.
+  const chatSend = $("#planner-chat-send");
+  if (chatSend) chatSend.addEventListener("click", sendChat);
+  const chatClear = $("#planner-chat-clear");
+  if (chatClear) chatClear.addEventListener("click", clearChat);
+  const chatInput = $("#planner-chat-input");
+  if (chatInput) {
+    chatInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        sendChat();
+      }
+    });
+  }
   const refineInput = $("#planner-refine-input");
   if (refineInput) {
     refineInput.addEventListener("keydown", (e) => {

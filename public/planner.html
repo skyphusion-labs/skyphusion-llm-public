@@ -109,6 +109,29 @@
       </div>
     </section>
 
+    <!-- v0.131.0: freeform "ask the model" chat. Multi-turn conversation with
+         the selected planning model, independent of any storyboard (always
+         visible, unlike refine which needs a plan first). Each turn POSTs
+         {model, user_input, conversation_id} to /api/chat; the model's memory
+         is server-side via conversation_id. Use it to brainstorm a brief or
+         sanity-check a premise before hitting plan. Reuses .planner-refine-*
+         styling for visual parity. -->
+    <section id="planner-chat" class="planner-stage" data-step="plan">
+      <header class="planner-stage-header">
+        <h2 class="planner-stage-title">ask the model</h2>
+        <span id="planner-chat-status" class="planner-status"></span>
+      </header>
+      <p class="planner-stage-hint">freeform multi-turn chat with the planning model selected above. not tied to a storyboard; use it to brainstorm a brief, test a premise, or ask how the model would structure a film before you hit plan.</p>
+      <ul id="planner-chat-turns" class="planner-refine-turns"></ul>
+      <div class="planner-refine-input-row">
+        <textarea id="planner-chat-input" class="planner-refine-input" rows="2" placeholder="ask anything... (Cmd/Ctrl+Enter to send)"></textarea>
+        <button id="planner-chat-send" type="button" class="planner-primary">send</button>
+      </div>
+      <div class="planner-actions">
+        <button id="planner-chat-clear" type="button" class="planner-secondary">new conversation</button>
+      </div>
+    </section>
+
     <section id="planner-output" class="planner-output" data-step="plan" hidden>
       <header class="planner-output-header">
         <span id="planner-output-meta"></span>

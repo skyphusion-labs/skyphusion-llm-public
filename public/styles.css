@@ -2300,8 +2300,14 @@ textarea:focus {
   font-size: 12px;
 }
 
+/* All raw-JSON textareas in the advanced panel (prompt templates + render
+   overrides) share the full-width monospace treatment. Previously only
+   #planner-render-overrides was styled, so #planner-pt-json fell back to the
+   browser's narrow default-cols width. */
+.planner-overrides-raw-details textarea,
 #planner-render-overrides {
   width: 100%;
+  min-height: 7rem;
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--border);
@@ -2309,6 +2315,7 @@ textarea:focus {
   padding: 8px;
   font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
   font-size: 12px;
+  line-height: 1.5;
   resize: vertical;
 }
 

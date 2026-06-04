@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.122.6
+
+Frontend fix (no worker change): expand the squished "prompt templates
+(advanced, JSON)" textarea in the planner's render step. Only
+`#planner-render-overrides` carried the full-width monospace treatment, so the
+sibling `#planner-pt-json` textarea fell back to the browser's narrow
+default-cols width and rendered as a tiny box. Generalize the rule to every raw-
+JSON textarea inside `.planner-overrides-raw-details` and give them a 7rem
+min-height; bump the prompt-templates default rows 4 -> 8.
+
+### Code
+- `public/styles.css`: `#planner-render-overrides` rule generalized to
+  `.planner-overrides-raw-details textarea` + `min-height: 7rem` + `line-height`.
+- `public/planner.html`: `#planner-pt-json` rows 4 -> 8.
+- `package.json`: version 0.122.5 -> 0.122.6.
+
 ## v0.122.5
 
 CI fix (Jenkins only, no worker change): make the `skyphusion-ci` deploy stage

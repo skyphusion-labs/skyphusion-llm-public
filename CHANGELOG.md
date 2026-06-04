@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.125.0
+
+Frontend (no worker change): planner render-step declutter, part 2 of 2 (the
+regroup). The 13 flat advanced sub-panels are now organized under six collapsed
+domain groups inside "advanced settings": identity & face / video & motion (Wan)
+/ image & SDXL / LoRA & training / continuity & timing / pipeline & production.
+The five structured quick-controls that stayed in advanced (adetailer, seed
+mode, multi-character, identity lock, face lock mode) are folded into the
+relevant group's top. De-duplication: removed the two block-level seed copies
+(`#planner-gen-seed`, `#planner-gen-seed-mode`) that the in-code SDXL-block
+comment documents as superseded by the canonical render_overrides seed /
+seed_mode; collapsed the duplicate chain-scenes control by removing
+`#planner-mv-chain-scenes` and re-pointing `buildMovieOverrides` at the
+surviving `#planner-vc-chain-scenes`, so one toggle still drives both
+`video_consistency.chain_scenes` and `movie.chain_scenes`.
+
+The `render_overrides` payload is unchanged except for the three intended
+de-dups: verified the render-section control-id set dropped exactly
+`{planner-gen-seed, planner-gen-seed-mode, planner-mv-chain-scenes}` and added
+nothing (168 -> 165). The regroup was done with a byte-preserving extract-and-
+reassemble pass (no panel markup retyped). The per-option "?" help affordance
+(v0.124.0) carries over automatically since it targets every `.planner-field`
+under "advanced settings".
+
+### Code
+- `public/planner.html`: 13 `.planner-overrides-raw-details` panels regrouped
+  under six `.planner-overrides-domain` disclosures; structured quick-controls
+  folded into identity & face / image & SDXL; 3 de-dup `<label>` blocks removed.
+- `public/planner.js`: `buildMovieOverrides` chain_scenes now reads
+  `#planner-vc-chain-scenes` (was `#planner-mv-chain-scenes`).
+- `public/styles.css`: `.planner-overrides-domain` group styling; sub-panel
+  border reset inside a domain.
+- `package.json`: version 0.124.0 -> 0.125.0.
+
 ## v0.124.0
 
 Frontend (no worker change): per-option help affordance on the planner render

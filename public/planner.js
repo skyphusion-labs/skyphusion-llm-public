@@ -997,7 +997,11 @@ function buildMovieOverrides() {
   if (Number.isInteger(ddm) && ddm >= 0 && ddm <= 120) out.default_duration_minutes = ddm;
   const cfs = parseFloat(($sel("#planner-mv-crossfade-seconds") || {}).value || "");
   if (Number.isFinite(cfs) && cfs >= 0 && cfs <= 5) out.crossfade_seconds = cfs;
-  const cs = ($sel("#planner-mv-chain-scenes") || {}).value;
+  // v0.125.0: the movie-block chain_scenes control was de-duplicated away;
+  // the surviving canonical chain-scenes control (#planner-vc-chain-scenes,
+  // also feeding video_consistency.chain_scenes) now drives movie.chain_scenes
+  // too, so one toggle still sets both blocks.
+  const cs = ($sel("#planner-vc-chain-scenes") || {}).value;
   if (cs === "true") out.chain_scenes = true;
   else if (cs === "false") out.chain_scenes = false;
   const wnf = parseFloat(($sel("#planner-mv-wan-num-frames") || {}).value || "");

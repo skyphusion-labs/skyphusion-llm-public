@@ -2300,6 +2300,35 @@ textarea:focus {
   font-size: 12px;
 }
 
+/* v0.125.0: Phase 2b domain groups. The 13 flat advanced sub-panels are
+   grouped under six domain disclosures (identity & face / video & motion /
+   image & SDXL / LoRA & training / continuity & timing / pipeline &
+   production). The domain header is the primary surface; the raw-details
+   sub-panels nest inside it. */
+.planner-overrides-domain {
+  margin-top: 10px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.planner-overrides-domain:first-of-type { margin-top: 4px; }
+.planner-overrides-domain > .planner-overrides-summary {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.planner-overrides-domain[open] > .planner-overrides-summary {
+  margin-bottom: 10px;
+}
+/* sub-panels inside a domain lose the top border (the domain card already
+   separates them) and indent slightly. */
+.planner-overrides-domain .planner-overrides-raw-details {
+  border-top: 0;
+  margin-top: 0;
+  padding-top: 4px;
+}
+
 /* All raw-JSON textareas in the advanced panel (prompt templates + render
    overrides) share the full-width monospace treatment. Previously only
    #planner-render-overrides was styled, so #planner-pt-json fell back to the

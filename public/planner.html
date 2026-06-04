@@ -19,16 +19,19 @@
        The page nav lives in the center; the signed-in user + page links sit
        in the account popover (wired by topbar.js, no app.js on this page). -->
   <header class="topbar">
-    <a class="brand" href="/" aria-label="skyphusion home">
+    <!-- Vivijure identity (this is its own product within the shared shell) -->
+    <a class="brand brand-vivijure" href="/planner.html" aria-label="Vivijure studio">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">Vivijure</span>
+    </a>
+    <span class="topbar-spacer"></span>
+    <!-- single branded link back to the skyphusion playground (matches the
+         modernized front-page brand). Cross-app nav (Cast / Voice) lives in
+         the account drawer, not as a duplicated top-nav row. -->
+    <a class="brand brand-home" href="/" aria-label="back to skyphusion" title="back to skyphusion">
       <span class="brand-mark" aria-hidden="true"></span>
       <span class="brand-name">skyphusion</span>
     </a>
-    <nav class="planner-nav" aria-label="primary">
-      <a href="/">Chat</a>
-      <a href="/planner.html" class="is-active">Vivijure</a>
-      <a href="/cast.html">Cast</a>
-      <a href="/stt.html">Voice</a>
-    </nav>
     <div class="account">
       <button id="account-toggle" type="button" class="icon-btn" aria-haspopup="true" aria-expanded="false" aria-label="Account &amp; tools">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg>
@@ -38,13 +41,9 @@
           <span class="account-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg></span>
           <span class="account-email" id="account-email">loading&#8230;</span>
         </button>
-        <a class="account-row account-link" href="/" role="menuitem">
-          <span class="account-name">Chat</span>
-          <span class="account-sub">35-model playground</span>
-        </a>
         <a class="account-row account-link" href="/cast.html" role="menuitem">
-          <span class="account-name">Cast</span>
-          <span class="account-sub">Character references</span>
+          <span class="account-name account-name-vivijure">Cast</span>
+          <span class="account-sub">Vivijure character references</span>
         </a>
         <a class="account-row account-link" href="/stt.html" role="menuitem">
           <span class="account-name">Voice</span>

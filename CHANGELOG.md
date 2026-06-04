@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.122.7
+
+Frontend (no worker change): Vivijure-brand the studio shell. The planner + cast
+pages now carry their own "Vivijure" wordmark on the left of the shared
+`.topbar`, with a single subdued "skyphusion" link on the right as the way back
+to the playground front page (matching the modernized front-page brand). The
+duplicated top-nav row (Chat / Vivijure / Cast / Voice) is gone; cross-app
+navigation (Storyboard planner / Cast / Voice) lives in the account drawer, so
+each destination has exactly one link. cast.html is migrated off the legacy
+`.wv-topbar` onto the same chrome as planner.html, and the now-unused
+`.wv-topbar` CSS block (105 lines) is deleted.
+
+### Code
+- `public/planner.html`: topbar reworked to Vivijure brand + single skyphusion
+  home link; account drawer trimmed to Cast + Voice (Chat link dropped, covered
+  by the skyphusion brand link).
+- `public/cast.html`: swapped `.wv-topbar` markup for the shared `.topbar` /
+  `.brand` / `.account-menu` chrome (Vivijure-branded), account drawer links to
+  planner + voice.
+- `public/styles.css`: added `.topbar-spacer` / `.brand-vivijure` / `.brand-home`;
+  removed the dead `.planner-nav` rules and the entire legacy `.wv-topbar` block.
+- `package.json`: version 0.122.6 -> 0.122.7.
+
 ## v0.122.6
 
 Frontend fix (no worker change): expand the squished "prompt templates

@@ -773,8 +773,20 @@
                 </select>
               </label>
               <label class="planner-field">
-                <span>keyframe SDXL model id (empty = auto-detect; turbo refused)</span>
-                <input id="planner-ld-keyframe-model-id" type="text" maxlength="256" placeholder="" />
+                <span>keyframe SDXL base (drives the rendered art style)</span>
+                <!-- v0.133.0: was a free-text model-id input (typo magnet + users
+                     could enter an un-primed id that fails offline). Now a picker
+                     of the SDXL keyframe bases primed on the volume (see the pod's
+                     build/serverless/prime.sh). Value flows to
+                     local_diffusion_overrides.keyframe_model_id; empty = the pod's
+                     baked default. Turbo is intentionally absent (it ignores
+                     negatives, so the pod refuses it as a keyframe base). -->
+                <select id="planner-ld-keyframe-model-id">
+                  <option value="">auto / pod default (photoreal, RealVisXL V5.0)</option>
+                  <option value="cagliostrolab/animagine-xl-4.0">anime (Animagine XL 4.0)</option>
+                  <option value="SG161222/RealVisXL_V5.0">photoreal (RealVisXL V5.0)</option>
+                  <option value="stabilityai/stable-diffusion-xl-base-1.0">neutral (SDXL base 1.0)</option>
+                </select>
               </label>
               <label class="planner-field">
                 <span>keyframe CFG (pod default 6.0)</span>

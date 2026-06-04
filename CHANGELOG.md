@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.133.0
+
+Keyframe SDXL base is now a picker, not a free-text model id. The advanced
+"keyframe SDXL model id" field was a text input, which is a typo magnet and let
+users enter an un-primed id that fails offline on the pod. Replaced with a
+`<select>` of the SDXL keyframe bases actually primed on the volume: auto / pod
+default (photoreal RealVisXL V5.0), anime (Animagine XL 4.0), photoreal
+(RealVisXL V5.0), neutral (SDXL base 1.0). Turbo is intentionally omitted (the
+pod refuses it as a keyframe base since it ignores negatives). This is the main
+art-style lever for a render: the chosen base renders each shot's SDXL keyframe,
+which Wan I2V then animates. No JS change needed -- collectLocalDiffusionOverrides
+already reads `.value`, which behaves identically for a select; empty value = no
+override = pod default. The `?` help entry was updated to describe the choices.
+
+### Code
+- `public/planner.html`: `#planner-ld-keyframe-model-id` input -> select with the
+  four primed-base options.
+- `public/planner.js`: FIELD_HELP[`planner-ld-keyframe-model-id`] rewritten for the
+  picker (popover still auto-derives the allowed values from the options).
+- `package.json`: version 0.132.2 -> 0.133.0.
+
 ## v0.132.2
 
 Cast image gen falls back to Nano Banana Pro when FLUX-2's safety checker keeps

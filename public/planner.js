@@ -234,7 +234,7 @@ const FIELD_HELP = {
   "planner-ld-device": { what: "Force the SDXL pipeline onto gpu or cpu." },
   "planner-ld-dtype": { what: "SDXL pipeline precision. float16 is fastest and lowest VRAM; bfloat16 and float32 use more." },
   "planner-ld-seq-cpu-offload": { what: "Sequentially offload SDXL to CPU while Wan runs. Helps fit both on roughly 24GB cards at a speed cost." },
-  "planner-ld-keyframe-model-id": { what: "Explicit CFG-capable SDXL model for the per-shot keyframe. Turbo is refused here because it ignores negatives. Empty auto-detects." },
+  "planner-ld-keyframe-model-id": { what: "The SDXL base used to render each shot's keyframe, and the single biggest driver of the rendered art style (Wan I2V then animates that frame, inheriting its look). Anime = Animagine XL 4.0; photoreal = RealVisXL V5.0; neutral = stock SDXL base 1.0. 'auto' uses the pod's baked default (photoreal). Only bases primed on the volume are offered; turbo is excluded because it ignores the negative prompt." },
   "planner-ld-keyframe-guidance-scale": { what: "CFG for the keyframe SDXL pass; needs greater than 1 for negative prompts to take effect." },
   "planner-ld-keyframe-steps": { what: "Inference steps for the keyframe SDXL pass." },
   "planner-gen-seed-per-shot-step": { what: "In sequential seed mode, how much the seed increments from one shot to the next." },

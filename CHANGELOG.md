@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.135.4
+
+Two render-page polish fixes. (1) Trim the "art style (keyframe SDXL base)" help
+popover: dropped the wordy paragraph contrasting it with the advanced img2img
+base and the turbo/volume-primed footnote -- that's reference-doc material, not a
+quick-tip tooltip. Kept the one-line "what it does" plus the per-option value
+map. (2) Fix the "randomize" button bleeding into the lora-scale field. The
+seed input + randomize button share a flex row that sits in a grid cell of the
+common-overrides box; without min-width:0 the input held its content width and
+the row overflowed the cell into the next column. Added min-width:0 to the row
+and input and pinned the button with flex:0 0 auto so the input absorbs the
+slack.
+
+### Code
+- `public/planner.js`: shorten FIELD_HELP for `planner-ld-keyframe-model-id`.
+- `public/styles.css`: `.planner-overrides-row` min-width:0; input min-width:0;
+  `.planner-overrides-secondary` flex:0 0 auto.
+- typecheck: `tsc --noEmit` clean. tests: `vitest run` 533 pass. `node --check`
+  on planner.js OK. (Client-only.)
+
 ## v0.135.3
 
 Fix the scene editor's "target seconds" boxes rendering dark-on-dark (invisible).

@@ -2299,10 +2299,20 @@ textarea:focus {
   display: flex;
   gap: 8px;
   align-items: center;
+  /* v0.135.4: this row is a grid cell in .planner-overrides-common; without
+     min-width:0 the flex contents keep their content width and overflow the
+     cell, so the randomize button bled into the next column (lora scale). */
+  min-width: 0;
 }
 
 .planner-overrides-row input[type="number"] {
   flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* The randomize button keeps its size; the seed input absorbs the slack. */
+.planner-overrides-row .planner-overrides-secondary {
+  flex: 0 0 auto;
 }
 
 .planner-overrides-secondary {

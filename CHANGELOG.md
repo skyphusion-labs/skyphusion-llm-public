@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.133.1
+
+Extend the v0.133.0 picker treatment to the other model-id override fields. The
+remaining free-text model-id inputs were typo magnets that also accepted
+un-primed ids (which fail offline on the pod), and the two Wan fields still had
+stale "Wan 2.1" placeholders even though 0.4.81 baked Wan 2.2. Converted to
+selects of the bases actually primed on the volume:
+- SDXL base (img2img / portrait path): auto / SDXL Turbo / Animagine / RealVisXL
+  / SDXL base 1.0 (turbo allowed here, unlike the keyframe base).
+- I2V model: auto / Wan 2.2 I2V A14B.
+- T2V model: auto / Wan 2.2 T2V A14B.
+Left the face-lock escape hatches (InstantID base/controlnet/adapter, IP-Adapter
+repo/subfolder/weight) as free text -- each has effectively one primed value and
+they are deliberate power-user overrides. No JS change: the collectors already
+read `.value`. FIELD_HELP entries for the three fields updated.
+
+### Code
+- `public/planner.html`: `#planner-wd-t2v-model-id`, `#planner-wd-i2v-model-id`,
+  `#planner-ld-model-id` inputs -> selects of primed bases (stale Wan 2.1
+  placeholders removed).
+- `public/planner.js`: FIELD_HELP for those three rewritten for the pickers.
+- `package.json`: version 0.133.0 -> 0.133.1.
+
 ## v0.133.0
 
 Keyframe SDXL base is now a picker, not a free-text model id. The advanced

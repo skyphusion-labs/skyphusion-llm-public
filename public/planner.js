@@ -211,8 +211,8 @@ const FIELD_HELP = {
   "planner-wan-num-frames": { what: "Frames Wan generates per shot. More means longer motion clips and slower renders. Tier-derived per shot by default; set this to force a value." },
   "planner-wan-inference-steps": { what: "Wan denoise steps per shot. Lower trades motion quality for speed." },
   "planner-wan-guidance-scale": { what: "Wan prompt adherence (CFG). Low is more creative motion, high is more literal to the prompt." },
-  "planner-wd-t2v-model-id": { what: "HuggingFace repo for the Wan text-to-video model, used when a shot has no start image." },
-  "planner-wd-i2v-model-id": { what: "HuggingFace repo for the Wan image-to-video model, used when a keyframe start image exists." },
+  "planner-wd-t2v-model-id": { what: "The Wan text-to-video base, used only for keyframe-less shots (no start image). Pod default is Wan 2.2 T2V A14B. Pick from the bases primed on the volume, or leave on auto." },
+  "planner-wd-i2v-model-id": { what: "The Wan image-to-video base that animates each SDXL keyframe -- the main motion model. Pod default is Wan 2.2 I2V A14B. Pick from the bases primed on the volume, or leave on auto." },
   "planner-wd-use-i2v": { what: "Use the image-to-video model when a shot has a start keyframe (recommended). false forces text-to-video even with a start image." },
   "planner-wd-num-frames": { what: "Base Wan frame count. The flat 'Wan num_frames' above wins when both are set." },
   "planner-wd-max-frames": { what: "Hard cap on Wan frames per shot." },
@@ -225,7 +225,7 @@ const FIELD_HELP = {
   "planner-wd-negative-prompt": { what: "Override the pod's default Wan negative prompt (it suppresses duplicates, deformities, and similar). Leave blank to keep the built-in negative." },
 
   // --- image & SDXL ---
-  "planner-ld-model-id": { what: "SDXL checkpoint used for the img2img path (portraits and chained scenes)." },
+  "planner-ld-model-id": { what: "The SDXL base for the img2img / portrait path -- NOT the per-shot keyframe (that is the keyframe SDXL base picker). Pod default sdxl-turbo. Turbo is allowed here since this path does not need CFG." },
   "planner-ld-resolution": { what: "SDXL base landscape resolution as WxH." },
   "planner-ld-portrait-resolution": { what: "SDXL portrait resolution as WxH, used for cast portrait generation." },
   "planner-ld-steps": { what: "SDXL base inference steps (turbo needs very few)." },

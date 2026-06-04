@@ -629,13 +629,23 @@
           <details class="planner-overrides-raw-details">
             <summary class="planner-overrides-summary">Wan diffusion model + inference (advanced)</summary>
             <div class="planner-overrides-fields">
+              <!-- v0.133.1: were free-text inputs with stale "Wan 2.1" placeholders;
+                   0.4.81 baked the Wan 2.2 A14B set. Now pickers of the primed Wan
+                   bases. Values flow to wan_diffusion_overrides.{t2v,i2v}_model_id;
+                   empty = pod default. -->
               <label class="planner-field">
-                <span>T2V model id (pod default Wan-AI/Wan2.1-T2V-1.3B-Diffusers)</span>
-                <input id="planner-wd-t2v-model-id" type="text" maxlength="256" placeholder="Wan-AI/Wan2.1-T2V-1.3B-Diffusers" />
+                <span>T2V model (text-to-video; used when a shot has no start image)</span>
+                <select id="planner-wd-t2v-model-id">
+                  <option value="">auto / pod default (Wan 2.2 T2V A14B)</option>
+                  <option value="Wan-AI/Wan2.2-T2V-A14B-Diffusers">Wan 2.2 T2V A14B</option>
+                </select>
               </label>
               <label class="planner-field">
-                <span>I2V model id (pod default Wan-AI/Wan2.1-I2V-14B-480P-Diffusers)</span>
-                <input id="planner-wd-i2v-model-id" type="text" maxlength="256" placeholder="Wan-AI/Wan2.1-I2V-14B-480P-Diffusers" />
+                <span>I2V model (image-to-video; animates the SDXL keyframe)</span>
+                <select id="planner-wd-i2v-model-id">
+                  <option value="">auto / pod default (Wan 2.2 I2V A14B)</option>
+                  <option value="Wan-AI/Wan2.2-I2V-A14B-Diffusers">Wan 2.2 I2V A14B</option>
+                </select>
               </label>
               <label class="planner-field">
                 <span>use I2V when start image present</span>
@@ -724,8 +734,18 @@
             <summary class="planner-overrides-summary">SDXL base + keyframe + seeds (advanced)</summary>
             <div class="planner-overrides-fields">
               <label class="planner-field">
-                <span>SDXL base model id (pod default stabilityai/sdxl-turbo)</span>
-                <input id="planner-ld-model-id" type="text" maxlength="256" placeholder="stabilityai/sdxl-turbo" />
+                <span>SDXL base (img2img / portrait path, NOT the keyframe)</span>
+                <!-- v0.133.1: was free text; now a picker of the primed SDXL bases.
+                     Unlike the keyframe base, turbo IS valid here (the img2img path
+                     doesn't need CFG). Value -> local_diffusion_overrides.model_id;
+                     empty = pod default (sdxl-turbo). -->
+                <select id="planner-ld-model-id">
+                  <option value="">auto / pod default (SDXL Turbo)</option>
+                  <option value="stabilityai/sdxl-turbo">SDXL Turbo (fast img2img)</option>
+                  <option value="cagliostrolab/animagine-xl-4.0">anime (Animagine XL 4.0)</option>
+                  <option value="SG161222/RealVisXL_V5.0">photoreal (RealVisXL V5.0)</option>
+                  <option value="stabilityai/stable-diffusion-xl-base-1.0">neutral (SDXL base 1.0)</option>
+                </select>
               </label>
               <label class="planner-field">
                 <span>SDXL base resolution (pod default 1920x1080)</span>

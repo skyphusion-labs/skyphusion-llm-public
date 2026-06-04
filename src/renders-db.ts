@@ -78,6 +78,12 @@ export interface RenderRow {
   // v0.55.0: optional FK to storyboard_projects(id). NULL when the
   // submit was not associated with any project.
   project_id: number | null;
+  // v0.126.0: render-history organization. folder_path is a free-form
+  // "/"-delimited path the user files the render under (null = unfiled);
+  // tags is a deduped, lowercased list. Both default to null / [] on
+  // legacy rows that predate the columns.
+  folder_path: string | null;
+  tags: string[];
 }
 
 function nowSeconds(): number {
@@ -286,6 +292,42 @@ export function normalizeLockedShots(raw: unknown): string[] {
   return out;
 }
 
+// v0.126.0: normalize a free-form folder path. Splits on "/", trims each
+// segment, drops empties (so leading / trailing / doubled slashes collapse),
+// rejoins, and caps length. Returns null for "unfiled" (empty / non-string).
+export function normalizeFolderPath(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const parts = raw
+    .split("/")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  if (parts.length === 0) return null;
+  const joined = parts.join("/");
+  return joined.length > 200 ? joined.slice(0, 200) : joined;
+}
+
+const MAX_TAGS = 24;
+const MAX_TAG_LEN = 40;
+
+// v0.126.0: normalize a tag list. Lowercase + trim each, drop empties, cap
+// each tag's length and the total count, dedupe (order-preserving). Mirrors
+// normalizeLockedShots; used on both the PATCH write path and the read path.
+export function normalizeTags(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "string") continue;
+    const tag = entry.trim().toLowerCase().slice(0, MAX_TAG_LEN);
+    if (!tag) continue;
+    if (seen.has(tag)) continue;
+    seen.add(tag);
+    out.push(tag);
+    if (out.length >= MAX_TAGS) break;
+  }
+  return out;
+}
+
 // Best-effort coerce `output.keyframes` from a job envelope into a
 // well-formed KeyframeRef[]. Anything that does not look like an
 // object with string `shot_id` + `key` is dropped silently; that
@@ -318,7 +360,7 @@ export async function getRenderByIdForUser(
       render_overrides, status, output_key, output_json AS output,
       error, execution_time_ms, delay_time_ms,
       submitted_at, updated_at, completed_at, label, keyframes_json, mode,
-      locked_shots_json
+      locked_shots_json, project_id, folder_path, tags_json
     FROM renders
     WHERE id = ? AND user_email = ?`,
   )
@@ -396,7 +438,7 @@ export async function listRendersForUser(
       render_overrides, status, output_key, output_json AS output,
       error, execution_time_ms, delay_time_ms,
       submitted_at, updated_at, completed_at, label, keyframes_json, mode,
-      locked_shots_json, project_id
+      locked_shots_json, project_id, folder_path, tags_json
     FROM renders`;
   const stmt = projectId !== null && projectId > 0
     ? env.DB.prepare(
@@ -514,6 +556,22 @@ function normalizeRow(r: Record<string, unknown>): RenderRow {
       r.project_id === null || r.project_id === undefined
         ? null
         : Number(r.project_id),
+    // v0.126.0: organization fields. folder_path is stored verbatim (already
+    // normalized on the write path); tags_json is a JSON array re-normalized
+    // on read so a hand-edited / corrupted row can never bloat a list.
+    folder_path:
+      typeof r.folder_path === "string" && r.folder_path.length > 0
+        ? r.folder_path
+        : null,
+    tags: (() => {
+      const tRaw = r.tags_json;
+      if (typeof tRaw !== "string" || tRaw.length === 0) return [];
+      try {
+        return normalizeTags(JSON.parse(tRaw));
+      } catch {
+        return [];
+      }
+    })(),
   };
 }
 
@@ -534,4 +592,68 @@ export async function setRenderLockedShots(
     .run();
   const changes = (result.meta as { changes?: number } | undefined)?.changes ?? 0;
   return changes > 0;
+}
+
+// v0.126.0: PATCH the folder_path on a row, scoped to user_email. null / ''
+// clears it (unfiled). Same return-bool semantics as setRenderLabel.
+export async function setRenderFolder(
+  env: Env,
+  id: number,
+  userEmail: string,
+  folderPath: string | null,
+): Promise<boolean> {
+  const now = Math.floor(Date.now() / 1000);
+  const result = await env.DB.prepare(
+    `UPDATE renders SET folder_path = ?, updated_at = ? WHERE id = ? AND user_email = ?`,
+  )
+    .bind(folderPath, now, id, userEmail)
+    .run();
+  const changes = (result.meta as { changes?: number } | undefined)?.changes ?? 0;
+  return changes > 0;
+}
+
+// v0.126.0: PATCH the tags on a row, scoped to user_email. An empty list
+// stores NULL (untagged). Same return-bool semantics as setRenderLabel.
+export async function setRenderTags(
+  env: Env,
+  id: number,
+  userEmail: string,
+  tags: string[],
+): Promise<boolean> {
+  const now = Math.floor(Date.now() / 1000);
+  const json = tags.length > 0 ? JSON.stringify(tags) : null;
+  const result = await env.DB.prepare(
+    `UPDATE renders SET tags_json = ?, updated_at = ? WHERE id = ? AND user_email = ?`,
+  )
+    .bind(json, now, id, userEmail)
+    .run();
+  const changes = (result.meta as { changes?: number } | undefined)?.changes ?? 0;
+  return changes > 0;
+}
+
+// v0.126.0: the distinct tags this user has applied across all their renders,
+// most-used first (then alphabetical), for the history tag-filter autocomplete.
+export async function listUserTags(env: Env, userEmail: string): Promise<string[]> {
+  const result = await env.DB.prepare(
+    `SELECT tags_json FROM renders WHERE user_email = ? AND tags_json IS NOT NULL`,
+  )
+    .bind(userEmail)
+    .all();
+  const rows = (result.results ?? []) as unknown as Array<{ tags_json: unknown }>;
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    if (typeof row.tags_json !== "string") continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(row.tags_json);
+    } catch {
+      continue;
+    }
+    for (const tag of normalizeTags(parsed)) {
+      counts.set(tag, (counts.get(tag) ?? 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([tag]) => tag);
 }

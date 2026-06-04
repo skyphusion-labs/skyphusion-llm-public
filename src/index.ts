@@ -95,11 +95,16 @@ import {
   getRenderByIdForUser,
   insertRender,
   listRendersForUser,
+  listUserTags,
   markFinishDone,
   markFinishFailed,
+  normalizeFolderPath,
   normalizeLockedShots,
+  normalizeTags,
+  setRenderFolder,
   setRenderLabel,
   setRenderLockedShots,
+  setRenderTags,
   updateRenderFromView,
 } from "./renders-db";
 import { callWorkersAIStream } from "./providers/workers-ai";
@@ -548,6 +553,11 @@ export default {
     // v0.34.0: list this user's render history (D1-backed; ownership via user_email).
     if (url.pathname === "/api/storyboard/renders" && request.method === "GET") {
       return handleRendersList(request, env);
+    }
+    // v0.126.0: distinct tags this user has applied, for the history tag-filter
+    // autocomplete. Static path, so it is matched before the /renders/<id> regex.
+    if (url.pathname === "/api/storyboard/renders/tags" && request.method === "GET") {
+      return handleRenderTagsList(request, env);
     }
     // v0.35.4: delete one render row from history. Optional ?artifact=true
     // also removes the silent MP4 from R2 when no other row references it.
@@ -2411,6 +2421,22 @@ async function handleRendersList(request: Request, env: Env): Promise<Response> 
   }
 }
 
+// ---------- GET /api/storyboard/renders/tags (v0.126.0) ----------
+//
+// The distinct tags this user has applied across their render history,
+// most-used first, for the history tag-filter autocomplete. Ownership via
+// user_email; never leaks another user's tags.
+async function handleRenderTagsList(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  try {
+    const tags = await listUserTags(env, userEmail);
+    return json({ tags, user: userEmail });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return json({ error: `tags list failed: ${message}` }, { status: 500 });
+  }
+}
+
 // ---------- DELETE /api/storyboard/renders/<id> (v0.35.4) ----------
 //
 // Delete one render row from D1 history. Ownership is enforced via
@@ -2510,6 +2536,11 @@ interface RenderPatchRequest {
   // to change. To clear the locked set, send `lockedShots: []` (the
   // empty array stores NULL in the column).
   lockedShots?: unknown;
+  // v0.126.0: history organization. folderPath is a free-form "/"-delimited
+  // string or null to unfile; tags is an array of strings (empty array
+  // untags). Same send-only-what-you-change semantics as the fields above.
+  folderPath?: unknown;
+  tags?: unknown;
 }
 
 async function handleRenderRowPatch(
@@ -2531,9 +2562,11 @@ async function handleRenderRowPatch(
   }
   const hasLabel = "label" in body;
   const hasLockedShots = "lockedShots" in body;
-  if (!hasLabel && !hasLockedShots) {
+  const hasFolderPath = "folderPath" in body;
+  const hasTags = "tags" in body;
+  if (!hasLabel && !hasLockedShots && !hasFolderPath && !hasTags) {
     return json(
-      { error: "body must include `label` and/or `lockedShots`" },
+      { error: "body must include `label`, `lockedShots`, `folderPath`, and/or `tags`" },
       { status: 400 },
     );
   }
@@ -2574,6 +2607,36 @@ async function handleRenderRowPatch(
     lockedShots = normalizeLockedShots(body.lockedShots);
   }
 
+  // v0.126.0: folderPath accepts a string ("" / null both unfile) and is
+  // normalized (slash-collapsed, trimmed, length-capped); a typed-but-not-
+  // string/null value is a client bug.
+  let folderPath: string | null | undefined;
+  if (hasFolderPath) {
+    if (body.folderPath === null) {
+      folderPath = null;
+    } else if (typeof body.folderPath === "string") {
+      folderPath = normalizeFolderPath(body.folderPath);
+    } else {
+      return json(
+        { error: "folderPath must be a string or null" },
+        { status: 400 },
+      );
+    }
+  }
+
+  // v0.126.0: tags accepts an array of strings; the normalizer lowercases,
+  // trims, dedupes, and caps. Send [] to clear all tags.
+  let tags: string[] | undefined;
+  if (hasTags) {
+    if (!Array.isArray(body.tags)) {
+      return json(
+        { error: "tags must be an array of strings" },
+        { status: 400 },
+      );
+    }
+    tags = normalizeTags(body.tags);
+  }
+
   // Resolve the row first so a missing / not-owned id returns 404 with
   // the same error shape as DELETE; this also keeps the ownership check
   // explicit instead of relying on the UPDATE's row-count.
@@ -2584,11 +2647,15 @@ async function handleRenderRowPatch(
 
   if (hasLabel) await setRenderLabel(env, id, userEmail, label ?? null);
   if (hasLockedShots) await setRenderLockedShots(env, id, userEmail, lockedShots ?? []);
+  if (hasFolderPath) await setRenderFolder(env, id, userEmail, folderPath ?? null);
+  if (hasTags) await setRenderTags(env, id, userEmail, tags ?? []);
   return json({
     ok: true,
     id,
     label: hasLabel ? (label ?? null) : row.label,
     lockedShots: hasLockedShots ? (lockedShots ?? []) : (row.locked_shots ?? []),
+    folderPath: hasFolderPath ? (folderPath ?? null) : row.folder_path,
+    tags: hasTags ? (tags ?? []) : row.tags,
     user: userEmail,
   });
 }

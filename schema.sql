@@ -291,6 +291,22 @@ CREATE INDEX IF NOT EXISTS renders_by_user_project
 -- poll-completion. Same non-idempotent ADD COLUMN caveat as project_id above.
 ALTER TABLE renders ADD COLUMN finish_state TEXT;
 
+-- v0.126.0: planner render-history organization. folder_path is a free-form
+-- "/"-delimited path the user files a render under (NULL / '' = unfiled);
+-- tags_json is a JSON array of short lowercase tag strings. Same non-
+-- idempotent ADD COLUMN caveat as project_id / finish_state above (re-applying
+-- schema.sql surfaces a per-statement "duplicate column name" warning that
+-- d1 execute treats as non-fatal). Tag filtering is done client-side over the
+-- already-loaded history (matching the existing text / status filters), so
+-- there is no JSON index here; the folder index serves the common
+-- folder-scoped listing. Apply the DELTA only to prod, never the whole file.
+ALTER TABLE renders ADD COLUMN folder_path TEXT;
+ALTER TABLE renders ADD COLUMN tags_json TEXT;
+
+CREATE INDEX IF NOT EXISTS renders_by_user_folder
+  ON renders(user_email, folder_path, submitted_at DESC)
+  WHERE folder_path IS NOT NULL;
+
 -- ---------- Persisted cast (v0.46.0) ----------
 --
 -- One row per persisted character, scoped per user_email. Survives across

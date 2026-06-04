@@ -142,6 +142,13 @@ the finish idempotency lock.
 npx wrangler d1 execute skyphusion-llm --remote --file=migrate-v0.122.0.sql
 ```
 
+For v0.126.0 (render-history folders + tags): `migrate-v0.126.0.sql` adds
+`renders.folder_path` + `renders.tags_json` and the `renders_by_user_folder` index.
+
+```bash
+npx wrangler d1 execute skyphusion-llm --remote --file=migrate-v0.126.0.sql
+```
+
 **Columns added without a standalone delta file.** A few schema changes shipped only
 as trailing `ALTER TABLE` statements in `schema.sql` (no `migrate-vX.Y.Z.sql`), e.g.
 `renders.project_id` (v0.55.0) and the `cast_members` LoRA columns. Fresh installs get

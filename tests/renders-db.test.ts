@@ -4,7 +4,12 @@
 // the GPU side's COMPLETED envelope.
 
 import { describe, it, expect } from "vitest";
-import { normalizeKeyframes, normalizeLockedShots } from "../src/renders-db";
+import {
+  normalizeKeyframes,
+  normalizeLockedShots,
+  normalizeFolderPath,
+  normalizeTags,
+} from "../src/renders-db";
 
 describe("normalizeKeyframes", () => {
   it("returns [] for non-array input", () => {
@@ -137,5 +142,54 @@ describe("normalizeLockedShots (v0.42.0)", () => {
     expect(out).toHaveLength(200);
     expect(out[0]).toBe("shot_0");
     expect(out[199]).toBe("shot_199");
+  });
+});
+
+describe("normalizeFolderPath", () => {
+  it("returns null for non-string / empty / slash-only", () => {
+    expect(normalizeFolderPath(undefined)).toBeNull();
+    expect(normalizeFolderPath(null)).toBeNull();
+    expect(normalizeFolderPath(42)).toBeNull();
+    expect(normalizeFolderPath("")).toBeNull();
+    expect(normalizeFolderPath("   ")).toBeNull();
+    expect(normalizeFolderPath("///")).toBeNull();
+  });
+
+  it("trims segments and collapses leading/trailing/doubled slashes", () => {
+    expect(normalizeFolderPath("/clients/acme/")).toBe("clients/acme");
+    expect(normalizeFolderPath("clients//acme")).toBe("clients/acme");
+    expect(normalizeFolderPath("  clients / acme  ")).toBe("clients/acme");
+    expect(normalizeFolderPath("promo")).toBe("promo");
+  });
+
+  it("caps length at 200 chars", () => {
+    const long = "a/".repeat(300);
+    expect(normalizeFolderPath(long).length).toBe(200);
+  });
+});
+
+describe("normalizeTags", () => {
+  it("returns [] for non-array input", () => {
+    expect(normalizeTags(undefined)).toEqual([]);
+    expect(normalizeTags(null)).toEqual([]);
+    expect(normalizeTags("final")).toEqual([]);
+    expect(normalizeTags({})).toEqual([]);
+  });
+
+  it("lowercases, trims, drops empties, and dedupes order-preserving", () => {
+    expect(normalizeTags(["Final", " hero ", "FINAL", "", "  ", "hero"])).toEqual([
+      "final",
+      "hero",
+    ]);
+  });
+
+  it("drops non-string entries and caps each tag at 40 chars", () => {
+    expect(normalizeTags(["ok", 5, null, { x: 1 }])).toEqual(["ok"]);
+    expect(normalizeTags(["a".repeat(80)])[0].length).toBe(40);
+  });
+
+  it("caps the total tag count at 24", () => {
+    const many = Array.from({ length: 50 }, (_, i) => `tag${i}`);
+    expect(normalizeTags(many)).toHaveLength(24);
   });
 });

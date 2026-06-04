@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.126.0
+
+Render-history organization, backend half (Phase 3a of the planner
+modernization). Adds two nullable columns to the `renders` table, `folder_path`
+(free-form "/"-delimited path, NULL = unfiled) and `tags_json` (JSON array of
+short lowercase tags), plus a `renders_by_user_folder` index. The
+`PATCH /api/storyboard/renders/:id` route now also accepts `folderPath` (string
+or null) and `tags` (string array), normalized + length/count-capped on the
+write path; the list endpoint returns both fields on every row; and a new
+`GET /api/storyboard/renders/tags` returns the user's distinct tags (most-used
+first) for autocomplete. Tag filtering is client-side over the already-loaded
+history (matching the existing text / status filters), so there is no JSON
+index. The frontend history UI that uses all this lands next (Phase 3b); this
+release is additive and changes no existing behavior. Prod D1 migrated via
+`migrate-v0.126.0.sql`.
+
+### Code
+- `schema.sql` + `migrate-v0.126.0.sql`: `renders.folder_path` + `tags_json`
+  ALTERs + `renders_by_user_folder` index (delta applied to prod, not a
+  schema.sql re-run).
+- `src/renders-db.ts`: `RenderRow.folder_path` + `tags`; `normalizeFolderPath` +
+  `normalizeTags` pure helpers; `setRenderFolder` / `setRenderTags` /
+  `listUserTags`; new columns in both SELECTs + `normalizeRow`.
+- `src/index.ts`: PATCH handler extended with `folderPath` + `tags`; new
+  `GET /api/storyboard/renders/tags` -> `handleRenderTagsList`.
+- `tests/renders-db.test.ts`: 7 tests for `normalizeFolderPath` / `normalizeTags`
+  (530 total).
+- `MIGRATIONS.md`: v0.126.0 entry. `package.json`: 0.125.0 -> 0.126.0.
+
 ## v0.125.0
 
 Frontend (no worker change): planner render-step declutter, part 2 of 2 (the

@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.132.2
+
+Cast image gen falls back to Nano Banana Pro when FLUX-2's safety checker keeps
+flagging. Isolated live: FLUX-2 (klein-9b AND dev) deterministically returns
+"3030 ... output flagged" on some fine reference images (masked / glowing-red-
+eyes characters), while `google/nano-banana-pro` renders the identical image at
+HTTP 200. The v0.132.1 retry only beats random flags, so a borderline character
+still dead-ended on the FLUX-2 picker. Now, after the retries exhaust on a flag,
+`chatImageWithRetry` retries once on `google/nano-banana-pro` (unless that was
+already the selected model) before surfacing the error. Other errors still
+propagate immediately; a genuinely unsafe input still fails on the fallback too.
+
+### Code
+- `public/cast.js`: `FLAG_FALLBACK_MODEL` + `postChat()` helper; `chatImageWithRetry`
+  falls back to the permissive model after a persistent flag.
+- `package.json`: version 0.132.1 -> 0.132.2.
+
 ## v0.132.1
 
 Auto-retry cast image generation on a provider safety false-positive. The image

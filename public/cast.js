@@ -78,19 +78,40 @@
       || s.includes("has been flagged")
       || s.includes("choose another prompt");
   }
+  // v0.132.2: FLUX-2's safety checker deterministically over-flags some fine
+  // inputs (masked / glowing-red-eyes characters) that Google's Nano Banana Pro
+  // renders without complaint (verified: same portrait, flux-2-klein-9b +
+  // flux-2-dev both 3030, nano-banana-pro 200). When the per-call retries
+  // exhaust on a flag, fall back to this model once before surfacing the error,
+  // so a borderline character does not dead-end on the model picker.
+  const FLAG_FALLBACK_MODEL = "google/nano-banana-pro";
+
+  function postChat(payload) {
+    return api("/api/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  }
+
   async function chatImageWithRetry(payload, attempts) {
     const max = attempts || 3;
     let lastErr;
     for (let n = 0; n < max; n++) {
       try {
-        return await api("/api/chat", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(payload),
-        });
+        return await postChat(payload);
       } catch (e) {
         lastErr = e;
         if (!isFlaggedError(e && e.message)) throw e;
+      }
+    }
+    // Retries exhausted on a safety flag: try the more permissive model once,
+    // unless that is already the model we were using.
+    if (isFlaggedError(lastErr && lastErr.message) && payload.model !== FLAG_FALLBACK_MODEL) {
+      try {
+        return await postChat({ ...payload, model: FLAG_FALLBACK_MODEL });
+      } catch (e) {
+        lastErr = e;
       }
     }
     throw lastErr;

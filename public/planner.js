@@ -3939,6 +3939,20 @@ async function submitRender() {
   // scoped, ready-status-gated) and the GPU (vivijure-serverless 0.4.14+)
   // stages the .safetensors into the project before Stage 1 so the
   // ready-slot pre-check short-circuits training for them.
+  // v0.135.5: the cast catalog is fetched once at page load, but a LoRA can
+  // finish training AFTER the planner is open. buildCastLoraSubmit gates on the
+  // cached lora_status, so a stale "not ready" silently drops the slot and the
+  // GPU retrains a LoRA that is actually ready. Refresh the catalog at submit
+  // time so freshly-trained LoRAs get reused. Preserve the prior catalog if the
+  // refresh fails (loadCast zeroes it on error) so a transient fetch failure
+  // never drops reuse for every slot.
+  if (Object.keys(planState.castBindings || {}).length > 0) {
+    const prevCatalog = planState.castCatalog;
+    await loadCast();
+    if (!Array.isArray(planState.castCatalog) || planState.castCatalog.length === 0) {
+      planState.castCatalog = prevCatalog;
+    }
+  }
   const castLoraSubmit = buildCastLoraSubmit();
   if (Object.keys(castLoraSubmit).length > 0) reqBody.castLoras = castLoraSubmit;
   // v0.86.0: all advanced override blocks are collected by a single
@@ -5751,6 +5765,15 @@ async function finalizeRender(row, btnEl) {
     // the Worker side.
     const finalizeBody = {};
     if (planState.audioKey) finalizeBody.audioKey = planState.audioKey;
+    // v0.135.5: refresh the cast catalog so a LoRA trained after page load is
+    // seen as ready and reused (see submitRender for the full rationale).
+    if (Object.keys(planState.castBindings || {}).length > 0) {
+      const prevCatalog = planState.castCatalog;
+      await loadCast();
+      if (!Array.isArray(planState.castCatalog) || planState.castCatalog.length === 0) {
+        planState.castCatalog = prevCatalog;
+      }
+    }
     const finalizeCastLoras = buildCastLoraSubmit();
     if (Object.keys(finalizeCastLoras).length > 0) {
       finalizeBody.castLoras = finalizeCastLoras;

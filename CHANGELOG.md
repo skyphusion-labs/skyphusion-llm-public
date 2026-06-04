@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.135.5
+
+Fix the planner retraining LoRAs that are already trained and ready. Reuse works
+by sending a `{slot: cast_id}` `castLoras` map on render/finalize submit; the
+Worker resolves it to `pretrained_loras` (the cast row's `loras/` key) and the
+GPU skips training for those slots. But `buildCastLoraSubmit` gates on the cast
+catalog cached in the browser, which is fetched ONCE at page load (`loadCast`
+runs only in init). A LoRA that finishes training after the planner is open is
+still cached as not-ready, so the slot is silently dropped, no `castLoras` is
+sent, and the GPU retrains a LoRA that D1 already has as `ready` with a valid
+key. Now `submitRender` and `finalizeRender` refresh the catalog (`await
+loadCast()`) right before building the map, so freshly-trained LoRAs are reused
+without a manual page reload. The refresh preserves the prior catalog if the
+fetch comes back empty, so a transient failure never drops reuse for every slot.
+
+Confirmed against live data: cast rows for Rei Kurogane (cast-8) and Kaito Yurei
+(cast-7) are both `lora_status=ready` with `loras/cast-*/...safetensors` keys,
+yet a render trained fresh because the page-load catalog predated training.
+
+### Code
+- `public/planner.js`: in `submitRender` and `finalizeRender`, `await loadCast()`
+  before `buildCastLoraSubmit()` when bindings exist; restore the prior catalog
+  if the refresh returns empty.
+- typecheck: `tsc --noEmit` clean. tests: `vitest run` 533 pass. `node --check`
+  on planner.js OK. (Client-only.)
+
 ## v0.135.4
 
 Two render-page polish fixes. (1) Trim the "art style (keyframe SDXL base)" help

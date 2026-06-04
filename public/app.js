@@ -1170,6 +1170,7 @@ function newChat() {
   state.currentConversationId = null;
   state.currentTurns = [];
   userInput.value = "";
+  autoGrowUserInput();
   state.pendingAttachments = [];
   renderAttachments();
   renderTranscript([]);
@@ -1376,6 +1377,7 @@ async function run() {
     // Clear the input so the next prompt can be typed immediately.
     // The system prompt stays.
     userInput.value = "";
+    autoGrowUserInput();
     userInput.focus();
 
     // Refetch the full conversation from the server for canonical state
@@ -1460,6 +1462,7 @@ async function handleUtterance(text) {
   setVoiceStatus("\u{1F4AD} thinking…");
   try {
     userInput.value = text;
+    autoGrowUserInput();
     await run();
     const last = state.currentTurns[state.currentTurns.length - 1];
     const reply = last && typeof last.output === "string" ? last.output.trim() : "";
@@ -1772,7 +1775,18 @@ function loadTurnIntoComposer(turn) {
     systemPrompt.value = turn.system_prompt;
   }
   userInput.value = turn.user_input || "";
+  autoGrowUserInput();
 }
+
+// Auto-grow the composer so the whole message is visible as it is typed,
+// instead of wrapping inside a fixed one-line box. CSS `field-sizing: content`
+// does this in newer browsers; this is the cross-browser fallback. The max
+// height (and overflow scroll past it) is still enforced by the CSS rule.
+function autoGrowUserInput() {
+  userInput.style.height = "auto";
+  userInput.style.height = `${userInput.scrollHeight}px`;
+}
+userInput.addEventListener("input", autoGrowUserInput);
 
 userInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {

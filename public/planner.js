@@ -6247,6 +6247,20 @@ document.addEventListener("DOMContentLoaded", () => {
   if (chatSend) chatSend.addEventListener("click", sendChat);
   const chatClear = $("#planner-chat-clear");
   if (chatClear) chatClear.addEventListener("click", clearChat);
+  // v0.133.3: red "clear brief" button (lives on the cast field header, far
+  // right). Wipes the brief box and persists the empty state.
+  const briefClear = $("#planner-brief-clear");
+  if (briefClear) {
+    briefClear.addEventListener("click", () => {
+      const briefEl = $("#planner-brief");
+      if (!briefEl) return;
+      briefEl.value = "";
+      // A manual clear takes ownership of the brief (see sendChat / briefFromChat).
+      briefFromChat = false;
+      persistSoon();
+      briefEl.focus();
+    });
+  }
   const chatInput = $("#planner-chat-input");
   if (chatInput) {
     // Match the main chat composer: Enter sends, Shift+Enter inserts a newline.

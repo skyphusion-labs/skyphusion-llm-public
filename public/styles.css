@@ -1713,6 +1713,29 @@ textarea:focus {
   resize: vertical;
 }
 
+/* Cast field header: label on the left, the red "clear brief" button pushed
+   to the far right, vertically aligned with the cast box (v0.133.3). */
+.planner-cast-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.planner-clear-brief {
+  flex: 0 0 auto;
+  background: var(--error);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.planner-clear-brief:hover { filter: brightness(1.08); }
+.planner-clear-brief:active { transform: translateY(1px); }
+
 .planner-cast {
   display: flex;
   flex-direction: column;
@@ -4598,7 +4621,9 @@ body::before {
   width: 100%; border: 0; background: transparent; color: var(--fg);
   font-family: inherit; font-size: 16px; line-height: 1.5; /* 16px: no iOS zoom-on-focus */
   padding: 0.45rem 0.35rem; resize: none; outline: none;
-  min-height: 2.75rem; max-height: 40vh; field-sizing: content;
+  /* min/max clamp the JS auto-grow in app.js (autoGrowUserInput); past
+     max-height the textarea scrolls. */
+  min-height: 2.75rem; max-height: 40vh; overflow-y: auto;
 }
 /* id-level selector so it beats the legacy `#run` rules (which set padding +
    border-radius:4px + min-height:44px, making a de-centered rounded square). */

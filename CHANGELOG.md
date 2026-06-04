@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.133.3
+
+Two frontend ergonomics tweaks. (1) The main chat composer now auto-grows to
+fit the whole message as you type instead of wrapping inside a fixed one-line
+box. The CSS already tried this with `field-sizing: content`, but that property
+only lands in very recent Chrome/Firefox/Safari, so for most browsers the field
+stayed one line tall and scrolled internally; replaced it with a JS auto-grow
+(`autoGrowUserInput`, height set from `scrollHeight` on input + at every
+programmatic value change) plus `overflow-y: auto`. The existing
+`min-height: 2.75rem` / `max-height: 40vh` clamps still bound it (grows to 40%
+of the viewport, then scrolls). `box-sizing: border-box` is global and the
+composer textarea has `border: 0`, so `height = scrollHeight` is exact.
+(2) Added a red "clear brief" button on the vivijure planner, on the cast
+field's header row pushed to the far right (aligned with the cast box); it wipes
+the brief textarea, resets the `briefFromChat` ownership flag, and persists the
+empty state.
+
+### Code
+- `public/app.js`: `autoGrowUserInput()` + `input` listener; called at the four
+  sites that set the composer value programmatically (new chat, post-send
+  clear, voice utterance, load-turn-for-edit).
+- `public/planner.html`: `.planner-cast-header` wrapper + `#planner-brief-clear`.
+- `public/planner.js`: wire `#planner-brief-clear` to clear the brief.
+- `public/styles.css`: composer textarea JS-driven sizing (drop
+  `field-sizing: content`, add `overflow-y: auto`); `.planner-cast-header` +
+  `.planner-clear-brief` styles.
+- `package.json`: version 0.133.2 -> 0.133.3.
+- typecheck: clean. tests: unchanged (frontend-only).
+
 ## v0.133.2
 
 Visible "back to storyboard planner" link on the cast screen. The cast page

@@ -225,7 +225,7 @@ const FIELD_HELP = {
   "planner-wd-negative-prompt": { what: "Override the pod's default Wan negative prompt (it suppresses duplicates, deformities, and similar). Leave blank to keep the built-in negative." },
 
   // --- image & SDXL ---
-  "planner-ld-model-id": { what: "The SDXL base for the img2img / portrait path -- NOT the per-shot keyframe (that is the keyframe SDXL base picker). Pod default sdxl-turbo. Turbo is allowed here since this path does not need CFG." },
+  "planner-ld-model-id": { what: "The SDXL base for the img2img / portrait path only (cast portraits + chained-scene continuity passes), NOT the per-shot keyframe. For the rendered art style use the 'art style (keyframe SDXL base)' picker in the common row at the top. Pod default sdxl-turbo; turbo is allowed here since this path does not need CFG." },
   "planner-ld-resolution": { what: "SDXL base landscape resolution as WxH." },
   "planner-ld-portrait-resolution": { what: "SDXL portrait resolution as WxH, used for cast portrait generation." },
   "planner-ld-steps": { what: "SDXL base inference steps (turbo needs very few)." },
@@ -234,7 +234,7 @@ const FIELD_HELP = {
   "planner-ld-device": { what: "Force the SDXL pipeline onto gpu or cpu." },
   "planner-ld-dtype": { what: "SDXL pipeline precision. float16 is fastest and lowest VRAM; bfloat16 and float32 use more." },
   "planner-ld-seq-cpu-offload": { what: "Sequentially offload SDXL to CPU while Wan runs. Helps fit both on roughly 24GB cards at a speed cost." },
-  "planner-ld-keyframe-model-id": { what: "The SDXL base used to render each shot's keyframe, and the single biggest driver of the rendered art style (Wan I2V then animates that frame, inheriting its look). Anime = Animagine XL 4.0; photoreal = RealVisXL V5.0; neutral = stock SDXL base 1.0. 'auto' uses the pod's baked default (photoreal). Only bases primed on the volume are offered; turbo is excluded because it ignores the negative prompt." },
+  "planner-ld-keyframe-model-id": { what: "The single biggest art-style lever. This SDXL base renders each shot's KEYFRAME -- the still that Wan I2V then animates -- so the whole clip inherits this look. Anime = Animagine XL 4.0; photoreal = RealVisXL V5.0; neutral = stock SDXL base 1.0; 'auto' uses the pod's baked default (photoreal). NOT the same as the 'SDXL base' in advanced settings: that one is only the img2img / portrait path and barely affects the rendered video; this keyframe base IS what the video looks like. Only volume-primed bases are offered; turbo is excluded because it ignores the negative prompt." },
   "planner-ld-keyframe-guidance-scale": { what: "CFG for the keyframe SDXL pass; needs greater than 1 for negative prompts to take effect." },
   "planner-ld-keyframe-steps": { what: "Inference steps for the keyframe SDXL pass." },
   "planner-gen-seed-per-shot-step": { what: "In sequential seed mode, how much the seed increments from one shot to the next." },
@@ -678,6 +678,9 @@ function collectRenderStageState() {
     adetailer: readVal("#planner-adetailer"),
     loraScaleText: readVal("#planner-lora-scale"),
     consistency: readVal("#planner-consistency"),
+    // v0.135.0: persist the promoted keyframe SDXL base (art-style picker)
+    // alongside the other common per-render controls.
+    keyframeBase: readVal("#planner-ld-keyframe-model-id"),
     // v0.59.0: persist the named knobs migrated from the legacy "Make"
     // panel. Same raw-string round-trip as the structured fields above;
     // empty string == "use bundle default" and never lands on the wire.
@@ -935,6 +938,7 @@ function restoreRenderStagePanel(saved) {
     ["#planner-adetailer", saved.adetailer],
     ["#planner-lora-scale", saved.loraScaleText],
     ["#planner-consistency", saved.consistency],
+    ["#planner-ld-keyframe-model-id", saved.keyframeBase],
     // v0.59.0
     ["#planner-seed-mode", saved.seedMode],
     ["#planner-multi-character", saved.multiCharacterMode],

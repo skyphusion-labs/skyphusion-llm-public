@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.135.0
+
+Promote the keyframe SDXL base to the common render controls. It's the single
+biggest art-style lever (it renders each shot's keyframe, which Wan I2V then
+animates, so the clip inherits its look), but it was buried two disclosures deep
+("advanced -> image & SDXL -> SDXL base + keyframe..."). Moved the picker up into
+the common overrides row next to seed / lora scale / consistency mode, relabeled
+"art style (keyframe SDXL base)", and persisted it like the other common
+controls (survives reload). The img2img `model_id` base stays in advanced (it's
+the portrait/continuity path, not the rendered look). The `?` help on both now
+spells out the difference so the two SDXL bases aren't confused. No behavior
+change to the render itself -- same `local_diffusion_overrides.keyframe_model_id`
+on the wire; this is purely placement + clarity + persistence.
+
+### Code
+- `public/planner.html`: move `#planner-ld-keyframe-model-id` from the advanced
+  "SDXL base + keyframe + seeds" disclosure into `.planner-overrides-common`.
+- `public/planner.js`: persist/restore the picker (collect + restore arrays);
+  FIELD_HELP rewritten for both keyframe + img2img bases to contrast them.
+- `package.json`: version 0.134.4 -> 0.135.0.
+
 ## v0.134.4
 
 Clearer beat-timing apply message. After applying a beat plan, the warning read

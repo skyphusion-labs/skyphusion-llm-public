@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.134.1
+
+Fix the planner page scrolling sideways once a plan produces long YAML/JSON.
+The result panes are a 2-column grid (`1fr 1fr`) and the storyboard `<pre>`
+uses `white-space: pre`. Grid items default to `min-width: auto`, so a `1fr`
+track refuses to shrink below its content's intrinsic width; the long unbroken
+YAML lines (`full_prompt`, `style_prefix`, `cast_rules`) forced the column past
+the viewport, widening the whole document and scrolling it right, which clipped
+the left input column. The `overflow: auto` already on the `<pre>` never engaged
+because the track itself was growing. Added `min-width: 0` to
+`.planner-result-pane` so the tracks shrink to the available width and the
+`<pre>` scrolls its long lines internally instead. CSS only.
+
+### Code
+- `public/styles.css`: `.planner-result-pane { min-width: 0; }`.
+- `package.json`: version 0.134.0 -> 0.134.1.
+- typecheck: clean. tests: unchanged (frontend-only).
+
 ## v0.134.0
 
 "Script my plan" replaces the chat auto-fill. The v0.132.0 behavior dumped each

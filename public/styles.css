@@ -1883,6 +1883,16 @@ textarea:focus {
   gap: 16px;
 }
 
+/* Grid/flex items default to min-width: auto, so a 1fr track refuses to
+   shrink below its content's intrinsic width. The YAML/JSON <pre> uses
+   white-space: pre (long unbroken lines), which would otherwise blow the
+   column past the viewport and scroll the whole page sideways. min-width: 0
+   lets the track shrink so the pre's own overflow: auto scrolls instead
+   (v0.134.1). */
+.planner-result-pane {
+  min-width: 0;
+}
+
 @media (max-width: 800px) {
   .planner-result { grid-template-columns: 1fr; }
   .planner-cast-row {

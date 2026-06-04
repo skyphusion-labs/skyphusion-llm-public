@@ -1591,32 +1591,41 @@ export function normalizeVideoConsistencyOverrides(
 export function normalizeQualityGateOverrides(
   raw: QualityGateOverrides | undefined,
 ): QualityGateOverrides | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
+  const r: QualityGateOverrides = raw && typeof raw === "object" ? raw : {};
   const out: QualityGateOverrides = {};
-  if (typeof raw.enabled === "boolean") out.enabled = raw.enabled;
-  if (typeof raw.min_file_bytes === "number" && Number.isInteger(raw.min_file_bytes) && raw.min_file_bytes >= 0) {
-    out.min_file_bytes = raw.min_file_bytes;
+  // v0.128.0: default the LoRA quality gate OFF. It renders `probe_count`
+  // (default 2) SDXL probe keyframes PER SLOT on the GPU just to score a weak
+  // grayscale-SSIM similarity -- pure GPU-seconds for a metric we never trust
+  // (disabled in every smoke). And on the pod the baked `enabled: false` sits
+  // at the wrong path (config.yaml `loras.training.quality_gate`, while
+  // `gate_cfg()` reads `loras.quality_gate`), so it actually ran ON by default.
+  // Send `enabled: false` unless the caller explicitly opts in, so a training
+  // never spins extra GPU on the dead gate. `enabled` is always set now, so
+  // this always returns an object and every submit carries it.
+  out.enabled = typeof r.enabled === "boolean" ? r.enabled : false;
+  if (typeof r.min_file_bytes === "number" && Number.isInteger(r.min_file_bytes) && r.min_file_bytes >= 0) {
+    out.min_file_bytes = r.min_file_bytes;
   }
-  if (typeof raw.probe_count === "number" && Number.isInteger(raw.probe_count) && raw.probe_count >= 1 && raw.probe_count <= 16) {
-    out.probe_count = raw.probe_count;
+  if (typeof r.probe_count === "number" && Number.isInteger(r.probe_count) && r.probe_count >= 1 && r.probe_count <= 16) {
+    out.probe_count = r.probe_count;
   }
-  if (typeof raw.min_ssim === "number" && Number.isFinite(raw.min_ssim) && raw.min_ssim >= 0 && raw.min_ssim <= 1) {
-    out.min_ssim = raw.min_ssim;
+  if (typeof r.min_ssim === "number" && Number.isFinite(r.min_ssim) && r.min_ssim >= 0 && r.min_ssim <= 1) {
+    out.min_ssim = r.min_ssim;
   }
-  if (typeof raw.pass_ssim === "number" && Number.isFinite(raw.pass_ssim) && raw.pass_ssim >= 0 && raw.pass_ssim <= 1) {
-    out.pass_ssim = raw.pass_ssim;
+  if (typeof r.pass_ssim === "number" && Number.isFinite(r.pass_ssim) && r.pass_ssim >= 0 && r.pass_ssim <= 1) {
+    out.pass_ssim = r.pass_ssim;
   }
-  if (typeof raw.default_trigger === "string" && raw.default_trigger.trim().length > 0 && raw.default_trigger.length <= 64) {
-    out.default_trigger = raw.default_trigger;
+  if (typeof r.default_trigger === "string" && r.default_trigger.trim().length > 0 && r.default_trigger.length <= 64) {
+    out.default_trigger = r.default_trigger;
   }
-  if (typeof raw.probe_lora_scale === "number" && Number.isFinite(raw.probe_lora_scale) && raw.probe_lora_scale >= 0 && raw.probe_lora_scale <= 2) {
-    out.probe_lora_scale = raw.probe_lora_scale;
+  if (typeof r.probe_lora_scale === "number" && Number.isFinite(r.probe_lora_scale) && r.probe_lora_scale >= 0 && r.probe_lora_scale <= 2) {
+    out.probe_lora_scale = r.probe_lora_scale;
   }
-  if (typeof raw.base_seed === "number" && Number.isInteger(raw.base_seed) && raw.base_seed >= 0) {
-    out.base_seed = raw.base_seed;
+  if (typeof r.base_seed === "number" && Number.isInteger(r.base_seed) && r.base_seed >= 0) {
+    out.base_seed = r.base_seed;
   }
-  if (typeof raw.allow_warn === "boolean") out.allow_warn = raw.allow_warn;
-  return Object.keys(out).length > 0 ? out : undefined;
+  if (typeof r.allow_warn === "boolean") out.allow_warn = r.allow_warn;
+  return out;
 }
 
 // v0.69.0: same shape, applied to multi_character overrides. Validates

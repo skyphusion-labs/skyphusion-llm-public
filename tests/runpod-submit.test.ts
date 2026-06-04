@@ -13,6 +13,7 @@ import {
   deriveProjectFromBundleKey,
   isValidJobId,
   normalizeMultiCharacterOverrides,
+  normalizeQualityGateOverrides,
   normalizeRunpodResponse,
 } from "../src/runpod-submit";
 
@@ -223,6 +224,22 @@ describe("buildRegenShotPayload (v0.41.0)", () => {
   });
 });
 
+describe("normalizeQualityGateOverrides (v0.128.0: defaults the gate OFF)", () => {
+  it("defaults enabled:false when nothing is passed", () => {
+    expect(normalizeQualityGateOverrides(undefined)).toEqual({ enabled: false });
+    expect(normalizeQualityGateOverrides({})).toEqual({ enabled: false });
+  });
+  it("honors an explicit opt-in (enabled:true)", () => {
+    expect(normalizeQualityGateOverrides({ enabled: true })).toEqual({ enabled: true });
+  });
+  it("keeps validated fields and still defaults enabled:false", () => {
+    expect(normalizeQualityGateOverrides({ probe_count: 4 })).toEqual({
+      enabled: false,
+      probe_count: 4,
+    });
+  });
+});
+
 describe("buildFinalizePayload (v0.42.0)", () => {
   it("wraps the canonical finalize input shape with quality_tier defaulting to 'final'", () => {
     const out = buildFinalizePayload({
@@ -235,6 +252,8 @@ describe("buildFinalizePayload (v0.42.0)", () => {
         project: "cherry",
         bundle_key: "bundles/cherry.tar.gz",
         quality_tier: "final",
+        // v0.128.0: the LoRA quality gate now defaults OFF (no GPU probe renders).
+        quality_gate_overrides: { enabled: false },
       },
     });
   });

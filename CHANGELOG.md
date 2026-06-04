@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.128.0
+
+Fix: default the LoRA quality gate OFF to stop wasting GPU. The gate renders
+`probe_count` (default 2) SDXL probe keyframes PER SLOT on the GPU just to score a
+weak grayscale-SSIM similarity to the cast portrait -- a metric we never trust
+(disabled in every smoke). Worse, on the pod the baked `enabled: false` sits at
+the wrong config path (`loras.training.quality_gate`, while `gate_cfg()` reads
+`loras.quality_gate`), so the gate actually ran ON by default, burning extra GPU
+on every training. `normalizeQualityGateOverrides` now defaults `enabled: false`
+(callers can still opt in with `enabled: true`), so every render / finalize /
+cast-train submit tells the pod to skip the probe renders. No pod rebuild needed
+(immutable-image: the override does it). GPU-spend reduction with zero quality
+loss.
+
+### Code
+- `src/runpod-submit.ts`: `normalizeQualityGateOverrides` defaults `enabled: false` and always returns an object (so the override always reaches the pod).
+- `tests/runpod-submit.test.ts`: +3 tests for the new default; updated the finalize-payload expectation to include `quality_gate_overrides: { enabled: false }`.
+- `package.json`: version 0.127.0 -> 0.128.0.
+
+typecheck clean; 533/533 tests pass.
+
 ## v0.127.0
 
 Render-history organization, frontend half (Phase 3b, completes Phase 3 and the

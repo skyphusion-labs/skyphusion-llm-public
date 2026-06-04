@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.130.0
+
+Populate the planner's per-option `?` help registry. The v0.124.0 affordance was
+a scaffold with an empty `FIELD_HELP`; it now carries 136 plain-language "what it
+does" descriptions, one per render-override control across the common row and
+every advanced domain group (identity & face, video & motion, image & SDXL, LoRA
+& training, continuity & timing, pipeline & production, adetailer, encoding).
+Descriptions are sourced from the pod's `CONFIG-REFERENCE.md` (defaults, ranges,
+behavior for every config knob) and expanded into operator-friendly language;
+the popover still auto-derives allowed values, numeric range, and the pod default
+from the control itself, so each entry only supplies the prose. Verified every
+key maps to a real control id (no typos), full coverage of the advanced controls,
+and no em/en-dashes. Frontend only.
+
+### Code
+- `public/planner.js`: `FIELD_HELP` filled with 136 `{ what }` entries grouped by
+  domain (no logic change; `buildFieldHelpContent` already merges prose with
+  auto-derived values/range/default).
+- `package.json`: version 0.129.0 -> 0.130.0.
+
 ## v0.129.0
 
 Render-history playback + per-shot download (planner History step). The inline

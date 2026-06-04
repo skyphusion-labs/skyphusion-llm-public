@@ -3632,15 +3632,23 @@ textarea:focus {
   object-fit: cover;
 }
 
+/* v0.135.10: per-portrait/per-ref remove is destructive; marked red (outline,
+   not fill, since there is one per thumbnail). */
 .cast-ref-delete {
   background: transparent;
-  color: var(--fg-dim);
-  border: 1px solid var(--border);
+  color: var(--error);
+  border: 1px solid color-mix(in srgb, var(--error) 55%, transparent);
   border-radius: 4px;
   padding: 3px 6px;
   font-size: 11px;
   cursor: pointer;
   text-transform: lowercase;
+}
+
+.cast-ref-delete:hover {
+  color: var(--error);
+  border-color: var(--error);
+  background: color-mix(in srgb, var(--error) 12%, transparent);
 }
 
 /* v0.90.0: source/reference photo gallery for the portrait generator. */

@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.135.10
+
+Mark the per-portrait / per-reference "remove" button (`.cast-ref-delete`) red,
+matching the destructive-action color language (red outline rather than fill,
+since there is one per thumbnail). HTML unchanged.
+
+### Code
+- `public/styles.css`: `.cast-ref-delete` red outline + red hover.
+- typecheck: `tsc --noEmit` clean. tests: `vitest run` 533 pass. (CSS only.)
+
 ## v0.135.9
 
 Carry the planner's color language (danger=red, action=accent) onto the cast

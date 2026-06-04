@@ -91,7 +91,7 @@
             upload image
             <input id="cast-portrait-file" type="file" accept="image/png,image/jpeg,image/webp" hidden />
           </label>
-          <button id="cast-portrait-clear" type="button" class="cast-secondary-btn" disabled>clear</button>
+          <button id="cast-portrait-clear" type="button" class="cast-secondary-btn cast-danger" disabled>clear</button>
         </div>
 
         <!-- v0.90.0: photo-to-character generator. Promoted out of the
@@ -135,7 +135,7 @@
             <img id="cast-portrait-gen-img" alt="generated portrait" />
             <div class="cast-gen-preview-actions">
               <button id="cast-portrait-gen-accept" type="button" class="cast-save-btn">use as portrait</button>
-              <button id="cast-portrait-gen-discard" type="button" class="cast-secondary-btn">discard</button>
+              <button id="cast-portrait-gen-discard" type="button" class="cast-secondary-btn cast-danger">discard</button>
             </div>
           </div>
         </section>
@@ -189,8 +189,8 @@
           <span id="cast-lora-meta" class="cast-lora-meta"></span>
         </div>
         <div class="cast-lora-actions">
-          <button id="cast-lora-train-btn" type="button" class="cast-upload-btn" disabled>train LoRA</button>
-          <a id="cast-lora-download" class="cast-secondary-btn" target="_blank" rel="noopener" hidden>download .safetensors</a>
+          <button id="cast-lora-train-btn" type="button" class="cast-save-btn" disabled>train LoRA</button>
+          <a id="cast-lora-download" class="cast-secondary-btn cast-accent-outline" target="_blank" rel="noopener" hidden>download .safetensors</a>
           <span id="cast-lora-status-text" class="cast-gen-status"></span>
         </div>
       </section>
@@ -243,7 +243,7 @@
         <img id="cast-multi-img" alt="multi-character scene preview" />
         <div class="cast-multi-preview-actions">
           <a id="cast-multi-download" class="cast-save-btn" href="" download>download</a>
-          <button id="cast-multi-discard" type="button" class="cast-secondary-btn">discard</button>
+          <button id="cast-multi-discard" type="button" class="cast-secondary-btn cast-danger">discard</button>
         </div>
       </div>
     </section>

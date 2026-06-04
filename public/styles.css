@@ -3581,6 +3581,27 @@ textarea:focus {
 
 .cast-secondary-btn:disabled { opacity: 0.4; cursor: default; }
 
+/* v0.135.9: solid-red danger modifier, layered on top of a sizing class
+   (e.g. .cast-secondary-btn) so destructive buttons (clear, discard) keep their
+   context size but read unmistakably as dangerous. */
+.cast-danger,
+.cast-danger:hover:not(:disabled) {
+  background: var(--error);
+  color: #fff;
+  border-color: var(--error);
+}
+.cast-danger:hover:not(:disabled) { filter: brightness(1.08); }
+.cast-danger:disabled { opacity: 0.4; cursor: default; }
+
+/* v0.135.9: accent-outline modifier to make a secondary button (download
+   .safetensors) more pronounced without a full fill. */
+.cast-accent-outline,
+.cast-accent-outline:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.cast-accent-outline:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
 .cast-refs-list {
   list-style: none;
   padding: 0;
@@ -3740,9 +3761,11 @@ textarea:focus {
   justify-content: flex-end;
 }
 
+/* v0.135.9: "delete this character" is pronounced solid red (was an outline
+   that only filled on hover); deleting a character is high-consequence. */
 .cast-danger-btn {
-  background: transparent;
-  color: var(--error);
+  background: var(--error);
+  color: #fff;
   border: 1px solid var(--error);
   border-radius: 6px;
   padding: 8px 14px;
@@ -3751,7 +3774,8 @@ textarea:focus {
   text-transform: lowercase;
 }
 
-.cast-danger-btn:hover { background: var(--error); color: var(--bg); }
+.cast-danger-btn:hover { filter: brightness(1.08); }
+.cast-danger-btn:active { transform: translateY(1px); }
 
 @media (max-width: 720px) {
   .cast-layout {

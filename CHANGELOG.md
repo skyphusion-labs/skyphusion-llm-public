@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.135.9
+
+Carry the planner's color language (danger=red, action=accent) onto the cast
+page.
+
+- **Destructive = solid red.** The portrait "clear", the portrait-gen "discard",
+  and the multi-character preview "discard" now use a `.cast-danger` modifier
+  (solid red, keeps each button's context size). "delete this character" is now
+  pronounced solid red in its base state (was an outline that only filled on
+  hover); deleting a character is high-consequence.
+- **retrain / train LoRA** now uses the accent fill (`.cast-save-btn`, light
+  blue) instead of the neutral elevated button, marking it as the pane's primary
+  action.
+- **download .safetensors** is more pronounced via a new `.cast-accent-outline`
+  modifier (accent text + border) instead of the dim secondary outline, so it
+  reads as a real result to grab without competing with the filled train button.
+
+### Code
+- `public/cast.html`: `clear` / both `discard` buttons -> `cast-danger`;
+  `train LoRA` -> `cast-save-btn`; `download .safetensors` -> `cast-accent-outline`.
+- `public/styles.css`: `.cast-danger-btn` rewritten to solid red; add
+  `.cast-danger` and `.cast-accent-outline` modifiers.
+- typecheck: `tsc --noEmit` clean. tests: `vitest run` 533 pass. (HTML/CSS only.)
+
 ## v0.135.8
 
 Planner color/affordance pass so the controls read at a glance: destructive =

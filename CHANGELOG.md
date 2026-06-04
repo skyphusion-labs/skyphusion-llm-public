@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.134.4
+
+Clearer beat-timing apply message. After applying a beat plan, the warning read
+"plan has 17 shots vs 16 scenes" -- but the "17" is `timedScenes.length`, how
+many shots the *track* fits (musical phrases), not the storyboard's shot count.
+A user whose storyboard had 16 shots read it as the planner claiming 17. Reworded
+to name the source: "the track fits 17 shots but the storyboard has 16; 1 musical
+phrase unused -- add a scene (or replan) to use the rest." (And the shorter-track
+branch now notes the track is shorter than the storyboard.) Behavior unchanged --
+beat timing still applies to the overlapping min(scenes, segments) range.
+
+### Code
+- `public/planner.js`: reword the `applyBeatPlan` mismatch messages.
+- `package.json`: version 0.134.3 -> 0.134.4.
+
 ## v0.134.3
 
 Planner backfills per-scene `target_seconds`. The scene editor's "target

@@ -2903,10 +2903,16 @@ function applyBeatPlan() {
   onSceneChanged();
   let msg = "applied beat timing to " + n + " scene" + (n === 1 ? "" : "s") + ".";
   if (timed.length > scenes.length) {
-    msg += " plan has " + timed.length + " shots vs " + scenes.length
-        + " scenes; add/replan to use the rest.";
+    // v0.134.4: timed.length is how many shots the TRACK fits (musical phrases),
+    // NOT the storyboard's shot count. The old wording ("plan has N shots vs M
+    // scenes") read as if the storyboard had N shots, which confused users whose
+    // plan had M. Name the source explicitly.
+    const extra = timed.length - scenes.length;
+    msg += " the track fits " + timed.length + " shots but the storyboard has "
+        + scenes.length + "; " + extra + " musical phrase" + (extra === 1 ? "" : "s")
+        + " unused -- add " + (extra === 1 ? "a scene" : "scenes") + " (or replan) to use the rest.";
   } else if (scenes.length > timed.length) {
-    msg += " " + (scenes.length - timed.length) + " trailing scene(s) left unchanged.";
+    msg += " " + (scenes.length - timed.length) + " trailing scene(s) left unchanged (the track is shorter than the storyboard).";
   }
   setBeatStatus(msg, "success");
 }

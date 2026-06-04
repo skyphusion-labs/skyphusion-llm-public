@@ -540,13 +540,22 @@
   // Build the prompt sent to /api/chat: pose template, then a separator,
   // then the bible (capped so the upstream prompt limit holds). Pure for
   // vitest.
+  // v0.135.12: lead with a style anchor so the training images match the
+  // attached reference's art style. The templates above are photographic
+  // ("studio lighting", "golden hour"), and nano-banana-pro weights the text
+  // prompt over the reference image, so an anime portrait was producing
+  // photoreal training refs. Anchoring to the reference makes style follow the
+  // portrait (anime stays anime, photoreal stays photoreal) across all models.
+  // FLUX already followed the reference; this just makes it consistent.
+  const TRAINING_STYLE_ANCHOR =
+    "Match the art style and visual rendering of the reference image";
   function composeTrainingPrompt(template, bible) {
     const safeBible = String(bible || "").trim();
-    if (!safeBible) return template;
+    if (!safeBible) return TRAINING_STYLE_ANCHOR + ". " + template;
     // Cap bible at ~600 chars so the joined prompt stays comfortably
     // under the typical 1500-char gateway limit even with overhead.
     const trimmed = safeBible.length > 600 ? safeBible.slice(0, 600) : safeBible;
-    return template + ". " + trimmed;
+    return TRAINING_STYLE_ANCHOR + ". " + template + ". " + trimmed;
   }
 
   // Downscale an image to fit within FLUX2_REF_MAX_DIM on the long edge,

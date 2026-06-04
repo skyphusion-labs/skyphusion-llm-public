@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.135.12
+
+Fix training-set generation rendering photoreal images from an anime portrait.
+The 10 training prompts are photographic ("soft studio lighting", "golden-hour
+outdoor lighting", "harsh midday sunlight"), and while the flow attaches the
+character's portrait as a reference, nano-banana-pro weights the text prompt
+over the reference image, so an anime portrait produced a photoreal training
+set (FLUX follows the reference style, so it had stayed anime). Now
+`composeTrainingPrompt` leads each prompt with "Match the art style and visual
+rendering of the reference image", so style follows the portrait (anime stays
+anime, photoreal stays photoreal) regardless of model, with zero new config: the
+portrait is the style decision and the training set inherits it.
+
+### Code
+- `public/cast.js`: `composeTrainingPrompt` prepends `TRAINING_STYLE_ANCHOR`.
+- `tests/cast-db.test.ts`: update the mirror + assertions.
+- typecheck: `tsc --noEmit` clean. tests: `vitest run` 533 pass. `node --check`
+  on cast.js OK.
+
 ## v0.135.11
 
 Offer Nano Banana Pro in the cast training-set model picker. The picker was

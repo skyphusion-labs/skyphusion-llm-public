@@ -81,7 +81,7 @@
         </label>
         <button id="planner-project-new" type="button" class="planner-secondary">+ new project</button>
         <button id="planner-project-save" type="button" class="planner-secondary" disabled>save storyboard to project</button>
-        <button id="planner-project-delete" type="button" class="planner-secondary" disabled>delete project</button>
+        <button id="planner-project-delete" type="button" class="planner-danger" disabled>delete project</button>
       </div>
     </section>
 
@@ -134,8 +134,8 @@
       </div>
 
       <div class="planner-actions">
-        <button id="planner-plan" type="button" class="planner-primary">plan</button>
         <span id="planner-status" class="planner-status"></span>
+        <button id="planner-plan" type="button" class="planner-primary">plan</button>
       </div>
     </section>
 
@@ -197,14 +197,14 @@
       </header>
       <p class="planner-stage-hint">edit prompts, durations, and per-scene cast assignments before bundling. changes flow into the bundle automatically; the YAML pane refreshes after each edit.</p>
       <div class="planner-scenes-toolbar">
-        <button id="planner-scenes-discard" type="button" class="planner-secondary" disabled>discard all edits</button>
+        <button id="planner-scenes-discard" type="button" class="planner-danger" disabled>discard all edits</button>
         <span id="planner-scenes-dirty-badge" class="planner-scenes-dirty" hidden>edited</span>
         <span class="planner-toolbar-spacer"></span>
         <select id="planner-markers-format" class="planner-toolbar-select" title="NLE marker format">
           <option value="premiere_csv">Premiere CSV</option>
           <option value="resolve_csv">DaVinci Resolve CSV</option>
         </select>
-        <button id="planner-markers-export" type="button" class="planner-secondary" title="download NLE marker file with one marker per scene">export markers</button>
+        <button id="planner-markers-export" type="button" class="planner-accent-btn" title="download NLE marker file with one marker per scene">export markers</button>
       </div>
       <ol id="planner-scenes-list" class="planner-scenes-list"></ol>
     </section>

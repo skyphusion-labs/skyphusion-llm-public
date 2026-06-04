@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.135.8
+
+Planner color/affordance pass so the controls read at a glance: destructive =
+red, status = green, action = accent.
+
+- **Plan button** right-aligned (the transient status moves left), so it sits
+  under "clear brief" and matches the refine "send" button's placement; both are
+  already the accent primary style.
+- **Destructive actions in red.** "delete project" and "discard all edits" are
+  now solid red (new `.planner-danger`, matching the existing "clear brief"
+  treatment, disabled-aware). Per-shot "delete" gets a red outline in its base
+  state (outline rather than fill so a long shot list is not a wall of red).
+- **Status indicators in green.** The "edited" badge and the "yaml in sync"
+  message (and other inline success statuses) now use `--success` green instead
+  of the accent blue.
+- **"export markers"** now uses the accent hue like the other action buttons
+  (new compact `.planner-accent-btn`), instead of the plain secondary outline.
+
+### Code
+- `public/planner.html`: reorder plan/status; `delete project` +
+  `discard all edits` -> `planner-danger`; `export markers` -> `planner-accent-btn`.
+- `public/styles.css`: `.planner-actions .planner-status { margin-right:auto }`;
+  `.planner-status-success` + `.planner-scenes-dirty` -> `--success`;
+  `.planner-scene-delete` red outline; add `.planner-danger` + `.planner-accent-btn`.
+- typecheck: `tsc --noEmit` clean. tests: `vitest run` 533 pass. (HTML/CSS only.)
+
 ## v0.135.7
 
 Clean up the common render-controls box (art style / seed / lora scale /

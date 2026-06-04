@@ -1790,6 +1790,10 @@ textarea:focus {
   gap: 12px;
   flex-wrap: wrap;
 }
+/* v0.135.8: push the transient status to the left so the plan button sits at
+   the right edge, lining up under "clear brief" and matching the refine "send"
+   button's placement. */
+.planner-actions .planner-status { margin-right: auto; }
 
 .planner-primary {
   background: var(--accent);
@@ -1815,7 +1819,7 @@ textarea:focus {
 
 .planner-status-loading { color: var(--warn); }
 .planner-status-error { color: var(--error); }
-.planner-status-success { color: var(--accent); }
+.planner-status-success { color: var(--success); } /* v0.135.8: status = green ("yaml in sync") */
 
 .planner-output {
   border-top: 1px solid var(--border);
@@ -3917,7 +3921,7 @@ textarea:focus {
 }
 
 .planner-scenes-dirty {
-  background: var(--accent);
+  background: var(--success); /* v0.135.8: status indicator = green */
   color: var(--bg);
   font-size: 11px;
   padding: 2px 8px;
@@ -3965,8 +3969,10 @@ textarea:focus {
 .planner-scene-delete {
   margin-left: auto;
   background: transparent;
-  color: var(--fg-dim);
-  border: 1px solid var(--border);
+  /* v0.135.8: destructive action; marked red (outline, not fill, so a per-shot
+     list does not become a wall of red). */
+  color: var(--error);
+  border: 1px solid color-mix(in srgb, var(--error) 55%, transparent);
   border-radius: 4px;
   padding: 4px 10px;
   font-size: 11px;
@@ -3974,7 +3980,11 @@ textarea:focus {
   text-transform: lowercase;
 }
 
-.planner-scene-delete:hover { color: var(--error); border-color: var(--error); }
+.planner-scene-delete:hover {
+  color: var(--error);
+  border-color: var(--error);
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+}
 
 .planner-scene-row .planner-field textarea {
   background: var(--bg);
@@ -4026,6 +4036,39 @@ textarea:focus {
 .planner-secondary:disabled { opacity: 0.4; cursor: default; }
 
 .planner-secondary:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+
+/* v0.135.8: destructive actions are solid red (matches "clear brief"), so a
+   dangerous click is unmistakable. Disabled-aware for the gated buttons
+   (delete project, discard all edits). */
+.planner-danger {
+  background: var(--error);
+  color: #fff;
+  border: 1px solid var(--error);
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  text-transform: lowercase;
+}
+.planner-danger:disabled { opacity: 0.4; cursor: default; }
+.planner-danger:hover:not(:disabled) { filter: brightness(1.08); }
+.planner-danger:active:not(:disabled) { transform: translateY(1px); }
+
+/* v0.135.8: compact accent (filled) button for toolbar actions that belong to
+   the same family as the primary action buttons (e.g. export markers), at the
+   smaller toolbar size rather than the large .planner-primary. */
+.planner-accent-btn {
+  background: var(--accent);
+  color: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  text-transform: lowercase;
+}
+.planner-accent-btn:disabled { opacity: 0.4; cursor: default; }
+.planner-accent-btn:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
 
 /* v0.50.0: refinement chat. */
 

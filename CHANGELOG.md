@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.132.1
+
+Auto-retry cast image generation on a provider safety false-positive. The image
+models' safety checker (FLUX-2 / nano-banana) sometimes returns "3030 ... your
+output has been flagged ... choose another prompt / input image" on perfectly
+fine inputs (e.g. a masked character holding a stylized weapon), and the flag is
+nondeterministic per call since each generation rolls a fresh seed. Previously a
+single flag hard-failed the portrait / training-set / joint-reference generators
+on the first roll. Now those calls retry up to 3 times on a flag before
+surfacing the error; only safety flags are retried (bad model / network / etc.
+still propagate immediately). Does not defeat a genuinely-flagged input (a source
+image that trips the checker every time will still fail after the retries), and
+costs up to 3 generation calls in the worst case. No backend change.
+
+### Code
+- `public/cast.js`: `isFlaggedError()` + `chatImageWithRetry()` helper next to
+  `api()`; the three `/api/chat` image-gen call sites (generatePortrait,
+  training-set loop, joint two-character) now route through it.
+- `package.json`: version 0.132.0 -> 0.132.1.
+
 ## v0.132.0
 
 Three planner fixes from live use.

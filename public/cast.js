@@ -64,6 +64,38 @@
     return data;
   }
 
+  // v0.132.1: the image providers' safety checker (FLUX-2 / nano-banana) can
+  // false-positive ("3030 ... your output has been flagged ... choose another
+  // prompt / input image") on perfectly fine inputs (e.g. a masked character
+  // with a stylized weapon), and the flag has per-call nondeterminism since
+  // each /api/chat image call rolls a fresh seed. Retry the call a couple of
+  // times on a flag before surfacing it, so borderline-but-fine references do
+  // not hard-fail on the first roll. Only safety flags are retried; every other
+  // error (bad model, network, etc.) propagates immediately.
+  function isFlaggedError(msg) {
+    const s = String(msg || "").toLowerCase();
+    return s.includes("3030")
+      || s.includes("has been flagged")
+      || s.includes("choose another prompt");
+  }
+  async function chatImageWithRetry(payload, attempts) {
+    const max = attempts || 3;
+    let lastErr;
+    for (let n = 0; n < max; n++) {
+      try {
+        return await api("/api/chat", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } catch (e) {
+        lastErr = e;
+        if (!isFlaggedError(e && e.message)) throw e;
+      }
+    }
+    throw lastErr;
+  }
+
   async function loadCastList() {
     setListStatus("loading...");
     try {
@@ -642,14 +674,10 @@
       setPortraitGenStatus(sources.length > 0
         ? `generating with ${sources.length} reference${sources.length === 1 ? "" : "s"} (10-40s)...`
         : "generating (10-40s depending on model)...");
-      const result = await api("/api/chat", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          model: modelId,
-          user_input: prompt,
-          attachments: attachments.length > 0 ? attachments : undefined,
-        }),
+      const result = await chatImageWithRetry({
+        model: modelId,
+        user_input: prompt,
+        attachments: attachments.length > 0 ? attachments : undefined,
       });
       const oa = result && result.output_artifact;
       if (!oa || oa.type !== "image" || !oa.key) {
@@ -810,14 +838,10 @@
 
       const promptText = composeTrainingPrompt(TRAINING_PROMPTS[i], c.bible);
       try {
-        const result = await api("/api/chat", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            model: getSelectedTrainingModelId(),
-            user_input: promptText,
-            attachments,
-          }),
+        const result = await chatImageWithRetry({
+          model: getSelectedTrainingModelId(),
+          user_input: promptText,
+          attachments,
         });
         const oa = result && result.output_artifact;
         if (!oa || oa.type !== "image" || !oa.key) throw new Error("no image returned");
@@ -985,17 +1009,13 @@
     if (status) status.textContent = "generating (10-40s depending on model)...";
 
     try {
-      const result = await api("/api/chat", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          model: modelId,
-          user_input: effectivePrompt,
-          attachments: [
-            { type: "image", mime: aRef.mime || "image/png", filename: `${a.slug || "a"}.png`, data: aData },
-            { type: "image", mime: bRef.mime || "image/png", filename: `${b.slug || "b"}.png`, data: bData },
-          ],
-        }),
+      const result = await chatImageWithRetry({
+        model: modelId,
+        user_input: effectivePrompt,
+        attachments: [
+          { type: "image", mime: aRef.mime || "image/png", filename: `${a.slug || "a"}.png`, data: aData },
+          { type: "image", mime: bRef.mime || "image/png", filename: `${b.slug || "b"}.png`, data: bData },
+        ],
       });
       const oa = result && result.output_artifact;
       if (!oa || oa.type !== "image" || !oa.key) throw new Error("model did not return an image");

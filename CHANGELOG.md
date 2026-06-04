@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.129.0
+
+Render-history playback + per-shot download (planner History step). The inline
+movie player (HTML5 `<video controls preload="metadata">`, already present for
+completed rows with a silent MP4) now renders full card width **directly below
+the view / re-render / delete buttons** instead of below the keyframe strip, so
+the finished movie is the first thing under the actions. Each SDXL keyframe gets
+an explicit per-shot **download** button (saves `<project>-<shot>.png`), and
+clicking a keyframe thumbnail now opens an inline **lightbox** preview (dim
+backdrop, large still, caption + download, click / Escape to dismiss) instead of
+a raw new-tab. `preload="metadata"` keeps opening a row from pulling the whole
+MP4 (the fetch starts on play). The full-movie download was already there.
+Per-shot motion clips (the short Wan video per shot) are a tracked follow-up:
+they are not saved to R2 / exposed in the row yet, which needs pod-side work.
+Frontend only.
+
+### Code
+- `public/planner.js`: movie player block moved to render right after
+  `.planner-history-actions`; per-keyframe `download` link + `shotStillFilename`;
+  thumbnail click opens `openShotPreview` / `ensureShotLightbox` (singleton
+  overlay) instead of `target="_blank"`.
+- `public/styles.css`: `.planner-history-keyframe-dl`; `.planner-lightbox` +
+  figure / image / bar / download styles.
+- `package.json`: version 0.128.0 -> 0.129.0.
+
 ## v0.128.0
 
 Fix: default the LoRA quality gate OFF to stop wasting GPU. The gate renders

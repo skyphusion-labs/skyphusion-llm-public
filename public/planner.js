@@ -4501,6 +4501,58 @@ function renderHistoryList(rows, totalRows) {
   }
 }
 
+// v0.129.0: download filename for a per-shot SDXL still. "<project>-<shot>.png".
+function shotStillFilename(row, shotId) {
+  const proj = (row.project || "shot").replace(/[^a-z0-9_-]+/gi, "-");
+  return proj + "-" + shotId + ".png";
+}
+
+// v0.129.0: inline shot-preview lightbox. Clicking a keyframe thumb opens the
+// still larger in a full-screen overlay; click the backdrop or press Escape to
+// dismiss. A single overlay element is reused across rows. The download link
+// inside stops propagation so it does not dismiss before the browser handles
+// the download.
+let _shotLightbox = null;
+function ensureShotLightbox() {
+  if (_shotLightbox) return _shotLightbox;
+  const box = document.createElement("div");
+  box.className = "planner-lightbox";
+  box.hidden = true;
+  box.addEventListener("click", () => { box.hidden = true; });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && _shotLightbox) _shotLightbox.hidden = true;
+  });
+  document.body.appendChild(box);
+  _shotLightbox = box;
+  return box;
+}
+function openShotPreview(row, kf) {
+  const box = ensureShotLightbox();
+  box.innerHTML = "";
+  const fig = document.createElement("figure");
+  fig.className = "planner-lightbox-fig";
+  const img = document.createElement("img");
+  img.src = "/api/artifact/" + kf.key;
+  img.alt = kf.shot_id;
+  img.className = "planner-lightbox-img";
+  fig.appendChild(img);
+  const bar = document.createElement("figcaption");
+  bar.className = "planner-lightbox-bar";
+  const cap = document.createElement("span");
+  cap.textContent = kf.shot_id;
+  bar.appendChild(cap);
+  const dl = document.createElement("a");
+  dl.href = "/api/artifact/" + kf.key;
+  dl.download = shotStillFilename(row, kf.shot_id);
+  dl.className = "planner-lightbox-dl";
+  dl.textContent = "download";
+  dl.addEventListener("click", (ev) => ev.stopPropagation());
+  bar.appendChild(dl);
+  fig.appendChild(bar);
+  box.appendChild(fig);
+  box.hidden = false;
+}
+
 function buildHistoryRow(r) {
   const li = document.createElement("li");
   li.className = "planner-history-item";
@@ -4683,6 +4735,24 @@ function buildHistoryRow(r) {
 
   li.appendChild(actions);
 
+  // v0.129.0: inline movie player, full card width, directly below the action
+  // buttons (view / re-render / delete). Completed rows that produced a silent
+  // MP4 get an HTML5 <video controls>; preload="metadata" so opening a row does
+  // not auto-pull the whole file (the fetch starts on play). Gated by the
+  // -collapsed class so a collapsed row stays one line.
+  if (r.status === "COMPLETED" && r.output_key) {
+    const playerWrap = document.createElement("div");
+    playerWrap.className = "planner-history-player";
+    const video = document.createElement("video");
+    video.src = "/api/artifact/" + r.output_key;
+    video.controls = true;
+    video.preload = "metadata";
+    video.playsInline = true;
+    video.className = "planner-history-player-video";
+    playerWrap.appendChild(video);
+    li.appendChild(playerWrap);
+  }
+
   // v0.39.0: SDXL keyframe thumbnails. Hidden when the row is collapsed
   // (CSS gates .planner-history-keyframes the same way it gates sub /
   // actions). Each thumb is an <img loading="lazy"> served by the
@@ -4705,12 +4775,19 @@ function buildHistoryRow(r) {
       if (!kf || typeof kf.key !== "string" || typeof kf.shot_id !== "string") continue;
       const wrap = document.createElement("div");
       wrap.className = "planner-history-keyframe-wrap";
+      // v0.129.0: click a thumb to preview the shot still larger in an inline
+      // lightbox (was: open the raw artifact in a new tab). The href is kept so
+      // right-click / middle-click still works.
       const a = document.createElement("a");
       a.href = "/api/artifact/" + kf.key;
-      a.target = "_blank";
       a.rel = "noopener";
       a.className = "planner-history-keyframe";
-      a.title = kf.shot_id;
+      a.title = "preview " + kf.shot_id;
+      a.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        openShotPreview(r, kf);
+      });
       const img = document.createElement("img");
       img.src = "/api/artifact/" + kf.key;
       img.alt = kf.shot_id;
@@ -4723,6 +4800,17 @@ function buildHistoryRow(r) {
       cap.textContent = kf.shot_id;
       a.appendChild(cap);
       wrap.appendChild(a);
+
+      // v0.129.0: per-shot still download (PNG). Available on every keyframe,
+      // independent of the regen / lock controls below.
+      const dlShot = document.createElement("a");
+      dlShot.href = "/api/artifact/" + kf.key;
+      dlShot.download = shotStillFilename(r, kf.shot_id);
+      dlShot.className = "planner-history-keyframe-dl";
+      dlShot.textContent = "download";
+      dlShot.title = "download this shot still (PNG)";
+      dlShot.addEventListener("click", (ev) => ev.stopPropagation());
+      wrap.appendChild(dlShot);
 
       if (regenEligible) {
         const regenKey = String(r.id) + ":" + kf.shot_id;
@@ -4773,26 +4861,6 @@ function buildHistoryRow(r) {
       strip.appendChild(wrap);
     }
     if (strip.children.length > 0) li.appendChild(strip);
-  }
-
-  // v0.42.1: inline video player for completed rows that produced a
-  // silent MP4. Sits between the keyframe strip (the per-shot stills)
-  // and the finalize row, so the visual order is meta -> stills ->
-  // motion. preload="metadata" so opening a row does NOT auto-pull
-  // the whole MP4; the network fetch starts when the user clicks
-  // play. The element is gated by the existing -collapsed class so
-  // a collapsed row stays one line.
-  if (r.status === "COMPLETED" && r.output_key) {
-    const playerWrap = document.createElement("div");
-    playerWrap.className = "planner-history-player";
-    const video = document.createElement("video");
-    video.src = "/api/artifact/" + r.output_key;
-    video.controls = true;
-    video.preload = "metadata";
-    video.playsInline = true;
-    video.className = "planner-history-player-video";
-    playerWrap.appendChild(video);
-    li.appendChild(playerWrap);
   }
 
   // v0.42.0: finalize button. Shown only on completed keyframes-only

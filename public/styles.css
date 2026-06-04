@@ -2878,6 +2878,24 @@ textarea:focus {
   opacity: 0.6;
 }
 
+/* v0.129.0: per-shot still download link (sits under the thumbnail, styled
+   like the regen button). */
+.planner-history-keyframe-dl {
+  font-size: 10px;
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+  text-align: center;
+  text-decoration: none;
+  background: var(--bg-elev2);
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 2px 0;
+  width: 96px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.planner-history-keyframe-dl:hover { color: var(--accent); border-color: var(--accent); }
+
 /* Mark the thumbnail while its regen is in flight. Subtle dim + a
    yellow border so the user knows which shot is regenerating without
    needing to read the button text. */
@@ -2995,6 +3013,58 @@ textarea:focus {
    collapsed row stays one line. */
 .planner-history-item-collapsed .planner-history-player {
   display: none;
+}
+
+/* v0.129.0: shot-preview lightbox. Full-viewport dim backdrop; click anywhere
+   (or Escape) to dismiss. The figure caps the still's size and carries a
+   caption + download. */
+.planner-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4vmin;
+  background: rgba(5, 8, 16, 0.82);
+  backdrop-filter: blur(4px);
+  cursor: zoom-out;
+}
+.planner-lightbox[hidden] { display: none; }
+.planner-lightbox-fig {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(1100px, 92vw);
+  max-height: 92vh;
+}
+.planner-lightbox-img {
+  display: block;
+  max-width: 100%;
+  max-height: 84vh;
+  object-fit: contain;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: #000;
+}
+.planner-lightbox-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--fg);
+  font-size: 13px;
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+}
+.planner-lightbox-dl {
+  color: var(--bg);
+  background: var(--brand-grad);
+  text-decoration: none;
+  font-weight: 600;
+  border-radius: var(--radius-pill);
+  padding: 5px 16px;
+  cursor: pointer;
 }
 
 .planner-history-keyframe-cap {

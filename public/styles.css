@@ -423,7 +423,10 @@ textarea:focus {
 
 .hint.warn { color: var(--warn); }
 
-#run {
+/* Scope the legacy flat-send styling away from the round composer button.
+   #run (id) was out-specifying the .composer-send class rules, so the send
+   button collapsed into a padded rounded square with the arrow off-center. */
+#run:not(.composer-send) {
   margin-left: auto;
   background: var(--accent);
   color: var(--bg);
@@ -435,8 +438,8 @@ textarea:focus {
   cursor: pointer;
 }
 
-#run:hover:not(:disabled) { background: var(--accent-hover); }
-#run:disabled { opacity: 0.5; cursor: wait; }
+#run:not(.composer-send):hover:not(:disabled) { background: var(--accent-hover); }
+#run:not(.composer-send):disabled { opacity: 0.5; cursor: wait; }
 
 .attachments, .loaded-attachments {
   display: flex;
@@ -843,7 +846,7 @@ textarea:focus {
     min-height: 44px;
   }
 
-  #run {
+  #run:not(.composer-send) {
     padding: 0.625rem 1.25rem;
     min-height: 44px;
     font-size: 0.9375rem;

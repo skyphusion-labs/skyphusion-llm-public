@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.135.15
+
+Fix the front-page composer send button rendering as a padded rounded square with
+an off-center arrow instead of the round gradient button. The button is
+`<button id="run" class="composer-send">`, and the legacy `#run` id rules
+(`border-radius: 4px`, `padding`, flat `--accent` background, plus a `min-height:
+44px` in the mobile media query) out-specify the `.composer-send` class rules (id
+1,0,0 beats class 0,1,0), so they won, exactly the failure the in-code comment
+warned about. Scoped all `#run` rules to `#run:not(.composer-send)` so the legacy
+flat-send styling no longer applies to the round composer button; the
+`.composer-send` rules now take effect, and the planner's reused `.composer-send`
+button (which isn't `#run`) is unaffected.
+
+### Code
+- `public/styles.css`: `#run` / `#run:hover` / `#run:disabled` / media-query
+  `#run` -> `#run:not(.composer-send)`.
+- typecheck: `tsc --noEmit` clean. tests: `vitest run` 535 pass. (CSS only.)
+
 ## v0.135.14
 
 Fix a LoRA-reuse hole: a trained LoRA could be silently retrained. A LoRA's

@@ -100,4 +100,15 @@ pipeline {
       }
     }
   }
+
+  post {
+    // mail needs only a TaskListener (no node/workspace), so it is safe at the
+    // top level even if a stage agent failed to come up (unlike sh). Sends via
+    // the global Mailer (SMTP 127.0.0.1:2525 -> skyphusion-email relay).
+    failure {
+      mail to: 'conrad@rockenhaus.net',
+           subject: "FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+           body: "Build failed: ${env.BUILD_URL}"
+    }
+  }
 }

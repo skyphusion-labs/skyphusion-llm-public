@@ -12,6 +12,23 @@
 // secret runtime paths surface meaningful errors instead of TypeScript
 // telling deployers they need fields they may legitimately not have set.
 
+// v0.137.0: RPC surface exposed by the skyphusion-email Worker's EmailService
+// entrypoint (separate repo: github.com/SkyPhusion/skyphusion-email). Mirrors its
+// EmailRequest; kept minimal and local so this repo doesn't depend on that package.
+export interface EmailServiceBinding {
+  send(req: {
+    to: string | string[];
+    from?: string | { email: string; name?: string };
+    replyTo?: string | { email: string; name?: string };
+    cc?: string | string[];
+    bcc?: string | string[];
+    subject: string;
+    html?: string;
+    text?: string;
+    headers?: Record<string, string>;
+  }): Promise<{ messageId?: string }>;
+}
+
 export interface Env {
   AI: Ai;
   DB: D1Database;
@@ -35,6 +52,11 @@ export interface Env {
   R2_S3_BUCKET?: string;
   VEC: VectorizeIndex;
   ASSETS: Fetcher;
+  // v0.137.0: service binding to the skyphusion-email Worker's EmailService RPC
+  // entrypoint. Sends transactional mail from @skyphusion.org with no API token
+  // or network hop. Optional so deploys without the binding still typecheck;
+  // guard with `if (env.EMAIL)` before calling send().
+  EMAIL?: EmailServiceBinding;
   GATEWAY_ID: string;
   // v0.12.0: Workflow binding for Unified Billing video + music gen. The
   // class is LongRunWorkflow, defined at the bottom of src/index.ts. Each

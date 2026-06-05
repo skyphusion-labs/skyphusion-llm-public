@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.137.0
+
+Wire a service binding to the skyphusion-email Worker so the planner can send
+transactional mail (render-complete notices, etc.) from @skyphusion.org with no
+API token or public network hop. This lands the plumbing only; no route calls
+`env.EMAIL.send()` yet.
+
+### Code
+- `src/env.ts`: add the `EmailServiceBinding` interface + optional `EMAIL`
+  binding on `Env`.
+- `wrangler.example.toml`: add the `[[services]]` block (binding `EMAIL` ->
+  service `skyphusion-email`, entrypoint `EmailService`). Mirror it into your
+  per-deployer `wrangler.toml` (and the CI Secret-file credential).
+- `Jenkinsfile`: email conrad@rockenhaus.net on build failure (top-level post).
+- `npm run typecheck` passes. Requires a Worker redeploy; no D1 / test change.
+
+
 ## v0.136.6
 
 Plumb OpenPose ControlNet pose-conditioning overrides through to the pod

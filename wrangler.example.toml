@@ -49,6 +49,15 @@ index_name = "skyphusion-llm-vec"
 directory = "./public"
 binding = "ASSETS"
 
+# v0.137.0: service binding to the skyphusion-email Worker (separate repo +
+# deploy: github.com/SkyPhusion/skyphusion-email). Lets the Worker send
+# transactional mail via env.EMAIL.send(...) with no API token or network hop.
+# entrypoint is the WorkerEntrypoint class exported by skyphusion-email.
+[[services]]
+binding = "EMAIL"
+service = "skyphusion-email"
+entrypoint = "EmailService"
+
 # Cloudflare Workflow for long-running Unified Billing video and music gen
 # (v0.12.0). env.AI.run for these models blocks until completion (30s-3min),
 # which exceeds the ~30s waitUntil budget after an HTTP response. Workflows

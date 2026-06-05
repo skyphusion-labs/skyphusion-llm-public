@@ -91,13 +91,16 @@ import {
   claimFinish,
   countOtherRowsWithOutputKey,
   deleteRenderRow,
+  classifyMissingJob,
   getFinishState,
   getRenderByIdForUser,
+  getRenderForPoll,
   insertRender,
   listRendersForUser,
   listUserTags,
   markFinishDone,
   markFinishFailed,
+  markRenderFailedByJobId,
   normalizeFolderPath,
   normalizeLockedShots,
   normalizeTags,
@@ -2011,7 +2014,11 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
       bundleKey: body.bundleKey,
       qualityTier: args.qualityTier ?? "final",
       renderOverrides: args.renderOverrides,
-      status: result.view.status,
+      // v0.136.0: record "SUBMITTED", not RunPod's /run status. RunPod's /run
+      // returns IN_QUEUE optimistically; the job can still evaporate before
+      // /status ever sees it. The row only claims IN_QUEUE once a /status poll
+      // actually confirms it (updateRenderFromView overwrites SUBMITTED then).
+      status: "SUBMITTED",
       // v0.40.0: record the mode at submit time so the history list can
       // render the keyframes-only badge + suppress the download MP4 link
       // even before the GPU envelope echoes a mode field back.
@@ -2027,7 +2034,9 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
   return json({
     ok: true,
     jobId: result.view.jobId,
-    status: result.view.status,
+    // v0.136.0: "job submitted", not "queued". statusRaw still carries RunPod's
+    // literal /run status for anyone who wants the raw signal.
+    status: "SUBMITTED",
     statusRaw: result.view.statusRaw,
     user: userEmail,
     // v0.58.0: report any cast LoRA bindings that were dropped. Empty
@@ -2111,6 +2120,72 @@ async function resolveOffloadedFinish(
   return { kind: "finished" };
 }
 
+// v0.136.0: poll RunPod, then reconcile a "job not found" (404) against our
+// own render row so a dropped submission fails the row instead of hanging the
+// UI at IN_QUEUE forever. RunPod's /run can return IN_QUEUE for a job its
+// /status endpoint then 404s (the job evaporated before it ran); without this
+// the poll handlers just returned a transient error and the client retried the
+// 404 indefinitely. Shared by the one-shot poll handler and the SSE stream.
+const PHANTOM_JOB_MESSAGE =
+  "RunPod has no record of this job; the submission was dropped before it ran. Re-submit the render.";
+
+type RenderPollOutcome =
+  | { kind: "ok"; view: RunpodJobView }
+  // 404 within the grace window: RunPod may not have registered the job yet.
+  | { kind: "confirming"; note: string }
+  // 404 past the grace window: genuine phantom, row has been marked FAILED.
+  | { kind: "phantom"; error: string }
+  // 404 but our row is already terminal: RunPod GC'd a finished job.
+  | {
+      kind: "terminalCached";
+      status: string;
+      output: unknown;
+      outputKey: string | null;
+      error: string | null;
+    }
+  // Any other poll failure (network, 5xx, unknown 404 with no row): transient.
+  | { kind: "transient"; error: string; httpStatus: number };
+
+async function pollRenderResolved(
+  env: Env,
+  jobId: string,
+): Promise<RenderPollOutcome> {
+  const result = await pollRenderJob(env, jobId);
+  if (result.ok) return { kind: "ok", view: result.view };
+  if (result.status !== 404) {
+    return { kind: "transient", error: result.error, httpStatus: 502 };
+  }
+  // RunPod has no record of this job. Decide based on our own row.
+  const row = await getRenderForPoll(env, jobId).catch(() => null);
+  if (!row) {
+    // Not a job we track (pre-history, or another user's id). Surface the
+    // 404 as-is; we have no row to fail and nothing cached to serve.
+    return { kind: "transient", error: result.error, httpStatus: 404 };
+  }
+  const decision = classifyMissingJob(
+    row.status,
+    row.submitted_at,
+    Math.floor(Date.now() / 1000),
+  );
+  if (decision === "terminal") {
+    return {
+      kind: "terminalCached",
+      status: row.status,
+      output: row.output,
+      outputKey: row.output_key,
+      error: row.error,
+    };
+  }
+  if (decision === "confirming") {
+    return { kind: "confirming", note: "awaiting RunPod confirmation" };
+  }
+  // Genuine phantom: fail the row (idempotent; no-op if already terminal).
+  await markRenderFailedByJobId(env, jobId, PHANTOM_JOB_MESSAGE).catch((err) =>
+    console.error("markRenderFailedByJobId failed:", err),
+  );
+  return { kind: "phantom", error: PHANTOM_JOB_MESSAGE };
+}
+
 async function handleRenderPoll(
   request: Request,
   env: Env,
@@ -2131,13 +2206,53 @@ async function handleRenderPoll(
     );
   }
 
-  const result = await pollRenderJob(env, jobId);
-  if (!result.ok) {
+  const outcome = await pollRenderResolved(env, jobId);
+  if (outcome.kind === "transient") {
     return json(
-      { ok: false, errors: [result.error], user: userEmail },
-      { status: 502 },
+      { ok: false, errors: [outcome.error], user: userEmail },
+      { status: outcome.httpStatus },
     );
   }
+  if (outcome.kind === "confirming") {
+    // v0.136.0: submitted, but RunPod has not confirmed the job yet. Report a
+    // distinct SUBMITTED status (non-terminal) so the client keeps polling
+    // without showing a scary "poll failed" line.
+    return json({
+      ok: true,
+      jobId,
+      status: "SUBMITTED",
+      statusRaw: "CONFIRMING",
+      output: null,
+      error: outcome.note,
+      user: userEmail,
+    });
+  }
+  if (outcome.kind === "phantom") {
+    // v0.136.0: terminal. The row was just marked FAILED; report it so the
+    // client stops polling instead of retrying the 404 forever.
+    return json({
+      ok: true,
+      jobId,
+      status: "FAILED",
+      statusRaw: "NOT_FOUND",
+      output: null,
+      error: outcome.error,
+      user: userEmail,
+    });
+  }
+  if (outcome.kind === "terminalCached") {
+    // v0.136.0: RunPod GC'd a job we already finished; serve the cached row.
+    return json({
+      ok: true,
+      jobId,
+      status: outcome.status,
+      statusRaw: outcome.status,
+      output: outcome.output,
+      error: outcome.error,
+      user: userEmail,
+    });
+  }
+  const result = { ok: true as const, view: outcome.view };
 
   // v0.122.0: off-GPU finish. Assemble the final MP4 via the video-finish
   // container on completion (idempotent). While it assembles, report IN_PROGRESS
@@ -2303,28 +2418,70 @@ async function handleRenderStream(
       while (Date.now() - start < MAX_STREAM_DURATION_MS) {
         if (request.signal.aborted) break;
 
-        const result = await pollRenderJob(env, jobId);
+        const outcome = await pollRenderResolved(env, jobId);
         let payload: Record<string, unknown>;
-        if (result.ok) {
+        let terminal = false;
+        if (outcome.kind === "ok") {
+          const view = outcome.view;
           payload = {
             ok: true,
-            jobId: result.view.jobId,
-            status: result.view.status,
-            statusRaw: result.view.statusRaw,
-            output: result.view.output,
-            error: result.view.error,
-            executionTimeMs: result.view.executionTimeMs,
-            delayTimeMs: result.view.delayTimeMs,
+            jobId: view.jobId,
+            status: view.status,
+            statusRaw: view.statusRaw,
+            output: view.output,
+            error: view.error,
+            executionTimeMs: view.executionTimeMs,
+            delayTimeMs: view.delayTimeMs,
             user: userEmail,
           };
           // Persist same as the one-shot poll handler.
           try {
-            await updateRenderFromView(env, result.view);
+            await updateRenderFromView(env, view);
           } catch (err) {
             console.error("renders update (stream) failed:", err);
           }
+          terminal =
+            view.status === "COMPLETED" ||
+            view.status === "FAILED" ||
+            view.status === "CANCELLED" ||
+            view.status === "TIMED_OUT";
+        } else if (outcome.kind === "confirming") {
+          // v0.136.0: submitted, RunPod not yet confirming. Non-terminal.
+          payload = {
+            ok: true,
+            jobId,
+            status: "SUBMITTED",
+            statusRaw: "CONFIRMING",
+            output: null,
+            error: outcome.note,
+            user: userEmail,
+          };
+        } else if (outcome.kind === "phantom") {
+          // v0.136.0: dropped job; row marked FAILED. Terminal: close cleanly.
+          payload = {
+            ok: true,
+            jobId,
+            status: "FAILED",
+            statusRaw: "NOT_FOUND",
+            output: null,
+            error: outcome.error,
+            user: userEmail,
+          };
+          terminal = true;
+        } else if (outcome.kind === "terminalCached") {
+          // v0.136.0: RunPod GC'd a finished job; serve the cached row.
+          payload = {
+            ok: true,
+            jobId,
+            status: outcome.status,
+            statusRaw: outcome.status,
+            output: outcome.output,
+            error: outcome.error,
+            user: userEmail,
+          };
+          terminal = true;
         } else {
-          payload = { ok: false, errors: [result.error], user: userEmail };
+          payload = { ok: false, errors: [outcome.error], user: userEmail };
         }
 
         const wrote = await writeEvent(payload);
@@ -2332,13 +2489,7 @@ async function handleRenderStream(
 
         // Terminal status: close cleanly. Client sees the last snapshot
         // and stops reconnecting.
-        if (
-          result.ok &&
-          (result.view.status === "COMPLETED" ||
-            result.view.status === "FAILED" ||
-            result.view.status === "CANCELLED" ||
-            result.view.status === "TIMED_OUT")
-        ) {
+        if (terminal) {
           break;
         }
 

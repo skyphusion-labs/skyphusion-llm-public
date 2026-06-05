@@ -1,5 +1,48 @@
 # Changelog
 
+## v0.136.0
+
+Stop the render status from hanging at IN_QUEUE forever when RunPod drops a job,
+and stop claiming "queued" before RunPod actually confirms it.
+
+Two related fixes to the render submit/poll loop:
+
+1. "Job submitted" vs confirmed queued. RunPod's `/run` returns `IN_QUEUE`
+   optimistically, but the job can evaporate before `/status` ever sees it
+   (observed live: job `d4790110` reported `IN_QUEUE` on submit, then `/status`
+   404'd permanently). The render row no longer trusts that `/run` status: it is
+   recorded as `SUBMITTED` and only flips to `IN_QUEUE` / `IN_PROGRESS` once a
+   real `/status` poll confirms it (`updateRenderFromView` overwrites it). The UI
+   shows "submitted" with a working cancel button and a queue-equivalent (un-
+   anchored) ETA clock.
+
+2. Phantom job -> FAILED, not an infinite retry. When `/status` returns RunPod's
+   404 ("job not found"), the poll handlers now reconcile against our own row:
+   - row already terminal -> serve the cached row (RunPod just GC'd a finished
+     job; never re-fail it);
+   - within a 150s grace window -> report `SUBMITTED` and keep polling (covers
+     the brief `/run` -> `/status` propagation race);
+   - past the grace window -> mark the row `FAILED` with a clear message and
+     report it terminal, so both the one-shot poll and the SSE stream stop
+     instead of retrying the 404 forever (the old behavior: "poll failed
+     (retrying)" on an 8s loop, badge stuck at IN_QUEUE).
+
+The phantom reconciliation is shared by `GET /api/storyboard/render/<jobId>` and
+its `/stream` SSE variant, so whichever path the client is on terminates.
+
+### Code
+- `src/renders-db.ts`: add `isTerminalStatus`, `PHANTOM_GRACE_SECONDS`, pure
+  `classifyMissingJob(rowStatus, submittedAt, now, grace?)`, `getRenderForPoll`,
+  and `markRenderFailedByJobId` (guarded so it never clobbers a terminal row).
+- `src/index.ts`: add `pollRenderResolved(env, jobId)` (wraps `pollRenderJob` +
+  404 reconciliation) and route both poll handlers through it; record + return
+  `SUBMITTED` at submit time instead of RunPod's `/run` status.
+- `public/planner.js`: treat `SUBMITTED` as in-flight in `setJobStatusBadge`
+  (cancellable), the ETA anchor, and the history `filterRows` bucket.
+- `tests/renders-db.test.ts`: cover `classifyMissingJob` (terminal / confirming /
+  phantom / custom grace) and `isTerminalStatus`.
+- typecheck: `tsc --noEmit` clean. tests: `vitest run` 541 pass.
+
 ## v0.135.15
 
 Fix the front-page composer send button rendering as a padded rounded square with

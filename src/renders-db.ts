@@ -113,6 +113,38 @@ const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
   "TIMED_OUT",
 ]);
 
+export function isTerminalStatus(status: string): boolean {
+  return TERMINAL_STATUSES.has(status);
+}
+
+// v0.136.0: how long after submit we keep treating a RunPod "job not found"
+// (404 on /status) as a momentary post-submit propagation race rather than a
+// dropped job. RunPod's /run can return IN_QUEUE before /status can see the
+// job; we show "SUBMITTED" during this window and only fail the row once the
+// 404 persists past it. Generous on purpose: false-failing a real job is worse
+// than a slightly delayed phantom verdict.
+export const PHANTOM_GRACE_SECONDS = 150;
+
+// v0.136.0: classify a render whose RunPod /status poll returned 404 ("job not
+// found"). Pure so the grace-window contract is unit-testable without a DB.
+//   - "terminal": our row already reached a terminal state, so RunPod simply
+//     garbage-collected a finished job; serve the cached row, do not fail it.
+//   - "confirming": still inside the grace window; RunPod may not have
+//     registered the job yet. Keep polling, report SUBMITTED.
+//   - "phantom": past the grace window with no record; the submission was
+//     dropped before it ran. Fail the row.
+export type PhantomDecision = "terminal" | "confirming" | "phantom";
+
+export function classifyMissingJob(
+  rowStatus: string,
+  submittedAtSec: number,
+  nowSec: number,
+  graceSec: number = PHANTOM_GRACE_SECONDS,
+): PhantomDecision {
+  if (isTerminalStatus(rowStatus)) return "terminal";
+  return nowSec - submittedAtSec < graceSec ? "confirming" : "phantom";
+}
+
 export async function insertRender(env: Env, row: NewRenderRow): Promise<void> {
   const now = nowSeconds();
   const overrides = row.renderOverrides ? JSON.stringify(row.renderOverrides) : null;
@@ -210,6 +242,71 @@ export async function updateRenderFromView(env: Env, view: RunpodJobView): Promi
       view.jobId,
     )
     .run();
+}
+
+// v0.136.0: minimal row snapshot the poll handlers need when RunPod returns a
+// 404 for the job. submitted_at drives the grace-window decision; output /
+// output_key / error let us serve a cached terminal row (RunPod GC'd a job we
+// already finished) without re-polling. Returns null when we hold no row for
+// the jobId (a pre-history job or someone else's id).
+export interface RenderPollRow {
+  status: string;
+  submitted_at: number;
+  output: unknown;
+  output_key: string | null;
+  error: string | null;
+}
+
+export async function getRenderForPoll(
+  env: Env,
+  jobId: string,
+): Promise<RenderPollRow | null> {
+  const r = await env.DB.prepare(
+    `SELECT status, submitted_at, output_json AS output, output_key, error
+     FROM renders WHERE job_id = ?`,
+  )
+    .bind(jobId)
+    .first<Record<string, unknown>>();
+  if (!r) return null;
+  let output: unknown = null;
+  const opRaw = r.output;
+  if (typeof opRaw === "string" && opRaw.length > 0) {
+    try {
+      output = JSON.parse(opRaw);
+    } catch {
+      output = opRaw;
+    }
+  }
+  return {
+    status: String(r.status),
+    submitted_at: Number(r.submitted_at),
+    output,
+    output_key: r.output_key ? String(r.output_key) : null,
+    error: r.error ? String(r.error) : null,
+  };
+}
+
+// v0.136.0: fail a render row by jobId (used when RunPod has no record of the
+// job past the grace window). Guarded so it never clobbers a row that already
+// reached a terminal state. Returns true iff a non-terminal row was flipped.
+export async function markRenderFailedByJobId(
+  env: Env,
+  jobId: string,
+  error: string,
+): Promise<boolean> {
+  const now = nowSeconds();
+  const res = await env.DB.prepare(
+    `UPDATE renders SET
+       status = 'FAILED',
+       error = ?,
+       completed_at = COALESCE(completed_at, ?),
+       updated_at = ?
+     WHERE job_id = ?
+       AND status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED', 'TIMED_OUT')`,
+  )
+    .bind(error.slice(0, 2000), now, now, jobId)
+    .run();
+  return ((res.meta as { changes?: number } | undefined)?.changes ?? 0) > 0;
 }
 
 // v0.122.0: off-GPU finish bookkeeping. When a render used finish_offloaded, the

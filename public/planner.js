@@ -4220,7 +4220,13 @@ function updateRenderProgress(data) {
     hideProgressWidget();
     return;
   }
-  if (data.status !== "IN_QUEUE" && renderState.startedAt === null) {
+  // v0.136.0: SUBMITTED (pre-confirmation) is a queue-equivalent wait; do not
+  // anchor the elapsed/ETA clock on it any more than on IN_QUEUE.
+  if (
+    data.status !== "IN_QUEUE" &&
+    data.status !== "SUBMITTED" &&
+    renderState.startedAt === null
+  ) {
     renderState.startedAt = Date.now();
     savePersistedState();
   }
@@ -4390,7 +4396,9 @@ function setJobStatusBadge(status) {
   // Cancel button visible only while the job is still cancellable (queued
   // or running). RunPod accepts cancel on either; terminal states reject.
   const cancelBtn = $("#planner-render-cancel");
-  if (status === "IN_QUEUE" || status === "IN_PROGRESS") {
+  // v0.136.0: SUBMITTED is the pre-confirmation state (we sent it, RunPod has
+  // not echoed a /status yet). It is cancellable like IN_QUEUE.
+  if (status === "SUBMITTED" || status === "IN_QUEUE" || status === "IN_PROGRESS") {
     cancelBtn.hidden = false;
     cancelBtn.disabled = false;
   } else {
@@ -4853,14 +4861,15 @@ function buildHistoryOrganizeRow(row) {
 }
 
 // Pure filter over rows + filter state. Status buckets:
-//   IN_QUEUE | IN_PROGRESS  -> in-flight
+//   SUBMITTED | IN_QUEUE | IN_PROGRESS  -> in-flight
 //   COMPLETED               -> done
 //   FAILED | CANCELLED | TIMED_OUT  -> failed
 // Text matches project name OR label, case-insensitive substring.
 function filterRows(rows, filters) {
   const text = (filters.text || "").toLowerCase().trim();
   return rows.filter((r) => {
-    if (r.status === "IN_QUEUE" || r.status === "IN_PROGRESS") {
+    // v0.136.0: SUBMITTED is the pre-confirmation state; bucket it in-flight.
+    if (r.status === "SUBMITTED" || r.status === "IN_QUEUE" || r.status === "IN_PROGRESS") {
       if (!filters.showInFlight) return false;
     } else if (r.status === "COMPLETED") {
       if (!filters.showDone) return false;

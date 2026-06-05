@@ -9,6 +9,9 @@ import {
   normalizeLockedShots,
   normalizeFolderPath,
   normalizeTags,
+  classifyMissingJob,
+  isTerminalStatus,
+  PHANTOM_GRACE_SECONDS,
 } from "../src/renders-db";
 
 describe("normalizeKeyframes", () => {
@@ -191,5 +194,50 @@ describe("normalizeTags", () => {
   it("caps the total tag count at 24", () => {
     const many = Array.from({ length: 50 }, (_, i) => `tag${i}`);
     expect(normalizeTags(many)).toHaveLength(24);
+  });
+});
+
+describe("isTerminalStatus", () => {
+  it("recognizes the four terminal statuses", () => {
+    for (const s of ["COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"]) {
+      expect(isTerminalStatus(s)).toBe(true);
+    }
+  });
+
+  it("treats in-flight + pre-confirmation statuses as non-terminal", () => {
+    for (const s of ["SUBMITTED", "IN_QUEUE", "IN_PROGRESS", "anything"]) {
+      expect(isTerminalStatus(s)).toBe(false);
+    }
+  });
+});
+
+describe("classifyMissingJob", () => {
+  // RunPod /status returned 404 for the job. The decision keys off our own
+  // row's status + how long ago it was submitted.
+  const now = 1_000_000;
+
+  it("returns 'terminal' when our row already finished (RunPod GC'd it)", () => {
+    // Past the grace window, but already COMPLETED: never re-fail it.
+    expect(classifyMissingJob("COMPLETED", 0, now)).toBe("terminal");
+    expect(classifyMissingJob("FAILED", now - 1, now)).toBe("terminal");
+  });
+
+  it("returns 'confirming' inside the grace window", () => {
+    expect(classifyMissingJob("SUBMITTED", now - 1, now)).toBe("confirming");
+    expect(
+      classifyMissingJob("IN_QUEUE", now - (PHANTOM_GRACE_SECONDS - 1), now),
+    ).toBe("confirming");
+  });
+
+  it("returns 'phantom' once the grace window has elapsed", () => {
+    expect(
+      classifyMissingJob("SUBMITTED", now - PHANTOM_GRACE_SECONDS, now),
+    ).toBe("phantom");
+    expect(classifyMissingJob("IN_QUEUE", now - 10_000, now)).toBe("phantom");
+  });
+
+  it("honors a custom grace window", () => {
+    expect(classifyMissingJob("SUBMITTED", now - 5, now, 10)).toBe("confirming");
+    expect(classifyMissingJob("SUBMITTED", now - 15, now, 10)).toBe("phantom");
   });
 });

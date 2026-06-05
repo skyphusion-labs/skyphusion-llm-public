@@ -450,6 +450,21 @@ describe("normalizeMultiCharacterOverrides (v0.85.0: Phase R fields)", () => {
     });
   });
 
+  // v0.136.3: regional center gap (vivijure-serverless 0.4.86+).
+  it("passes region_gap_px and rounds it", () => {
+    expect(normalizeMultiCharacterOverrides({ region_gap_px: 180 })).toEqual({
+      region_gap_px: 180,
+    });
+    expect(normalizeMultiCharacterOverrides({ region_gap_px: 159.6 })).toEqual({
+      region_gap_px: 160,
+    });
+  });
+
+  it("drops region_gap_px out of range", () => {
+    expect(normalizeMultiCharacterOverrides({ region_gap_px: -1 })).toBeUndefined();
+    expect(normalizeMultiCharacterOverrides({ region_gap_px: 601 })).toBeUndefined();
+  });
+
   it("drops lora_scale_per_slot below 0", () => {
     const out = normalizeMultiCharacterOverrides({ lora_scale_per_slot: -0.1 });
     expect(out).toBeUndefined();

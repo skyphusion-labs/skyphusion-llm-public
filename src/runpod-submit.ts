@@ -580,6 +580,12 @@ export interface MultiCharacterOverrides {
   // Feather width in pixels at the layer / side-by-side boundary.
   // Pod default 48. Lower = sharper seam, higher = softer blend.
   feather_px?: number;
+  // v0.136.3: regional-engine center gap in pixels (vivijure-serverless
+  // 0.4.86+). Carves a dead center band of width 2*region_gap_px where
+  // neither slot's IP-Adapter applies, pushing the two n=2 subjects to
+  // opposite outer halves so they separate instead of merging at center.
+  // Pod default 0 (original geometry). Counterpart to feather_px.
+  region_gap_px?: number;
   // "layer" overlays the panels with a feathered alpha mask;
   // "side_by_side" tiles them horizontally.
   layout?: "layer" | "side_by_side";
@@ -1675,6 +1681,15 @@ export function normalizeMultiCharacterOverrides(
     && raw.ip_adapter_scale_per_slot <= 2
   ) {
     out.ip_adapter_scale_per_slot = raw.ip_adapter_scale_per_slot;
+  }
+  // v0.136.3: regional center-gap, in pixels (vivijure-serverless 0.4.86+).
+  if (
+    typeof raw.region_gap_px === "number"
+    && Number.isFinite(raw.region_gap_px)
+    && raw.region_gap_px >= 0
+    && raw.region_gap_px <= 600
+  ) {
+    out.region_gap_px = Math.round(raw.region_gap_px);
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }

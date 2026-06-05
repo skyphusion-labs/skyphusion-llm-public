@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.136.3
+
+Add a `region_gap_px` knob to the regional multi-character engine (pairs with
+vivijure-serverless 0.4.86) so two characters can be pushed apart instead of
+merging at the frame center.
+
+The regional engine's only mask-geometry knob was `feather_px`, which only ADDS
+center overlap; there was no way to create a gap, so two subjects tended to meet
+in the middle. `region_gap_px` carves a dead center band (width 2*gap) where
+neither slot's IP-Adapter applies, pulling the two n=2 subjects to opposite outer
+halves. Pod default 0 (geometry unchanged); driven via `multiCharacterOverrides`.
+
+### Code
+- `src/runpod-submit.ts`: add `region_gap_px` to `MultiCharacterOverrides` and the
+  normalizer (range 0..600, rounded). `tests/runpod-submit.test.ts`: +2 cases.
+- Pairs with vivijure-serverless 0.4.86 (`_build_region_masks` `region_gap_px`).
+- typecheck: `tsc --noEmit` clean. tests: `vitest run` 543 pass.
+
 ## v0.136.2
 
 Document the Vivijure control-plane <-> vivijure-serverless connection and the three

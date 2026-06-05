@@ -224,7 +224,13 @@ def _assemble(work, srcs, audio_path, width, height, fps, crf, preset, crossfade
         _run([
             "ffmpeg", "-y", "-i", silent, "-i", audio_path,
             "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-            "-shortest", "-movflags", "+faststart", out,
+            # v0.136.5: keep the FULL video length regardless of the audio bed's
+            # length. `apad` pads the audio with silence to infinity; `-shortest`
+            # then ends the output at the (finite) video stream. So a bed shorter
+            # than the video no longer truncates it (silence fills the tail), and
+            # a bed longer than the video is cut to the video length.
+            "-af", "apad", "-shortest",
+            "-movflags", "+faststart", out,
         ])
     else:
         # Web-playable silent: stream-copy with faststart (no re-encode).

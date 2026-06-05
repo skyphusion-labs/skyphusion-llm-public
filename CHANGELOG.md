@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.136.5
+
+Fix the add-audio mux truncating the video to a short audio bed. The video-finish
+container muxed with bare `-shortest`, so an audio file shorter than the video cut
+the video down to the audio length. Now it pads the audio with silence to the
+video length (`-af apad -shortest`): a short bed leaves the tail silent, a long
+bed is cut to the video, and the output is always exactly the video's duration.
+
+### Code
+- `containers/video-finish/app.py`: `_assemble` audio mux -> `-af apad -shortest`.
+- No Worker/test change; requires a container redeploy (wrangler rebuilds the
+  video-finish image on deploy).
+
+
 ## v0.136.4
 
 Add audio to a finished render without firing up the GPU.

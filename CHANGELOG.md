@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.137.1
+
+Docs: document the post-render audio/narration capabilities in the README
+(Vivijure flow step 7) - mux a music bed (`add-audio`) or synthesize spoken
+narration (`add-narration`) onto a finished render off-GPU via the video-finish
+container.
+
+### Code
+- `README.md` only. No code change.
+
+
 ## v0.137.0
 
 Add spoken narration to a finished render without the GPU. A "narrate" button on

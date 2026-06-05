@@ -149,6 +149,13 @@ The flow:
 6. **Finish** on render completion the `video-finish` container (ffmpeg) concatenates
    the per-shot clips, crossfades the cuts, and muxes the music bed into the final
    MP4 in R2, so picture finishing and audio muxing stay off the GPU.
+7. **Post-render audio** (`POST /api/storyboard/renders/:id/add-audio`,
+   `POST /api/storyboard/renders/:id/add-narration`) layer audio onto a *finished*
+   render without re-running the GPU: mux an uploaded or generated music bed, or
+   synthesize spoken **narration** from text with a TTS voice (Workers AI), then
+   mux it on through the same `video-finish` container. Text to speech to a muxed
+   MP4, no re-render, no RunPod job. History exposes both as **"add audio"** and
+   **"narrate"** buttons on a completed render.
 
 **CPU prep on Cloudflare Containers.** The prep steps that don't need a GPU run as
 Cloudflare Containers (`containers/`), so the expensive RunPod GPU worker stays

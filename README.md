@@ -69,7 +69,7 @@ A working template for the Cloudflare AI stack. One Worker, no framework, no bui
 
 **UI (focus-mode redesign, v0.110.0+):** a single centered conversation column with a floating composer; the sidebar (searchable history, projects, documents) is a slide-in overlay; a searchable model picker (type to filter, v0.111.0); a ⚙ popover for the system prompt + retrieval toggles and an account menu in the top bar; a paperclip attach button and a voice-chat mic. Capability-aware mode switching (vision-only attachment types; image-mode re-skins to "negative prompt"; TTS / STT / video / music / voice hide irrelevant inputs), FLUX.2 reference-image attach UI (v0.16.0), per-turn web-search toggle (v0.17.0), per-user replay-able history with attachments and generated artifacts, Enter to send / Shift+Enter for newline. Mobile-optimized (safe-area insets, touch targets, no iOS zoom).
 
-**Vivijure studio (AI music-video pipeline):** the same Worker doubles as the control plane for an AI music-video pipeline, an LLM storyboard planner, a cast builder with auto background removal, audio beat-sync, and bundle assembly, that hands GPU rendering off to a separate RunPod backend. CPU prep (rembg, librosa) runs on Cloudflare Containers. See [Vivijure studio](#vivijure-studio-ai-music-video-pipeline) below.
+**Vivijure studio (AI music-video pipeline):** the same Worker doubles as the control plane for an AI music-video pipeline, an LLM storyboard planner, a cast builder with auto background removal, audio beat-sync, and bundle assembly, that hands GPU rendering off to a separate RunPod backend. CPU prep and final-cut assembly (rembg, librosa, ffmpeg) run on three Cloudflare Containers. See [Vivijure studio](#vivijure-studio-ai-music-video-pipeline) below.
 
 **Auth:** Cloudflare Access on the worker URL. Per-user history and R2 ownership checks via `Cf-Access-Authenticated-User-Email`. Free up to 50 seats on Zero Trust.
 
@@ -80,6 +80,51 @@ plane for an AI music-video pipeline. (Reachable from the top-bar account menu, 
 directly at [`/planner.html`](public/planner.html) and [`/cast.html`](public/cast.html).)
 It plans and preps a project here, then hands the GPU-heavy training and rendering
 off to a separate RunPod serverless backend.
+
+### Routing
+
+How this control plane, its three Cloudflare Containers, R2, and the GPU backend fit
+together. The numbered edges are one render job, start to finish; CPU prep
+(background removal, beat detection) happens before the bundle is written, and the
+final cut (video-finish) happens after the GPU returns clips.
+
+```mermaid
+flowchart TB
+    UI["browser<br/>/planner.html · /cast.html"]
+
+    subgraph W["skyphusion-llm-public · control-plane Worker (this repo)"]
+        PLAN["storyboard planner (LLM)"]
+        CAST["cast / character refs"]
+        ASM["bundle assembler"]
+        REN["render submit + poll"]
+    end
+
+    subgraph CNT["Cloudflare Containers · CPU prep (containers/)"]
+        IMG["image-prep<br/>rembg / u2net"]
+        BEAT["audio-beat-sync<br/>librosa"]
+        VID["video-finish<br/>ffmpeg"]
+    end
+
+    R2[("Cloudflare R2<br/>bundles · clips · renders · state")]
+    D1[("D1<br/>projects · render history")]
+    GPU{{"RunPod · vivijure-serverless<br/>GPU backend"}}
+
+    UI --> CAST
+    UI --> PLAN
+    CAST -->|"presign R2"| IMG
+    PLAN -->|"presign R2"| BEAT
+    CAST --> ASM
+    PLAN --> ASM
+    ASM -->|"1 · write bundle.tar.gz"| R2
+    REN -->|"2 · submit job"| GPU
+    R2 -->|"3 · pull bundle"| GPU
+    GPU -->|"4 · push clips + state"| R2
+    GPU -->|"5 · return keys"| REN
+    REN -->|"6 · finish"| VID
+    VID -->|"7 · final MP4"| R2
+    R2 -->|"serve render"| UI
+    REN --> D1
+```
 
 The flow:
 
@@ -98,9 +143,12 @@ The flow:
    portraits + reference images into a `.tar.gz` project bundle, staged to R2.
 5. **Render** (`POST /api/storyboard/render`, `GET /api/storyboard/renders`) submit
    the bundle to the [**vivijure-serverless**](https://github.com/SkyPhusion/vivijure-serverless)
-   RunPod GPU endpoint, which trains
-   per-character LoRAs, renders SDXL keyframes plus image-to-video, exports a silent
-   MP4, and pushes the result back to R2. Render history is tracked in D1.
+   RunPod GPU endpoint, which trains per-character LoRAs, renders SDXL keyframes plus
+   image-to-video, and returns the per-shot clips (plus updated project state) to R2.
+   Render history is tracked in D1.
+6. **Finish** on render completion the `video-finish` container (ffmpeg) concatenates
+   the per-shot clips, crossfades the cuts, and muxes the music bed into the final
+   MP4 in R2, so picture finishing and audio muxing stay off the GPU.
 
 **CPU prep on Cloudflare Containers.** The prep steps that don't need a GPU run as
 Cloudflare Containers (`containers/`), so the expensive RunPod GPU worker stays
@@ -110,12 +158,19 @@ purely GPU-bound:
   bundle time. The Worker presigns short-lived R2 GET/PUT URLs (SigV4 over Web
   Crypto, `src/r2-presign.ts`) so the container reads + writes R2 directly with no
   binding; the cleaned PNG is content-addressed in R2 and reused across bundles.
-- **`audio-beat-sync`** (librosa) does the beat detection above.
+- **`audio-beat-sync`** (librosa) detects BPM + downbeats from the uploaded music
+  bed so each shot's timing can be aligned to the music (step 3 above).
+- **`video-finish`** (ffmpeg) does the final cut off the GPU pod: it concatenates the
+  per-shot clips the GPU returns, crossfades the cuts, and muxes the music bed into
+  the finished MP4 (step 6 above). Keeping assembly + audio mux here means picture
+  finishing never burns GPU minutes.
 
-Both bake a CPU-portable numba cache into the image (numba's JIT kernels otherwise
-compile for ~26-46s on a cold cache, which blew the container's port-bind window
-until the cache was pinned with a whole-second source mtime + a generic CPU
-target). Each is fronted by its own Durable Object.
+The two numba-based containers (`image-prep`, `audio-beat-sync`) bake a CPU-portable
+numba cache into the image (numba's JIT kernels otherwise compile for ~26-46s on a
+cold cache, which blew the container's port-bind window until the cache was pinned
+with a whole-second source mtime + a generic CPU target); `video-finish` is a plain
+ffmpeg subprocess and needs no such warmup. Each container is fronted by its own
+Durable Object.
 
 **Setup.** Vivijure studio needs the RunPod endpoint plus R2 S3 credentials (the
 containers reach R2 over the public S3 endpoint):

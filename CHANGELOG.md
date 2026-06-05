@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.136.2
+
+Document the Vivijure control-plane <-> vivijure-serverless connection and the three
+Cloudflare Containers in the README. No code change.
+
+- Added a **Routing** mermaid diagram to the Vivijure studio section: the
+  control-plane Worker, the three CPU containers, R2, D1, and the RunPod GPU handoff,
+  with numbered edges tracing one render job start to finish.
+- The container list was missing **`video-finish`** (the ffmpeg final-cut container).
+  All three are now documented: `image-prep` (rembg/u2net background removal),
+  `audio-beat-sync` (librosa BPM + downbeat detection), and `video-finish` (ffmpeg
+  concat + crossfade + music mux, off the GPU). Clarified that only the two
+  numba-based containers bake a numba cache; `video-finish` is a plain subprocess.
+- Updated the render flow to reflect the off-GPU finish: the GPU returns per-shot
+  clips and the `video-finish` container assembles the final MP4 (new step 6).
+
+### Code
+- Docs only: `README.md`, `package.json` (version bump). No `src/` or `public/` change.
+- typecheck: `tsc --noEmit` clean. tests: `vitest run` 541 pass (unchanged).
+
 ## v0.136.1
 
 Documentation accuracy pass for release. No code change; corrects stale numbers

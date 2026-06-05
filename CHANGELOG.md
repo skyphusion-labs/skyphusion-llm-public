@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.136.6
+
+Plumb OpenPose ControlNet pose-conditioning overrides through to the pod
+(pairs with vivijure-serverless 0.4.87) - the real two-character separation
+lever (draws the bodies apart, vs masks that only route identity).
+
+- `multiCharacterOverrides.pose_conditioning` (bool): when on + >=2 slots, the
+  regional keyframe is conditioned on a per-slot pose skeleton so each slot gets
+  its own figure/column. Pod default false.
+- `multiCharacterOverrides.controlnet_conditioning_scale` (0..2): pose adherence
+  strength. Pod default 0.55.
+
+### Code
+- `src/runpod-submit.ts`: add both fields to `MultiCharacterOverrides` + the
+  normalizer. `tests/runpod-submit.test.ts`: +2 cases.
+- typecheck: `tsc --noEmit` clean. tests: `vitest run` 545 pass.
+
+
 ## v0.136.5
 
 Fix the add-audio mux truncating the video to a short audio bed. The video-finish

@@ -586,6 +586,16 @@ export interface MultiCharacterOverrides {
   // opposite outer halves so they separate instead of merging at center.
   // Pod default 0 (original geometry). Counterpart to feather_px.
   region_gap_px?: number;
+  // v0.136.6: regional OpenPose ControlNet pose conditioning (vivijure-serverless
+  // 0.4.87+). When true and >=2 slots, the keyframe is conditioned on a per-slot
+  // pose skeleton so the BODIES are drawn apart (one figure per column), not just
+  // their identities routed. The real fix for two-character separation; masks
+  // alone top out shoulder-to-shoulder. Requires the openpose controlnet primed
+  // on the volume. Pod default false.
+  pose_conditioning?: boolean;
+  // ControlNet adherence for the pose skeleton (0..2). Higher = stricter body
+  // placement, lower = looser (lets the prompt's action win). Pod default 0.55.
+  controlnet_conditioning_scale?: number;
   // "layer" overlays the panels with a feathered alpha mask;
   // "side_by_side" tiles them horizontally.
   layout?: "layer" | "side_by_side";
@@ -1690,6 +1700,18 @@ export function normalizeMultiCharacterOverrides(
     && raw.region_gap_px <= 600
   ) {
     out.region_gap_px = Math.round(raw.region_gap_px);
+  }
+  // v0.136.6: OpenPose ControlNet pose conditioning (vivijure-serverless 0.4.87+).
+  if (typeof raw.pose_conditioning === "boolean") {
+    out.pose_conditioning = raw.pose_conditioning;
+  }
+  if (
+    typeof raw.controlnet_conditioning_scale === "number"
+    && Number.isFinite(raw.controlnet_conditioning_scale)
+    && raw.controlnet_conditioning_scale >= 0
+    && raw.controlnet_conditioning_scale <= 2
+  ) {
+    out.controlnet_conditioning_scale = raw.controlnet_conditioning_scale;
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }

@@ -465,6 +465,25 @@ describe("normalizeMultiCharacterOverrides (v0.85.0: Phase R fields)", () => {
     expect(normalizeMultiCharacterOverrides({ region_gap_px: 601 })).toBeUndefined();
   });
 
+  // v0.136.6: OpenPose ControlNet pose conditioning (vivijure-serverless 0.4.87+).
+  it("passes pose_conditioning + controlnet_conditioning_scale", () => {
+    expect(
+      normalizeMultiCharacterOverrides({
+        pose_conditioning: true,
+        controlnet_conditioning_scale: 0.55,
+      }),
+    ).toEqual({ pose_conditioning: true, controlnet_conditioning_scale: 0.55 });
+  });
+
+  it("drops a non-boolean pose_conditioning and out-of-range cn scale", () => {
+    expect(
+      normalizeMultiCharacterOverrides({ pose_conditioning: "yes" as unknown as boolean }),
+    ).toBeUndefined();
+    expect(
+      normalizeMultiCharacterOverrides({ controlnet_conditioning_scale: 2.1 }),
+    ).toBeUndefined();
+  });
+
   it("drops lora_scale_per_slot below 0", () => {
     const out = normalizeMultiCharacterOverrides({ lora_scale_per_slot: -0.1 });
     expect(out).toBeUndefined();

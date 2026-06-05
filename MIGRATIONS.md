@@ -85,10 +85,6 @@ For v0.22.1 (transparent image gen): no D1 migration. Re-introduces an OPTIONAL 
 npx wrangler secret put OPENAI_API_KEY
 ```
 
-```
-npx wrangler d1 execute skyphusion-llm --remote --file=migrate-v0.20.2.sql
-```
-
 For v0.20.3 (Discord ingestion): this release ships a delta file, `migrate-v0.20.3.sql`, containing the `project_messages` table and the four new `chunks` columns. Apply it once:
 
 ```
@@ -149,14 +145,44 @@ For v0.126.0 (render-history folders + tags): `migrate-v0.126.0.sql` adds
 npx wrangler d1 execute skyphusion-llm --remote --file=migrate-v0.126.0.sql
 ```
 
-**Columns added without a standalone delta file.** A few schema changes shipped only
-as trailing `ALTER TABLE` statements in `schema.sql` (no `migrate-vX.Y.Z.sql`), e.g.
-`renders.project_id` (v0.55.0) and the `cast_members` LoRA columns. Fresh installs get
-them from `schema.sql`; to add one to an existing DB, copy the matching `ALTER` out of
-`schema.sql` and run it once, for example:
+**Cast manager + storyboard projects (`migrations/` subdirectory).** Starting at
+v0.46.0 the delta files moved from the repo root (`migrate-vX.Y.Z.sql`) into a
+`migrations/` subdirectory (`migrations/vX.Y.Z-name.sql`); the delta-only convention is
+unchanged (never re-run `schema.sql` against prod). Apply each once, in order, if you
+are upgrading across these versions:
+
+For v0.46.0 (persisted cast manager): `migrations/v0.46.0-cast.sql` adds the
+`cast_members` table and its indexes (idempotent, `IF NOT EXISTS`).
 
 ```bash
-npx wrangler d1 execute skyphusion-llm --remote --command "ALTER TABLE renders ADD COLUMN project_id INTEGER"
+npx wrangler d1 execute skyphusion-llm --remote --file=migrations/v0.46.0-cast.sql
 ```
+
+For v0.53.0 (persisted storyboard projects): `migrations/v0.53.0-projects.sql` adds the
+`storyboard_projects` table and its indexes (idempotent, `IF NOT EXISTS`).
+
+```bash
+npx wrangler d1 execute skyphusion-llm --remote --file=migrations/v0.53.0-projects.sql
+```
+
+For v0.55.0 (project-scoped render history): `migrations/v0.55.0-renders-project-id.sql`
+adds `renders.project_id` and the `renders_by_user_project` index.
+
+```bash
+npx wrangler d1 execute skyphusion-llm --remote --file=migrations/v0.55.0-renders-project-id.sql
+```
+
+For v0.57.0 (standalone cast LoRA training): `migrations/v0.57.0-cast-lora.sql` adds the
+five LoRA columns to `cast_members` (`lora_key`, `lora_status`, `lora_job_id`,
+`lora_error`, `lora_trained_at`).
+
+```bash
+npx wrangler d1 execute skyphusion-llm --remote --file=migrations/v0.57.0-cast-lora.sql
+```
+
+The v0.55.0 and v0.57.0 files use `ALTER TABLE ADD COLUMN`, which SQLite does not make
+idempotent; re-applying surfaces a non-fatal "duplicate column name" warning per
+statement and continues. Fresh installs get all of the above from `schema.sql` and need
+none of these deltas.
 
 All other releases are code/frontend-only with no D1 migration.

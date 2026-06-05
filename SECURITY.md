@@ -1,8 +1,12 @@
 # Security policy
 
+## Supported versions
+
+This is a rolling, single-`main`-branch deployment template; only the latest release on `main` receives security fixes. If you are running an older revision, upgrade to the newest version to pick them up.
+
 ## Reporting a vulnerability
 
-If you find a security issue, please do not file a public GitHub issue. Email a private report to the project maintainer.
+Please do not file a public GitHub issue for security problems. Instead, report it privately through GitHub's private vulnerability reporting: open the repository's **Security** tab and click **"Report a vulnerability"**. This creates a private advisory visible only to you and the maintainers. (If that option is not visible, open a minimal public issue asking for a private channel, without disclosing any details.)
 
 Please include:
 
@@ -11,7 +15,7 @@ Please include:
 - The affected version (commit SHA if known)
 - Any suggestions for remediation
 
-Reports will be acknowledged within a reasonable window. Time-sensitive issues should say so in the subject line.
+Reports will be acknowledged within a reasonable window (target: 5 business days). Time-sensitive issues should say so. Please allow up to 90 days for a coordinated fix before public disclosure.
 
 ## Scope
 

@@ -32,18 +32,18 @@ A working template for the Cloudflare AI stack. One Worker, no framework, no bui
 - **Cloudflare Workflows** owns long-running Unified Billing video and music generation (30s to 3min jobs). The `LongRunWorkflow` class holds the blocking `env.AI.run` call alive across step boundaries that `ctx.waitUntil` cannot.
 - **Cloudflare Access** gates the entire worker URL. The worker reads `Cf-Access-Authenticated-User-Email` to scope history per user; R2 objects carry `customMetadata.user_email` so cross-user access is impossible even if a UUID is guessed.
 - **Client-side video keyframe extraction** sends 8 evenly-spaced frames to vision-capable chat models instead of uploading the full video file.
-- **Searchable model picker** (v0.111.0) groups the ~50 catalog entries across 7 modalities with capability badges (vision, stream) inline; type to filter by name.
+- **Searchable model picker** (v0.111.0) groups the ~70 catalog entries across 7 modalities with capability badges (vision, stream) inline; type to filter by name.
 
 ## Features
 
-**Chat (35 models across 5 providers; all stream-capable):**
-- Workers AI: Llama 4 Scout, Llama 3.x family, Qwen3 30B / QwQ 32B / Qwen2.5 Coder 32B, DeepSeek R1, Mistral Small 3.1, Gemma 4 26B / Gemma 3 12B, Granite 4 Micro, Nemotron 3 120B, GLM-4.7 Flash, Hermes 2 Pro, GPT-OSS 120B / 20B, Kimi K2.6
+**Chat (35 models across 5 providers; 34 of 35 stream-capable):**
+- Workers AI: Llama 4 Scout, Llama 3.x family, Qwen3 30B / QwQ 32B / Qwen2.5 Coder 32B, DeepSeek R1, Mistral Small 3.1, Gemma 4 26B / Gemma 3 12B, Granite 4 Micro, Nemotron 3 120B, GLM-4.7 Flash, Hermes 2 Pro, GPT-OSS 120B / 20B, Kimi K2.6, SEA-LION v4 27B, LLaVA 1.5 7B (single-shot vision; the one non-streaming model)
 - Anthropic (Unified Billing): Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 4.6, Haiku 4.5 (all streaming)
 - xAI BYOK: Grok 4.3, Grok 4.20 (Multi-Agent and Reasoning), Grok Build 0.1 (all streaming as of v0.16.0)
 - OpenAI (Unified Billing): GPT-5.5, GPT-5.4, GPT-5.4 mini, o4-mini (streaming as of v0.21.1; needs CF credits)
 - Google Gemini (Unified Billing): Gemini 3.1 Pro (streaming as of v0.21.4; needs CF credits)
 
-**Image generation:** Google Nano Banana Pro (Unified Billing), GPT Image 1.5 (OpenAI; transparent PNG with an OpenAI key, opaque otherwise; v0.22.1), Recraft V4 (opaque, art-directed; v0.22.0), FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM. FLUX.2 models accept up to 4 reference images (v0.16.0) for image-to-image generation, downscaled client-side to 512px.
+**Image generation:** Google Nano Banana Pro (Unified Billing), GPT Image 1.5 (OpenAI; transparent PNG with an OpenAI key, opaque otherwise; v0.22.1), Recraft V4 (opaque, art-directed; v0.22.0), FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM, Stable Diffusion XL. FLUX.2 models accept up to 4 reference images (v0.16.0) for image-to-image generation, downscaled client-side to 512px.
 
 **Video generation:** Google Veo 3.1 / 3.1 Fast / 3 / 3 Fast (Unified Billing), ByteDance Seedance 2.0 / 2.0 Fast, MiniMax Hailuo 2.3 / 2.3 Fast, RunwayML Gen-4.5, Alibaba HappyHorse 1.0 T2V and I2V (image-to-video, v0.21.5), PixVerse v6 / v5.6, Vidu Q3 Pro / Q3 Turbo, xAI Grok Imagine Video. BYOK for xAI, Unified Billing for the rest (durable via Cloudflare Workflows).
 
@@ -51,7 +51,7 @@ A working template for the Cloudflare AI stack. One Worker, no framework, no bui
 
 **Text-to-speech:** Aura-2 EN / ES, MeloTTS.
 
-**Speech-to-text:** Whisper Large v3 Turbo / Whisper / Whisper Tiny EN (one-shot transcription), plus **Deepgram Flux** conversational/streaming STT with live turn detection over a WebSocket (v0.108.0).
+**Speech-to-text:** Whisper Large v3 Turbo / Whisper / Whisper Tiny EN and Deepgram Nova-3 (one-shot transcription), plus **Deepgram Flux** conversational/streaming STT with live turn detection over a WebSocket (v0.108.0).
 
 **Voice chat: talk to any model, hear it reply (v0.118.0):** a mic button on any chat model starts a hands-free loop, your speech is transcribed by Flux, each finished turn is sent to the selected model through the normal chat path, and the reply is spoken back via Aura-2 TTS. Works with all 35 chat models, the conversation saves to history like any other, and the whole loop runs on Cloudflare (no third-party STT/TTS). See [Voice chat](#voice-chat).
 
@@ -141,7 +141,7 @@ repo is only the control plane.
 - Static frontend served via Workers Assets
 - Cloudflare Access in front for auth
 
-Roughly 3700 LOC TypeScript in `src/index.ts` plus ~1900 LOC across the extracted modules (`src/providers/`, `src/parsers/`, `src/discord.ts`, `chunking.ts`, and friends), plus ~3900 LOC vanilla JS / CSS / HTML in `public/`, plus schema.sql.
+Roughly 7800 LOC TypeScript in `src/index.ts` plus ~9000 LOC across the extracted modules (`src/providers/`, `src/parsers/`, `src/discord.ts`, `chunking.ts`, and friends), plus ~17,000 LOC vanilla JS / CSS / HTML in `public/`, plus schema.sql.
 
 ## Quickstart
 
@@ -431,9 +431,9 @@ The rest of the Gemini family (`gemini-3-flash`, `gemini-2.5-pro/flash`, the fla
 
 Video models have two possible routes through the AI Gateway:
 
-**Route A: Unified Billing via `env.AI.run`** (binding-based, 14 of 15 models). Cloudflare manages provider auth and bills your CF account directly. Requires opting into Unified Billing in the AI Gateway dashboard and funding it with credits. Per CF docs: BYOK is **not** supported for third-party models called through the AI binding.
+**Route A: Unified Billing via `env.AI.run`** (binding-based, 15 of 16 models). Cloudflare manages provider auth and bills your CF account directly. Requires opting into Unified Billing in the AI Gateway dashboard and funding it with credits. Per CF docs: BYOK is **not** supported for third-party models called through the AI binding.
 
-**Route B: BYOK via per-provider AI Gateway endpoints** (1 of 15 models). Hits `/grok/v1/videos/*` directly with your stored xAI key. Works today without Unified Billing.
+**Route B: BYOK via per-provider AI Gateway endpoints** (1 of 16 models). Hits `/grok/v1/videos/*` directly with your stored xAI key. Works today without Unified Billing.
 
 This deployment supports both. The router picks per-model based on a `byok_alias` field in the model catalog. If a model has `byok_alias` set and the provider is `xai`, the worker uses BYOK. Otherwise it uses `env.AI.run`, which will fail with code `2021: Invalid User Credentials` until Unified Billing is enabled.
 
@@ -510,12 +510,13 @@ The xAI BYOK route exposes an `image_input` parameter for image-to-video on supp
 
 Attach an audio file, pick a Whisper model, click Run. The worker calls Whisper directly via `env.AI.run` (no async; Whisper completes in seconds) and stores the transcript as the chat's `output` text. The audio's bytes are not persisted; only the transcript is kept on the row's attachment record, same convention as the chat-path audio attachments.
 
-Three Whisper variants are exposed:
+Four one-shot models are exposed:
 - `@cf/openai/whisper-large-v3-turbo` (default; best quality, multilingual)
 - `@cf/openai/whisper` (general purpose, slightly older)
 - `@cf/openai/whisper-tiny-en` (fast, English-only, beta)
+- `@cf/deepgram/nova-3` (Deepgram Nova-3; accurate)
 
-Whisper is hosted on Workers AI (no Unified Billing needed).
+All four are hosted on Workers AI (no Unified Billing needed).
 
 ## Voice chat
 
@@ -562,11 +563,11 @@ Input fields:
 - `user_input` -> `prompt` (style/mood/genre, ~10-300 chars). Example: `"Indie folk, melancholic, introspective, longing, solitary walk, coffee shop"`
 - `system_prompt` -> `lyrics` (optional, ~10-3000 chars). Supports structure tags: `[Intro]`, `[Verse]`, `[Chorus]`, `[Bridge]`, `[Outro]`
 
-This is a Cloudflare-proxied (third-party) model, so it requires Unified Billing on the gateway. It will fail with the same `2021: Invalid User Credentials` error as the other 12 video models until credits are funded.
+This is a Cloudflare-proxied (third-party) model, so it requires Unified Billing on the gateway. It will fail with the same `2021: Invalid User Credentials` error as the other 14 Unified-Billing video models until credits are funded.
 
 ## Image generation
 
-Ten models in the catalog: Google Nano Banana Pro and OpenAI GPT Image 1.5, plus Recraft V4, FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM. The seven FLUX/Leonardo/Lykon models run through Workers AI (no BYOK or Unified Billing required); Nano Banana Pro and Recraft V4 are proxied partner models on Unified Billing (need CF credits); GPT Image 1.5 is Unified Billing for opaque output and OpenAI BYOK for transparent output (see below).
+Eleven models in the catalog: Google Nano Banana Pro and OpenAI GPT Image 1.5, plus Recraft V4, FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM, Stable Diffusion XL. The eight FLUX/Leonardo/Lykon/Stability models run through Workers AI (no BYOK or Unified Billing required); Nano Banana Pro and Recraft V4 are proxied partner models on Unified Billing (need CF credits); GPT Image 1.5 is Unified Billing for opaque output and OpenAI BYOK for transparent output (see below).
 
 ### Google Nano Banana Pro (Unified Billing, v0.21.2)
 
@@ -754,7 +755,7 @@ If your use case is the legal-research pattern (citation accuracy matters, sourc
 
 ## Streaming
 
-`POST /api/chat/stream` accepts the same request body as `POST /api/chat` and returns `text/event-stream`. Available for any chat model flagged `streaming: true` in the catalog (all 33 chat models, covering all five providers: Anthropic, xAI, Workers AI, OpenAI proxied, and Gemini).
+`POST /api/chat/stream` accepts the same request body as `POST /api/chat` and returns `text/event-stream`. Available for any chat model flagged `streaming: true` in the catalog (34 of the 35 chat models, all but the single-shot LLaVA 1.5, covering all five providers: Anthropic, xAI, Workers AI, OpenAI proxied, and Gemini).
 
 Wire format:
 
@@ -789,7 +790,7 @@ Note: AI Gateway does not surface `cf-aig-log-id` on proxied SSE responses, so s
 - `capabilities`: array. Currently only `"vision"` is recognized; applies to chat models only.
 - `provider` (optional): `"workers-ai"` (default) | `"anthropic"` (Unified Billing) | `"xai"` (BYOK) | `"openai"` / `"google"` / `"bytedance"` / `"minimax"` / `"runwayml"` / `"alibaba"` / `"pixverse"` / `"vidu"` (Unified Billing). Drives the call dispatch.
 - `byok_alias` (optional): for xAI video, the upstream model name passed to the provider API.
-- `streaming` (optional, chat only): when `true`, the model is eligible for `POST /api/chat/stream`. All current chat models across the five providers (Anthropic, Workers AI, xAI, OpenAI, Gemini) are wired.
+- `streaming` (optional, chat only): when `true`, the model is eligible for `POST /api/chat/stream`. 34 of the 35 chat models across the five providers (Anthropic, Workers AI, xAI, OpenAI, Gemini) are wired; only the single-shot LLaVA 1.5 is not.
 
 Full Workers AI catalog: https://developers.cloudflare.com/workers-ai/models/. Skip anything tagged "Planned deprecation."
 
@@ -815,7 +816,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). PRs welcome. Current backlog items that 
 - **Discriminated-union refactor of `InputAttachment`**: currently a flat shape with optional fields; a proper tagged union would surface real assumptions in the code.
 - **Provider-shared request builders**: `callXai` + `callXaiStream` share ~30 lines. Factor out URL/headers/body builders.
 - **Upstream BYOK video poll throttle**: client polls every 5s, each currently triggers an upstream call. Adding `last_upstream_check_at` to the chats row would let us throttle to ~1 upstream call per 20-30s while keeping client UX responsive.
-- **Accessibility on the v0.15.0 model picker**: keyboard-accessible (uses `<details>`) but missing `role="combobox"`, `aria-expanded`, `aria-controls`.
+- **Accessibility on the model picker**: keyboard-accessible (uses `<details>`) but missing `role="combobox"`, `aria-expanded`, `aria-controls`.
 - **RAG chunking quality**: fixed-size chunking within page/sheet boundaries; recursive separator splitting would substantially improve retrieval on technical and legal docs.
 - **True video understanding via Gemini routing**: the existing 8-keyframe sampling is a workaround; Gemini 2.5 / 3 Pro could handle real temporal video reasoning.
 - **Additional Workers AI model entries**: new arrivals show up in the CF catalog regularly.

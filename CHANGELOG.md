@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.136.1
+
+Documentation accuracy pass for release. No code change; corrects stale numbers
+and instructions across the public docs after auditing them against the code.
+
+- **README model counts** were stale in several places. Corrected against
+  `src/models.ts` (71 catalog entries total): catalog "~50" -> "~70"; video
+  "15 models" -> "16"; image "Ten" -> "Eleven" (Stable Diffusion XL was
+  missing); chat streaming "all 33" -> "34 of 35" (the single-shot LLaVA 1.5 is
+  the lone non-streaming chat model). Added the shipped-but-undocumented models
+  to the feature lists: SEA-LION v4 27B, LLaVA 1.5 7B, Stable Diffusion XL, and
+  Deepgram Nova-3 (the STT section now lists four one-shot models, not three).
+  Refreshed the stale LOC figures (index.ts ~3700 -> ~7800, etc.).
+- **MIGRATIONS.md** never documented the `migrations/` subdirectory and falsely
+  claimed `renders.project_id` (v0.55.0) and the `cast_members` LoRA columns
+  (v0.57.0) shipped with no delta file. They do: documented `migrations/`
+  v0.46.0 (cast), v0.53.0 (projects), v0.55.0 (renders.project_id), v0.57.0
+  (cast LoRA) with their apply commands; removed a stray misplaced v0.20.2
+  command block under the v0.22.1 heading.
+- **SECURITY.md** had no usable reporting channel ("email the maintainer", no
+  address). Switched to GitHub private vulnerability reporting (Security tab ->
+  Report a vulnerability), added a supported-versions statement and a 90-day
+  coordinated-disclosure window.
+- **CONTRIBUTING.md**: noted CI runs the vitest suite (not just typecheck) on
+  same-repo PRs/pushes, and to run `npm test` before pushing.
+
+### Code
+- Docs only: `README.md`, `MIGRATIONS.md`, `SECURITY.md`, `CONTRIBUTING.md`,
+  `package.json` (version bump). No `src/` or `public/` change.
+- typecheck: `tsc --noEmit` clean. tests: `vitest run` 541 pass (unchanged).
+
 ## v0.136.0
 
 Stop the render status from hanging at IN_QUEUE forever when RunPod drops a job,

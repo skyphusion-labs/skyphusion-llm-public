@@ -56,7 +56,7 @@ For bug reports: include the model you were using, the operation that failed, an
 ## Submitting a PR
 
 1. Fork, branch, code.
-2. Run `npm run typecheck` before pushing. The CI workflow runs the same check; failing typecheck blocks merge.
+2. Run `npm run typecheck` and `npm test` (vitest) before pushing. CI runs both: same-repo PRs and pushes run typecheck plus the full test suite, fork PRs run typecheck. A failing check blocks merge.
 3. If you touched the `Env` interface or added a binding, run `npx wrangler types` to regenerate `worker-configuration.d.ts` and commit the regenerated file.
 4. Wrangler configuration changes go in `wrangler.example.toml` (the committed template). The actual `wrangler.toml` is gitignored so deployers can keep their own IDs; document any new bindings as a copy-paste TOML block in the CHANGELOG entry for the version so existing deployers can apply them by hand.
 5. If you touched the D1 schema, document the migration step in the CHANGELOG and in the README.

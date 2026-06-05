@@ -1853,7 +1853,10 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
     const loaded = new Map<number, Awaited<ReturnType<typeof getCastById>>>();
     await Promise.all(
       ids.map(async (id) => {
-        loaded.set(id, await getCastById(env, id, userEmail));
+        // v0.135.14: harvest a still-"training" row whose job actually finished
+        // so reuse works even if the cast page was never re-opened to poll it.
+        const c = await getCastById(env, id, userEmail);
+        loaded.set(id, await refreshTrainingLora(env, c, userEmail));
       }),
     );
     const resolved = resolveCastLoraBindings(castLorasInput, loaded);
@@ -3087,7 +3090,10 @@ async function handleFinalizeSubmit(
     const loaded = new Map<number, Awaited<ReturnType<typeof getCastById>>>();
     await Promise.all(
       ids.map(async (id) => {
-        loaded.set(id, await getCastById(env, id, userEmail));
+        // v0.135.14: harvest a still-"training" row whose job actually finished
+        // so reuse works even if the cast page was never re-opened to poll it.
+        const c = await getCastById(env, id, userEmail);
+        loaded.set(id, await refreshTrainingLora(env, c, userEmail));
       }),
     );
     const resolved = resolveCastLoraBindings(bodyCastLoras, loaded);
@@ -3868,6 +3874,58 @@ async function handleCastLoraStatus(
   }
   // Still pending. Don't update the cast row; let the next poll catch the change.
   return json({ cast, view });
+}
+
+// v0.135.14: a LoRA's result is only harvested into D1 by handleCastLoraStatus
+// (the cast page poll). If the page is closed before training finishes, the row
+// stays lora_status="training" forever and the key is never written, so a later
+// render RETRAINS it instead of reusing (the v0.135.6 reuse reads lora_status).
+// Self-heal at render/finalize submit time: for any bound slot still "training"
+// with a job id, poll RunPod and harvest, mirroring handleCastLoraStatus's
+// COMPLETED/FAILED handling. A poll error leaves the row as-is (the slot just
+// trains fresh this render).
+async function refreshTrainingLora(
+  env: Env,
+  cast: Awaited<ReturnType<typeof getCastById>>,
+  userEmail: string,
+): Promise<Awaited<ReturnType<typeof getCastById>>> {
+  if (!cast || cast.lora_status !== "training" || !cast.lora_job_id) return cast;
+  try {
+    const poll = await pollRenderJob(env, cast.lora_job_id);
+    if (!poll.ok) return cast;
+    const view = poll.view;
+    if (view.status === "COMPLETED") {
+      const output = view.output as Record<string, unknown> | undefined;
+      const loraKey =
+        output && typeof output.lora_key === "string" ? output.lora_key : null;
+      if (loraKey) return (await markLoraReady(env, cast.id, userEmail, loraKey)) || cast;
+      return (
+        (await markLoraFailed(
+          env,
+          cast.id,
+          userEmail,
+          "GPU job completed but envelope did not include lora_key",
+        )) || cast
+      );
+    }
+    if (
+      view.status === "FAILED" ||
+      view.status === "TIMED_OUT" ||
+      view.status === "CANCELLED"
+    ) {
+      return (
+        (await markLoraFailed(
+          env,
+          cast.id,
+          userEmail,
+          view.error || `training ${view.status.toLowerCase()}`,
+        )) || cast
+      );
+    }
+  } catch {
+    // leave the row as-is on a poll error
+  }
+  return cast;
 }
 
 // ---------- Chat (text generation, multimodal in) ----------

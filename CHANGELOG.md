@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.135.14
+
+Fix a LoRA-reuse hole: a trained LoRA could be silently retrained. A LoRA's
+result is only harvested into D1 (lora_status -> "ready", lora_key written) by
+`GET /api/cast/:id/lora-status`, which only runs while the cast page is open and
+polling. There is no cron. So if you start a LoRA training and close/leave the
+cast page before it finishes, the RunPod job completes but the row stays
+`lora_status="training"` forever, and a later render sees it as not-ready and
+RETRAINS it from scratch, defeating the v0.135.6 reuse. (Observed live: Kaito's
+job was COMPLETED on RunPod while his cast row still said "training".)
+
+Now the render/finalize submit self-heals: when resolving `castLoras`, any bound
+slot still "training" with a job id is polled and harvested first (mirroring the
+lora-status handler's COMPLETED/FAILED logic), so a finished-but-unharvested LoRA
+gets reused instead of retrained. A poll error leaves the row as-is (the slot
+just trains fresh that render). The cast-page UI already self-heals on revisit;
+a cron for fully passive status updates is a possible follow-up, not needed for
+reuse correctness.
+
+### Code
+- `src/index.ts`: add `refreshTrainingLora(env, cast, userEmail)`; call it in the
+  castLoras resolution of both the render-submit and finalize paths.
+- typecheck: `tsc --noEmit` clean. tests: `vitest run` 535 pass.
+
 ## v0.135.13
 
 Add an explicit "art style" control to training-set generation, replacing the

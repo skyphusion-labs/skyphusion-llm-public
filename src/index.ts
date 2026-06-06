@@ -7851,11 +7851,20 @@ async function handleArtifact(request: Request, env: Env, key: string): Promise<
   // else (chat input + output artifacts) stays on env.R2. See
   // pickArtifactBucket / isRendersKey above.
   const bucket = pickArtifactBucket(env, key);
-  const obj = await bucket.get(key);
+  // v0.142.0: forward the request's conditional headers (If-None-Match) to R2.
+  // Artifacts at a STABLE key can be overwritten in place (e.g. regen-shot
+  // rewrites renders/<project>/<job>/keyframes/<shot>.png), and the old
+  // "private, max-age=3600" header let the browser serve the pre-regen pixels
+  // for up to an hour. With a conditional get, R2 returns the object WITHOUT a
+  // body when the client's ETag still matches, and we reply 304 (a ~0-byte
+  // revalidation); a changed object returns fresh bytes. customMetadata is
+  // present on the body-less R2Object too, so the ownership check is unaffected.
+  const obj = await bucket.get(key, { onlyIf: request.headers });
   if (!obj) return new Response("Not Found", { status: 404 });
 
   // Authorization: only the user who created the artifact may fetch it.
-  // We stored user_email in customMetadata at put time.
+  // We stored user_email in customMetadata at put time. Checked before any
+  // 304 so a non-owner with a guessed ETag still gets 403, never a hit/miss.
   const owner = obj.customMetadata?.user_email;
   if (owner !== userEmail) {
     return new Response("Forbidden", { status: 403 });
@@ -7868,8 +7877,18 @@ async function handleArtifact(request: Request, env: Env, key: string): Promise<
 
   const headers = new Headers();
   headers.set("content-type", obj.httpMetadata?.contentType || "application/octet-stream");
-  headers.set("cache-control", "private, max-age=3600");
+  // Revalidate every fetch instead of blind-caching for an hour: no-cache means
+  // the browser keeps its copy but must check ETag first, so an overwritten
+  // artifact shows fresh while an unchanged one costs only a 304. MP4s (which
+  // never overwrite, since a new render is a new job-id key) just 304 cheaply.
+  headers.set("cache-control", "private, no-cache");
+  if (obj.httpEtag) headers.set("etag", obj.httpEtag);
   headers.set("content-disposition", `inline; filename="${filename}"`);
+
+  // R2 returns a body-less R2Object when the conditional matched (not modified).
+  if (!("body" in obj) || obj.body === null) {
+    return new Response(null, { status: 304, headers });
+  }
   return new Response(obj.body, { headers });
 }
 

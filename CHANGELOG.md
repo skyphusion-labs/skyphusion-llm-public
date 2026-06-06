@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.142.0
+
+Artifact cache: ETag revalidation instead of a blind 1-hour cache.
+
+`/api/artifact` served `Cache-Control: private, max-age=3600`, so an artifact
+overwritten at a stable key (the `regen-shot` path rewrites
+`renders/<project>/<job>/keyframes/<shot>.png` in place) could show the browser's
+pre-regen copy for up to an hour. The handler now forwards the request's
+conditional headers to R2 and serves `private, no-cache` + an `ETag`: an
+unchanged artifact costs a ~0-byte `304`, a changed one returns fresh bytes.
+This is the non-breaking alternative to hashing keyframe filenames (which would
+have forced D1 `keyframes_json` rewrites + orphaned-object cleanup); keys stay
+stable. Note these responses are `private`, so this was never a Cloudflare
+edge-cache issue, only the browser's private cache. MP4s never overwrite (a new
+render is a new job-id key), so they simply `304` cheaply.
+
+### Code
+- `src/index.ts` `handleArtifact`: conditional `bucket.get(key, { onlyIf:
+  request.headers })`; `ETag` from `obj.httpEtag`; `304` on a body-less match;
+  `cache-control: private, no-cache`. Ownership is still checked before any
+  `304`, so a non-owner with a guessed ETag gets `403`, not a hit/miss oracle.
+- `tsc --noEmit`: clean. `vitest`: all passing.
+
 ## v0.141.0
 
 Per-render logs in R2, plus a History "logs" link.

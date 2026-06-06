@@ -412,3 +412,16 @@ CREATE INDEX IF NOT EXISTS idx_sbprojects_user
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sbprojects_slug_user
   ON storyboard_projects(user_email, slug);
+
+-- v0.139.0: User Preferences store (first instance). One row per user, a JSON
+-- blob of settings so new prefs need no schema change. First pref:
+-- emailNotifications (default false) gates render-done emails.
+CREATE TABLE IF NOT EXISTS user_prefs (
+  user_email  TEXT PRIMARY KEY,
+  prefs_json  TEXT NOT NULL DEFAULT '{}',
+  updated_at  INTEGER NOT NULL
+);
+
+-- v0.139.0: epoch seconds the terminal-status email was claimed for a render
+-- (NULL = not yet). Once-only guard for the notify path.
+ALTER TABLE renders ADD COLUMN notified_at INTEGER;

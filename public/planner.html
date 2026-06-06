@@ -37,10 +37,21 @@
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg>
       </button>
       <div id="account-menu" class="account-menu" role="menu" hidden>
-        <button id="account-user" class="account-row account-user" type="button" role="menuitem" title="user preferences (coming soon)">
+        <button id="account-user" class="account-row account-user" type="button" role="menuitem" title="signed in">
           <span class="account-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg></span>
           <span class="account-email" id="account-email">loading&#8230;</span>
         </button>
+        <!-- v0.139.0: User Preferences (first instance). -->
+        <div class="account-prefs" role="group" aria-label="Preferences">
+          <div class="account-prefs-head">Preferences</div>
+          <label class="account-pref">
+            <input type="checkbox" id="pref-email-notifications" />
+            <span class="account-pref-text">
+              <span class="account-name">Email me when a render finishes</span>
+              <span class="account-sub" id="pref-email-status">off; you will not get render emails</span>
+            </span>
+          </label>
+        </div>
         <a class="account-row account-link" href="/cast.html" role="menuitem">
           <span class="account-name account-name-vivijure">Cast</span>
           <span class="account-sub">Vivijure character references</span>

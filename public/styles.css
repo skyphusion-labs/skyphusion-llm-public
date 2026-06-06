@@ -4871,6 +4871,21 @@ body::before {
 .account-email { font-size: 0.85rem; color: var(--fg); word-break: break-all; }
 .account-name { font-weight: 600; font-size: 0.92rem; }
 .account-sub { font-size: 0.72rem; color: var(--fg-dim); }
+/* v0.139.0: User Preferences block in the account menu. */
+.account-prefs {
+  padding: 0.5rem 0.7rem 0.4rem; border-top: 1px solid var(--border-soft);
+  margin-top: 0.25rem;
+}
+.account-prefs-head {
+  font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--fg-dim); margin-bottom: 0.45rem;
+}
+.account-pref {
+  display: flex; align-items: flex-start; gap: 0.55rem; cursor: pointer;
+  padding: 0.3rem 0; width: 100%;
+}
+.account-pref input[type="checkbox"] { margin-top: 0.18rem; flex: 0 0 auto; cursor: pointer; }
+.account-pref-text { display: flex; flex-direction: column; gap: 0.12rem; }
 .account-name-vivijure {
   background: var(--brand-grad); -webkit-background-clip: text; background-clip: text; color: transparent;
 }

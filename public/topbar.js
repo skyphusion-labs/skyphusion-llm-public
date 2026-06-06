@@ -59,4 +59,52 @@
       accountToggle.setAttribute("aria-expanded", "false");
     });
   }
+
+  // --- 3. user preferences (v0.139.0) ---
+  // The first User Preferences control: email-notifications toggle. Loads the
+  // current value from GET /api/prefs and PATCHes on change. Idempotent on
+  // element existence (pages without the control just skip this).
+  const emailPref = document.getElementById("pref-email-notifications");
+  const emailPrefStatus = document.getElementById("pref-email-status");
+  if (emailPref) {
+    const setStatus = (on) => {
+      if (!emailPrefStatus) return;
+      emailPrefStatus.textContent = on
+        ? "on; emailed when a render finishes"
+        : "off; you will not get render emails";
+    };
+    fetch("/api/prefs", { headers: { accept: "application/json" } })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status))))
+      .then((data) => {
+        const on = !!(data && data.prefs && data.prefs.emailNotifications);
+        emailPref.checked = on;
+        setStatus(on);
+      })
+      .catch(() => {
+        if (emailPrefStatus) emailPrefStatus.textContent = "(could not load preferences)";
+      });
+    emailPref.addEventListener("change", () => {
+      const want = emailPref.checked;
+      emailPref.disabled = true;
+      if (emailPrefStatus) emailPrefStatus.textContent = "saving…";
+      fetch("/api/prefs", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ emailNotifications: want }),
+      })
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status))))
+        .then((data) => {
+          const on = !!(data && data.prefs && data.prefs.emailNotifications);
+          emailPref.checked = on;
+          setStatus(on);
+        })
+        .catch(() => {
+          emailPref.checked = !want; // revert on failure
+          if (emailPrefStatus) emailPrefStatus.textContent = "(save failed; try again)";
+        })
+        .finally(() => {
+          emailPref.disabled = false;
+        });
+    });
+  }
 })();

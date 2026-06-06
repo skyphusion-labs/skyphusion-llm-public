@@ -345,6 +345,71 @@ export async function markFinishDone(
     .run();
 }
 
+// v0.139.0: atomically claim the render-done email for a job (once-only). Flips
+// notified_at NULL -> now in a single conditional UPDATE for a TERMINAL row, so
+// concurrent pollers and the cron sweep can never double-send. Keyframe previews
+// are excluded (fast, not worth an email). Returns the row facts for the email
+// when THIS caller won the claim, else null (already claimed / not eligible).
+// The decision is made exactly once even when the owner has notifications off
+// (the caller claims, then checks prefs, then maybe sends).
+export interface RenderNotifyRow {
+  user_email: string;
+  project: string;
+  status: string;
+  output_key: string | null;
+  error: string | null;
+  execution_time_ms: number | null;
+  mode: string | null;
+}
+
+export async function claimRenderNotify(
+  env: Env,
+  jobId: string,
+): Promise<RenderNotifyRow | null> {
+  const now = nowSeconds();
+  const res = await env.DB.prepare(
+    `UPDATE renders SET notified_at = ?
+       WHERE job_id = ? AND notified_at IS NULL
+         AND status IN ('COMPLETED', 'FAILED')
+         AND COALESCE(mode, 'full') != 'keyframes-only'`,
+  )
+    .bind(now, jobId)
+    .run();
+  if ((res.meta?.changes ?? 0) !== 1) return null;
+  const row = await env.DB.prepare(
+    `SELECT user_email, project, status, output_key, error, execution_time_ms, mode
+       FROM renders WHERE job_id = ?`,
+  )
+    .bind(jobId)
+    .first<RenderNotifyRow>();
+  return row ?? null;
+}
+
+// v0.139.0: jobs to resolve in the background (the cron sweep) so a fire-and-
+// forget API render still reaches terminal + emails its owner without a client
+// polling. Only non-terminal rows recent enough to still be live on RunPod;
+// keyframe previews excluded (never emailed). Bounded so one tick is cheap.
+export async function listUnresolvedNotifiableJobs(
+  env: Env,
+  maxAgeSeconds: number,
+  limit = 25,
+): Promise<string[]> {
+  const cutoff = nowSeconds() - Math.max(0, maxAgeSeconds);
+  const res = await env.DB.prepare(
+    `SELECT job_id FROM renders
+       WHERE status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
+         AND notified_at IS NULL
+         AND COALESCE(mode, 'full') != 'keyframes-only'
+         AND submitted_at >= ?
+       ORDER BY submitted_at ASC
+       LIMIT ?`,
+  )
+    .bind(cutoff, Math.min(Math.max(1, limit), 100))
+    .all();
+  const rows = (res.results ?? []) as Array<{ job_id?: unknown }>;
+  return rows.map((r) => String(r.job_id)).filter((s) => s.length > 0);
+}
+
 export async function markFinishFailed(env: Env, jobId: string, error: string): Promise<void> {
   const now = nowSeconds();
   await env.DB.prepare(

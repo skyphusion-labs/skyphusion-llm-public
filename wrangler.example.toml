@@ -2,6 +2,15 @@ name = "skyphusion-llm"
 main = "src/index.ts"
 compatibility_date = "2026-05-01"
 
+# v0.139.0: cron for the render-done notification sweep. The scheduled() handler
+# resolves recent fire-and-forget renders (API contracts fired with no client
+# polling) so their owners still get the opt-in completion email. Cheap: a no-op
+# tick when nothing is in flight. NOTE: prod injects wrangler.toml from a Jenkins
+# secret, so this block must also be added to that secret for the cron to run in
+# production; the email otherwise still fires on the normal poll path.
+[triggers]
+crons = ["*/3 * * * *"]
+
 # AI binding. The unified binding handles Workers AI models directly and routes
 # third-party Unified Billing models (video and music partners) through the
 # Cloudflare AI Gateway. Anthropic (Unified Billing) and xAI (BYOK) bypass the

@@ -93,11 +93,13 @@ import {
   deleteRenderRow,
   classifyMissingJob,
   type RenderRow,
+  claimRenderNotify,
   getFinishState,
   getRenderByIdForUser,
   getRenderForPoll,
   insertRender,
   listRendersForUser,
+  listUnresolvedNotifiableJobs,
   listUserTags,
   markFinishDone,
   markFinishFailed,
@@ -116,6 +118,8 @@ import { callWorkersAIStream } from "./providers/workers-ai";
 import { callOpenAIStream } from "./providers/openai";
 import { callGemini, callGeminiStream } from "./providers/google";
 import { buildGenParams } from "./longrun-params";
+import { getUserPrefs, setUserPrefs } from "./user-prefs";
+import { buildRenderEmail } from "./render-email";
 import { buildProxiedImageParams } from "./proxied-image-params";
 import { generateOpenAIImage } from "./providers/openai-image";
 import type {
@@ -572,6 +576,12 @@ export default {
     if (url.pathname === "/api/storyboard/renders/adopt" && request.method === "POST") {
       return handleAdoptRender(request, env);
     }
+    // v0.139.0: User Preferences (first instance). GET returns this user's prefs
+    // with defaults; PATCH shallow-merges a partial. Scoped to the CF-Access email.
+    if (url.pathname === "/api/prefs") {
+      if (request.method === "GET") return handleGetPrefs(request, env);
+      if (request.method === "PATCH") return handlePatchPrefs(request, env);
+    }
     // v0.35.4: delete one render row from history. Optional ?artifact=true
     // also removes the silent MP4 from R2 when no other row references it.
     // v0.36.0: PATCH on the same path updates the row's label (only).
@@ -777,6 +787,45 @@ export default {
     }
 
     return env.ASSETS.fetch(request);
+  },
+
+  // v0.139.0: cron sweep so a fire-and-forget render (an API contract fired and
+  // walked away from, with no client polling) still reaches a terminal status
+  // and emails its owner. Resolves a bounded batch of recent non-terminal,
+  // not-yet-notified full renders against RunPod, persists the result, and runs
+  // the once-only notify. Keyframe previews and stale jobs are excluded. Cheap:
+  // it does nothing when there are no in-flight renders.
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(
+      (async () => {
+        if (!env.RUNPOD_API_KEY || !env.RUNPOD_ENDPOINT_ID) return;
+        // Only sweep jobs young enough that RunPod might still hold them (it GCs
+        // completed jobs); older unresolved rows are left to the poll path.
+        const SIX_HOURS = 6 * 60 * 60;
+        let jobs: string[] = [];
+        try {
+          jobs = await listUnresolvedNotifiableJobs(env, SIX_HOURS, 25);
+        } catch (err) {
+          console.error("notify sweep list failed:", err);
+          return;
+        }
+        for (const jobId of jobs) {
+          try {
+            const outcome = await pollRenderResolved(env, jobId);
+            if (outcome.kind === "ok") {
+              await updateRenderFromView(env, outcome.view).catch((err) =>
+                console.error("sweep render update failed:", err),
+              );
+            }
+            // phantom path already marked FAILED + notified inside pollRenderResolved;
+            // for a resolved view, fire the once-only notify here.
+            await maybeNotifyRenderDone(env, jobId);
+          } catch (err) {
+            console.error("notify sweep job failed:", jobId, err);
+          }
+        }
+      })(),
+    );
   },
 };
 
@@ -1939,6 +1988,30 @@ async function handleAudioAnalyze(request: Request, env: Env): Promise<Response>
   return json({ ok: true, output: plan });
 }
 
+// v0.139.0: User Preferences. GET returns the caller's prefs (with defaults);
+// PATCH shallow-merges a partial and returns the result. Scoped to the
+// Cloudflare-Access email. Unknown keys in a PATCH are dropped by the normalizer.
+async function handleGetPrefs(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const prefs = await getUserPrefs(env, userEmail);
+  return json({ ok: true, prefs });
+}
+
+async function handlePatchPrefs(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ error: "body must be a prefs object" }, { status: 400 });
+  }
+  const prefs = await setUserPrefs(env, userEmail, body);
+  return json({ ok: true, prefs });
+}
+
 // v0.138.0: adopt an existing RunPod job into this user's render History. Use
 // when a render was submitted to the RunPod endpoint OUTSIDE the Worker (a raw
 // contract fired straight at the GPU, or a backfill of older jobs) and you want
@@ -2445,6 +2518,45 @@ type RenderPollOutcome =
   // Any other poll failure (network, 5xx, unknown 404 with no row): transient.
   | { kind: "transient"; error: string; httpStatus: number };
 
+// v0.139.0: canonical public origin for links in notification emails (the
+// planner + artifact routes live behind Cloudflare Access here).
+const EMAIL_BASE_URL = "https://skyphusion.org";
+
+// v0.139.0: send the render-done email when (a) this caller wins the once-only
+// terminal-notification claim for the job, (b) the owner has emailNotifications
+// on, and (c) the EMAIL service binding is present. Best-effort: never throws,
+// so a failure cannot break the poll / cron that called it. Safe to call at
+// every terminal-transition point; the claim guarantees a single send.
+async function maybeNotifyRenderDone(env: Env, jobId: string): Promise<void> {
+  if (!env.EMAIL) return;
+  try {
+    const row = await claimRenderNotify(env, jobId);
+    if (!row || !row.user_email) return;
+    const prefs = await getUserPrefs(env, row.user_email);
+    if (!prefs.emailNotifications) return;
+    const mail = buildRenderEmail(
+      {
+        userEmail: row.user_email,
+        project: row.project,
+        status: row.status,
+        outputKey: row.output_key,
+        error: row.error,
+        executionTimeMs: row.execution_time_ms,
+        mode: row.mode,
+      },
+      EMAIL_BASE_URL,
+    );
+    await env.EMAIL.send({
+      to: row.user_email,
+      subject: mail.subject,
+      html: mail.html,
+      text: mail.text,
+    });
+  } catch (err) {
+    console.error("render notify email failed:", err);
+  }
+}
+
 async function pollRenderResolved(
   env: Env,
   jobId: string,
@@ -2482,6 +2594,7 @@ async function pollRenderResolved(
   await markRenderFailedByJobId(env, jobId, PHANTOM_JOB_MESSAGE).catch((err) =>
     console.error("markRenderFailedByJobId failed:", err),
   );
+  await maybeNotifyRenderDone(env, jobId); // v0.139.0: row just went terminal (FAILED)
   return { kind: "phantom", error: PHANTOM_JOB_MESSAGE };
 }
 
@@ -2579,6 +2692,8 @@ async function handleRenderPoll(
   } catch (err) {
     console.error("renders update failed:", err);
   }
+  // v0.139.0: row may have just gone terminal; email the owner if opted in.
+  await maybeNotifyRenderDone(env, result.view.jobId);
 
   return json({
     ok: true,

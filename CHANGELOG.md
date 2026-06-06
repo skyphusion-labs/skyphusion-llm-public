@@ -1,5 +1,54 @@
 # Changelog
 
+## v0.139.0
+
+User Preferences (first instance) + opt-in render-done email notifications.
+
+The `skyphusion-email` service binding (wired in v0.137.0) was dormant; this
+points it at its first real use, and stands up the per-user settings store the
+account menu had as a "coming soon" placeholder.
+
+**User Preferences.** A `user_prefs` table (one row per Cloudflare-Access email,
+a JSON blob so new prefs need no schema change) + `GET`/`PATCH /api/prefs`. The
+account menu now has a Preferences block; the first control is the email toggle.
+Reads always return the full shape with defaults, so nothing branches on "is it
+set".
+
+**Render-done emails (opt-in, default off).** When `emailNotifications` is on and
+one of your renders reaches a terminal status, you get one email (project,
+duration, a watch link for COMPLETED, the reason for FAILED). Built to NOT be
+spammy:
+- Opt-in, default off. No surprise mail.
+- Exactly one email per render: an atomic `notified_at` claim (NULL -> now in a
+  single conditional UPDATE) means concurrent polls and the cron can never
+  double-send.
+- Terminal status only; keyframe previews are excluded (fast, you are watching).
+- A cron (`*/3`) resolves fire-and-forget renders (an API contract fired with no
+  client polling) so they still reach terminal + email. The email also fires on
+  the normal poll path, so it works even before the cron is enabled.
+
+### Code
+- `src/user-prefs.ts` (new): `UserPrefs`, `normalizeUserPrefs`/`mergeUserPrefs`
+  (pure), `getUserPrefs`/`setUserPrefs`.
+- `src/render-email.ts` (new): `buildRenderEmail` (pure HTML+text builder, house
+  style, escaped).
+- `src/renders-db.ts`: `claimRenderNotify` (atomic once-only claim) +
+  `listUnresolvedNotifiableJobs` (cron sweep query).
+- `src/index.ts`: `maybeNotifyRenderDone` (claim -> check prefs -> send, best-
+  effort) hooked at the terminal-transition points; `GET`/`PATCH /api/prefs`
+  handlers + routes; `scheduled()` cron sweep.
+- `public/planner.html` + `public/topbar.js` + `public/styles.css`: Preferences
+  block in the account menu + email toggle wired to `/api/prefs`.
+- `tests/user-prefs.test.ts`, `tests/render-email.test.ts`: +13 tests (562 pass);
+  `tsc --noEmit` clean; `node --check` clean.
+- DB: `migrate-v0.139.0.sql` (user_prefs table + renders.notified_at); apply to
+  prod before/at deploy. `schema.sql` updated.
+- Config: `[triggers] crons` added to `wrangler.example.toml` + `wrangler.toml`.
+  Prod injects `wrangler.toml` from a Jenkins secret, so that secret must also
+  get the `[triggers]` block for the cron to run in production (the email still
+  fires on the poll path without it).
+
+
 ## v0.138.0
 
 Document the render contract API and make API-submitted renders show in History.

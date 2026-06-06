@@ -596,6 +596,21 @@ export interface MultiCharacterOverrides {
   // ControlNet adherence for the pose skeleton (0..2). Higher = stricter body
   // placement, lower = looser (lets the prompt's action win). Pod default 0.55.
   controlnet_conditioning_scale?: number;
+  // v0.137.4: pose-template geometry (vivijure-serverless 0.4.89+). These tune
+  // the OpenPose skeleton spacing so the bodies sit closer/further and the
+  // empty center band shrinks (it was getting filled with a hallucinated
+  // "ghost cape"). pose_inset_frac pulls both figures toward center (0..0.25;
+  // 0.12 -> n=2 centers at ~30%/70% vs the baked ~24%/76%); pose_gap_frac is
+  // the inter-column gap (0..0.15); pose_fig_width_frac / pose_fig_height_frac
+  // size the figure inside its column / the frame (0.3..1). All default to the
+  // pod's original geometry when unset.
+  pose_inset_frac?: number;
+  pose_gap_frac?: number;
+  pose_fig_width_frac?: number;
+  pose_fig_height_frac?: number;
+  // Extra negative-prompt terms appended ONLY on the pose path, to suppress the
+  // gap hallucination (e.g. "floating cloth, disembodied cape, third figure").
+  pose_negative?: string;
   // "layer" overlays the panels with a feathered alpha mask;
   // "side_by_side" tiles them horizontally.
   layout?: "layer" | "side_by_side";
@@ -1712,6 +1727,22 @@ export function normalizeMultiCharacterOverrides(
     && raw.controlnet_conditioning_scale <= 2
   ) {
     out.controlnet_conditioning_scale = raw.controlnet_conditioning_scale;
+  }
+  // v0.137.4: pose-template geometry (vivijure-serverless 0.4.89+). Bounded so a
+  // bad override can't produce a degenerate skeleton; absent -> pod uses its
+  // original geometry.
+  const poseFrac = (v: unknown, lo: number, hi: number): number | undefined =>
+    typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi ? v : undefined;
+  const inset = poseFrac(raw.pose_inset_frac, 0, 0.25);
+  if (inset !== undefined) out.pose_inset_frac = inset;
+  const gap = poseFrac(raw.pose_gap_frac, 0, 0.15);
+  if (gap !== undefined) out.pose_gap_frac = gap;
+  const fw = poseFrac(raw.pose_fig_width_frac, 0.3, 1);
+  if (fw !== undefined) out.pose_fig_width_frac = fw;
+  const fh = poseFrac(raw.pose_fig_height_frac, 0.3, 1);
+  if (fh !== undefined) out.pose_fig_height_frac = fh;
+  if (typeof raw.pose_negative === "string" && raw.pose_negative.trim()) {
+    out.pose_negative = raw.pose_negative.trim().slice(0, 400);
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }

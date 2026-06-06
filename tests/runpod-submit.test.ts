@@ -484,6 +484,39 @@ describe("normalizeMultiCharacterOverrides (v0.85.0: Phase R fields)", () => {
     ).toBeUndefined();
   });
 
+  it("passes pose-template geometry knobs in range", () => {
+    expect(
+      normalizeMultiCharacterOverrides({
+        pose_inset_frac: 0.12,
+        pose_gap_frac: 0.035,
+        pose_fig_width_frac: 0.95,
+        pose_fig_height_frac: 0.92,
+      }),
+    ).toEqual({
+      pose_inset_frac: 0.12,
+      pose_gap_frac: 0.035,
+      pose_fig_width_frac: 0.95,
+      pose_fig_height_frac: 0.92,
+    });
+  });
+
+  it("drops pose-geometry knobs out of range", () => {
+    expect(normalizeMultiCharacterOverrides({ pose_inset_frac: 0.3 })).toBeUndefined();
+    expect(normalizeMultiCharacterOverrides({ pose_gap_frac: 0.2 })).toBeUndefined();
+    expect(normalizeMultiCharacterOverrides({ pose_fig_width_frac: 0.2 })).toBeUndefined();
+    expect(normalizeMultiCharacterOverrides({ pose_fig_height_frac: 1.1 })).toBeUndefined();
+  });
+
+  it("trims + caps pose_negative and drops empty", () => {
+    expect(
+      normalizeMultiCharacterOverrides({ pose_negative: "  floating cloth, third figure  " }),
+    ).toEqual({ pose_negative: "floating cloth, third figure" });
+    expect(normalizeMultiCharacterOverrides({ pose_negative: "   " })).toBeUndefined();
+    const long = "x".repeat(500);
+    const out = normalizeMultiCharacterOverrides({ pose_negative: long });
+    expect(out?.pose_negative?.length).toBe(400);
+  });
+
   it("drops lora_scale_per_slot below 0", () => {
     const out = normalizeMultiCharacterOverrides({ lora_scale_per_slot: -0.1 });
     expect(out).toBeUndefined();

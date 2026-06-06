@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.137.4
+
+Make the multi-character pose-template geometry fully contract-driven, so the
+"ghost cape" fix (and any future pose-spacing tweak) lives on the job contract
+instead of being baked into the GPU image. The image stays immutable; the Worker
+sends the values.
+
+When two figures were posed wide apart, the empty center band got filled with a
+hallucinated draped shape (a stray cape/cloth) between them. The fix is to pull
+the figures closer and shrink that band, but those are tunables, so they belong
+on the contract, not in a pod rebuild.
+
+New `multiCharacterOverrides` keys (validated + range-bounded, forwarded to the
+pod's `multi_character` overrides): `pose_inset_frac` (0..0.25, pulls both
+figures toward center), `pose_gap_frac` (0..0.15, inter-column gap),
+`pose_fig_width_frac` / `pose_fig_height_frac` (0.3..1, figure size), and
+`pose_negative` (string, trimmed + capped at 400 chars, appended to the negative
+only on the pose path). All absent -> the pod uses its original geometry.
+
+Pairs with vivijure-serverless 0.4.89 (the pod side that reads these keys; its
+defaults reproduce the original geometry byte-for-byte).
+
+### Code
+- `src/runpod-submit.ts`: `MultiCharacterOverrides` gains the five keys;
+  `normalizeMultiCharacterOverrides` validates each (bounded floats via a local
+  `poseFrac` helper; `pose_negative` trim + 400-char cap).
+- `tests/runpod-submit.test.ts`: +3 tests (pass-through in range, drop out of
+  range, pose_negative trim/cap/empty). 68 pass; `tsc --noEmit` clean.
+- No D1 / Env change. Requires a Worker deploy to forward the new keys.
+
+
 ## v0.137.3
 
 Fix audio/narration mux still truncating the video to a short bed. The v0.136.5

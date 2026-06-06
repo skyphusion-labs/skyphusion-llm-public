@@ -237,9 +237,10 @@
 
       <details class="planner-audio-block">
         <summary>generate music via MiniMax 2.6</summary>
-        <p class="planner-stage-hint">describe the track: genre, mood, instrumentation, era. duration is up to the model; expect ~30-60 seconds.</p>
+        <p class="planner-stage-hint">describe the track: genre, mood, instrumentation, era. duration is up to the model; expect ~30-60 seconds. "suggest from video" drafts a prompt matched to your storyboard's mood, tempo, and energy arc (auto-filled the first time you open this step).</p>
         <textarea id="planner-music-prompt" rows="3" placeholder="cinematic orchestral, slow build, strings + piano, melancholic, modern film score"></textarea>
         <div class="planner-audio-actions">
+          <button id="planner-music-suggest" type="button" class="planner-secondary">suggest from video</button>
           <button id="planner-music-gen" type="button" class="planner-primary">generate</button>
           <span id="planner-music-gen-status" class="planner-status"></span>
         </div>

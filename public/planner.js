@@ -120,7 +120,19 @@ function showStep(id) {
   // v0.132.0: the audio section gates its own content on storyboard state, so
   // re-evaluate it on entry; otherwise landing on the Audio step with no
   // storyboard left it blank (the hidden attr was never cleared).
-  if (id === "audio") showAudioSection();
+  if (id === "audio") {
+    showAudioSection();
+    // v0.137.6: the first time the user opens Audio for a plan, auto-suggest an
+    // ideal music prompt from the video (only when the field is empty, only once
+    // per plan; the suggest button re-runs it on demand).
+    if (!musicPromptAutoTried && planState.storyboard) {
+      const mp = $("#planner-music-prompt");
+      if (mp && !mp.value.trim()) {
+        musicPromptAutoTried = true;
+        suggestMusicPrompt({ force: false });
+      }
+    }
+  }
   paintStepper();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -2749,6 +2761,94 @@ async function uploadAudioFile(file) {
   }
 }
 
+// v0.137.6: suggest an "ideal" MiniMax Music prompt that matches the planned
+// video, so the generated track fits the mood/tempo/energy instead of being a
+// blind guess. One-shot /api/chat (mirrors scriptMyPlan): feeds the storyboard's
+// concept + visual style + shot arc + duration (and the original brief, which
+// often names the genre/BPM) to the selected planning model and asks for a
+// single concise INSTRUMENTAL music prompt. Prefills #planner-music-prompt;
+// non-destructive unless force=true (the button), so it never clobbers a prompt
+// the user already typed. Auto-fires once when the Audio step is opened.
+let musicPromptSuggesting = false;
+let musicPromptAutoTried = false;
+
+async function suggestMusicPrompt(opts) {
+  const force = !!(opts && opts.force);
+  if (musicPromptSuggesting) return;
+  const sb = planState.storyboard;
+  if (!sb) {
+    if (force) setMusicGenStatus("plan a storyboard first, then suggest a track.", "error");
+    return;
+  }
+  const promptEl = $("#planner-music-prompt");
+  if (!promptEl) return;
+  // Never overwrite a prompt the user has already written unless they asked.
+  if (!force && promptEl.value.trim()) return;
+  const modelEl = $("#planner-model");
+  const model = modelEl ? modelEl.value : "";
+  if (!model) {
+    if (force) setMusicGenStatus("pick a planning model on the Plan step first.", "error");
+    return;
+  }
+
+  const brief = (($("#planner-brief") || {}).value || "").trim();
+  const scenes = Array.isArray(sb.scenes) ? sb.scenes : [];
+  const arc = scenes
+    .map((s, i) => (i + 1) + ". [" + (s.act || "?") + "] " + String(s.prompt || "").slice(0, 80))
+    .join("\n");
+  const dur = Math.round(
+    Number(sb.duration_seconds) || scenes.length * (Number(sb.clip_seconds) || 4),
+  );
+  const instruction =
+    "You are writing the single best text prompt for an AI music generator "
+    + "(MiniMax Music 2.6) to SCORE a short cinematic/anime video. Output ONE "
+    + "concise INSTRUMENTAL music prompt only: 2 to 4 sentences, no preamble, no "
+    + "quotes, do not address me. Describe the MUSIC ONLY (genre/style, tempo in "
+    + "BPM if the material implies one, mood, the key instruments, and how the "
+    + "energy should build and hit across roughly " + dur + " seconds so it lands "
+    + "with the on-screen action). Do not mention characters, the camera, or "
+    + "visuals; translate them into musical terms.\n\n"
+    + "Video concept: " + (sb.full_prompt || "(none)") + "\n"
+    + "Visual style: " + (sb.style_prefix || "(none)") + "\n"
+    + (brief ? "Original brief: " + brief + "\n" : "")
+    + "Shot arc (act + gist):\n" + (arc || "(none)");
+
+  musicPromptSuggesting = true;
+  const btn = $("#planner-music-suggest");
+  if (btn) btn.disabled = true;
+  setMusicGenStatus("composing an ideal music prompt from your video...", "loading");
+
+  let resp;
+  let data;
+  try {
+    resp = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model, user_input: instruction }),
+    });
+    data = await resp.json();
+  } catch (err) {
+    setMusicGenStatus("network error suggesting a prompt: " + err.message, "error");
+    musicPromptSuggesting = false;
+    if (btn) btn.disabled = false;
+    return;
+  }
+
+  if (!resp.ok || !data || typeof data.output !== "string" || !data.output.trim()) {
+    const msg = data && data.error ? data.error : "HTTP " + (resp ? resp.status : "?");
+    setMusicGenStatus("could not suggest a prompt (" + msg + ")", "error");
+    musicPromptSuggesting = false;
+    if (btn) btn.disabled = false;
+    return;
+  }
+
+  promptEl.value = data.output.trim();
+  persistSoon();
+  setMusicGenStatus("prompt suggested from your video; edit it or hit generate.", "success");
+  musicPromptSuggesting = false;
+  if (btn) btn.disabled = false;
+}
+
 async function generateMusic() {
   if (planState.pendingMusicChatId) {
     setMusicGenStatus("a music job is already in flight; wait or refresh.", "error");
@@ -3388,6 +3488,9 @@ function renderPlanResult(httpStatus, data, model, characters) {
     // pending music-gen chat id and re-renders the section so the
     // controls reflect the new storyboard's scene set.
     planState.pendingMusicChatId = null;
+    // v0.137.6: a fresh storyboard is a new soundtrack target, so let the
+    // music-prompt auto-suggestion fire again the next time Audio is opened.
+    musicPromptAutoTried = false;
     showAudioSection();
     renderSceneEditor(data.storyboard);
     // v0.54.0: show the preflight section and auto-run a first check
@@ -3807,9 +3910,14 @@ async function bundleNow() {
     setBundleStatus("staged", "success");
     showBundleResult(data);
     showRenderStage();
-    // v0.120.0: a staged bundle unlocks Render; advance there automatically.
+    // v0.137.6: a staged bundle unlocks BOTH Audio and Render. Advance to Audio
+    // (the next step in order), NOT straight to Render. Jumping to Render skipped
+    // the Audio step entirely, and because bundle assembly is async that late
+    // showStep("render") yanked the user off Audio if they had already navigated
+    // there ("bundle, go to audio, it skips to render"). Render stays unlocked,
+    // so the user can still jump ahead when they are ready.
     refreshSteps();
-    showStep("render");
+    showStep("audio");
     savePersistedState();
     return;
   }
@@ -6595,6 +6703,9 @@ document.addEventListener("DOMContentLoaded", () => {
   // v0.51.0: audio bed + beat timing.
   const musicGen = $("#planner-music-gen");
   if (musicGen) musicGen.addEventListener("click", generateMusic);
+  // v0.137.6: "suggest from video" forces a fresh AI-drafted music prompt.
+  const musicSuggest = $("#planner-music-suggest");
+  if (musicSuggest) musicSuggest.addEventListener("click", () => suggestMusicPrompt({ force: true }));
   const audioFile = $("#planner-audio-file");
   if (audioFile) {
     audioFile.addEventListener("change", (e) => {

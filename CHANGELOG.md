@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.137.6
+
+Two planner fixes/features.
+
+1. Fix: bundling skipped the Audio step. Staging a bundle auto-advanced straight
+   to Render, and because bundle assembly is async that forced navigation fired
+   late and yanked the user back to Render if they had navigated to Audio in the
+   meantime ("bundle, go to audio, it instantly skips to render"). Now a staged
+   bundle advances to Audio (the next step in plan -> cast/bundle -> audio ->
+   render); Render stays unlocked so the user can still jump ahead.
+
+2. Feature: auto-suggest an ideal MiniMax music prompt from the planned video.
+   The first time the Audio step is opened for a plan (and whenever the user hits
+   the new "suggest from video" button), a one-shot /api/chat on the selected
+   planning model drafts a single concise instrumental music prompt matched to
+   the storyboard's concept, visual style, shot arc, and duration (and the
+   original brief, which usually names the genre/BPM), then prefills the music
+   prompt field. Non-destructive: it never overwrites a prompt the user already
+   typed, and only auto-fires once per plan.
+
+### Code
+- `public/planner.js`: post-bundle `showStep("render")` -> `showStep("audio")`;
+  new `suggestMusicPrompt(opts)` (mirrors `scriptMyPlan`, one-shot `/api/chat`),
+  auto-fired on first Audio open (empty-field + once-per-plan guards), reset on
+  fresh plan; "suggest from video" button listener.
+- `public/planner.html`: "suggest from video" button + updated music hint.
+- No `src/` change. `node --check` clean.
+
+
 ## v0.137.5
 
 Expose multi-character pose conditioning + its geometry in the planner UI. The

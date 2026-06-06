@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.137.3
+
+Fix audio/narration mux still truncating the video to a short bed. The v0.136.5
+`-af apad -shortest` did not hold in the deployed video-finish container (a long
+narration cut a 51s render down to ~30s). Replace it with an explicit, version-
+proof approach: probe the video duration and force the output to it with `-t`,
+padding the audio (`apad`) to fill a short bed and cutting a long one. Output is
+now always exactly the video's duration.
+
+### Code
+- `containers/video-finish/app.py`: `_assemble` audio mux -> probe `_probe_duration`
+  + `-map 0:v:0 -map 1:a:0 -c:v copy -c:a aac -af apad -t <vdur>`. Verified locally
+  on a 51s video + 8s bed -> 51s output. Requires a container redeploy.
+- No Worker/test change.
+
+
 ## v0.137.2
 
 UX: the add-audio / narrate buttons now show a clear inline status while the

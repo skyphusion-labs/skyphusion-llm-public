@@ -221,17 +221,25 @@ def _assemble(work, srcs, audio_path, width, height, fps, crf, preset, crossfade
     out = os.path.join(work, "final.mp4")
     has_audio = bool(audio_path) and os.path.isfile(audio_path)
     if has_audio:
-        _run([
+        # v0.137.3: pin the output to the VIDEO length, bulletproof. The earlier
+        # `-af apad -shortest` did not hold: `-shortest` cut the output to the
+        # (shorter) audio, truncating the video. Probe the video duration and
+        # force it with `-t`, padding the audio with silence (`apad`) to fill a
+        # short bed; a long bed is cut to the video. Explicit `-map` so the right
+        # streams are selected. Output is always exactly the video's duration.
+        vdur = _probe_duration(silent)
+        cmd = [
             "ffmpeg", "-y", "-i", silent, "-i", audio_path,
+            "-map", "0:v:0", "-map", "1:a:0",
             "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-            # v0.136.5: keep the FULL video length regardless of the audio bed's
-            # length. `apad` pads the audio with silence to infinity; `-shortest`
-            # then ends the output at the (finite) video stream. So a bed shorter
-            # than the video no longer truncates it (silence fills the tail), and
-            # a bed longer than the video is cut to the video length.
-            "-af", "apad", "-shortest",
-            "-movflags", "+faststart", out,
-        ])
+            "-af", "apad",
+        ]
+        if vdur and vdur > 0:
+            cmd += ["-t", f"{vdur:.3f}"]
+        else:
+            cmd += ["-shortest"]
+        cmd += ["-movflags", "+faststart", out]
+        _run(cmd)
     else:
         # Web-playable silent: stream-copy with faststart (no re-encode).
         _run(["ffmpeg", "-y", "-i", silent, "-c", "copy", "-movflags", "+faststart", out])

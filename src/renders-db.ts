@@ -14,6 +14,7 @@
 
 import type { Env } from "./env";
 import type { RunpodJobView } from "./runpod-submit";
+import { writeRenderLog } from "./render-log";
 
 // Fresh row at submit time.
 export interface NewRenderRow {
@@ -242,6 +243,26 @@ export async function updateRenderFromView(env: Env, view: RunpodJobView): Promi
       view.jobId,
     )
     .run();
+
+  // v0.141.0: on terminal status, persist a per-render log to R2 (conventional
+  // key renders/logs/<jobId>.txt) so History can offer a "view logs" link. The
+  // row now exists/updated, so read its owner for the artifact ownership stamp.
+  // Best-effort: writeRenderLog never throws, and we swallow lookup errors too,
+  // so logging can never block or break the render-resolve path.
+  if (completed !== null) {
+    try {
+      const owner = await env.DB.prepare(
+        `SELECT user_email FROM renders WHERE job_id = ?`,
+      )
+        .bind(view.jobId)
+        .first<{ user_email: string }>();
+      if (owner?.user_email) {
+        await writeRenderLog(env, view, owner.user_email);
+      }
+    } catch {
+      // logging is best-effort; ignore
+    }
+  }
 }
 
 // v0.136.0: minimal row snapshot the poll handlers need when RunPod returns a

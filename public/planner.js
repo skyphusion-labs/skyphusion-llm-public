@@ -5425,6 +5425,21 @@ function buildHistoryRow(r) {
     actions.appendChild(dl);
   }
 
+  // v0.141.0: per-render log, written to R2 on resolve at a conventional key
+  // (renders/logs/<job_id>.txt). Available once the render is terminal; opens
+  // the text log via /api/artifact (ownership-gated; the browser carries the
+  // Access cookie).
+  if (r.job_id && r.completed_at) {
+    const logs = document.createElement("a");
+    logs.href = "/api/artifact/renders/logs/" + encodeURIComponent(r.job_id) + ".txt";
+    logs.target = "_blank";
+    logs.rel = "noopener";
+    logs.className = "planner-history-action";
+    logs.textContent = "logs";
+    logs.title = "view this render's log (status, timing, diagnostics)";
+    actions.appendChild(logs);
+  }
+
   // v0.136.4: add audio to a finished video WITHOUT the GPU. Picks an audio
   // file, uploads it, and muxes it onto this render's MP4 via the video-finish
   // (ffmpeg) container. The row then points at the muxed version.

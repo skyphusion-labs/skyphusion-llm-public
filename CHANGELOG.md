@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.141.0
+
+Per-render logs in R2, plus a History "logs" link.
+
+When a render reaches a terminal status, the control plane now persists a
+readable per-render log (status, queue/exec timing, the COMPLETED envelope, and
+on failure the GPU side's diagnostics tail) to R2 at a conventional key,
+`renders/logs/<job_id>.txt`. The History row gains a **logs** link (terminal
+renders only) that opens it through `/api/artifact`. The key is derived from the
+row's `job_id`, so there is no new D1 column, no migration, and no read-path
+change. This is the foundation for richer render observability (next steps:
+ingest the full RunPod container log, and Workers Logs + Logpush-to-R2 for the
+Worker's own request logs).
+
+The R2 write is best-effort: it runs after the render row is updated, never
+throws, and a failure is swallowed, so logging can never block or break the
+render-resolve path. The log object is stamped with the render owner's
+`user_email`, so `/api/artifact`'s ownership gate serves it like any other
+render artifact.
+
+### Code
+- New `src/render-log.ts`: `renderLogKey` + `buildRenderLogText` (pure,
+  unit-tested) + `writeRenderLog` (best-effort R2 put, never throws).
+- `src/renders-db.ts` `updateRenderFromView`: on terminal status, look up the
+  row owner and write the log to R2 (try/catch, non-fatal).
+- `public/planner.js`: History row "logs" link, gated on `job_id` +
+  `completed_at`.
+- Tests: `tests/render-log.test.ts` (4 cases: key derivation + builder
+  formatting / error / omitted blocks).
+- `tsc --noEmit`: clean. `vitest`: all passing.
+
 ## v0.140.0
 
 Rename the product to **Vivijure** (control-plane brand sweep).

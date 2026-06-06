@@ -1,0 +1,37 @@
+version: 2
+
+# Dependency lifecycle. PRs only (never auto-merge); the maintainer reviews,
+# and typecheck + the vitest suite gate every bump before it can land.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
+
+  # The Cloudflare Containers and the CI builder image.
+  - package-ecosystem: docker
+    directories:
+      - /ci
+      - /containers/audio-beat-sync
+      - /containers/image-prep
+      - /containers/video-finish
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build

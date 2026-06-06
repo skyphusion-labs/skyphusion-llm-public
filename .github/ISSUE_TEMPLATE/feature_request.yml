@@ -1,0 +1,31 @@
+name: Feature request
+description: Suggest a capability or improvement for the control plane
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        For the control plane (playground, planner, cast, voice, generation,
+        the Worker itself). GPU render-pipeline ideas belong to the
+        vivijure-serverless repo.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that is hard or impossible today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What you would like to see. Rough is fine.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you tried or other approaches you weighed.
+    validations:
+      required: false

@@ -1,0 +1,73 @@
+name: Bug report
+description: Something in the control plane (playground, planner, or Worker) misbehaves
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        Thanks for the report. This repo is the always-on control plane (the
+        Cloudflare Worker: chat playground, storyboard planner, cast prep, and
+        the Vivijure render API). The GPU render backend is a separate repo
+        (vivijure-serverless). Please do not paste secrets (API tokens,
+        Cloudflare Access JWTs, .dev.vars).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What went wrong, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: How to trigger it. Include the model or feature in use if relevant.
+      placeholder: |
+        1. Open the playground and ...
+        2. ...
+        3. See the error
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where
+      options:
+        - Chat playground (model chat)
+        - Storyboard planner / Vivijure render API
+        - Cast / character references
+        - Voice / conversational STT
+        - Image / video / music generation
+        - Auth (Cloudflare Access)
+        - Cloudflare Containers (audio-beat-sync / image-prep / video-finish)
+        - D1 / migrations
+        - Deploy / wrangler / self-host setup
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The app version (footer / package.json) or commit SHA.
+      placeholder: "v0.139.0"
+    validations:
+      required: false
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment
+      options:
+        - skyphusion.org (hosted)
+        - My own self-hosted Worker
+        - Local (wrangler dev)
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Logs / console / context
+      description: Browser console, `wrangler tail` output, model id. Redact tokens.
+      render: shell
+    validations:
+      required: false

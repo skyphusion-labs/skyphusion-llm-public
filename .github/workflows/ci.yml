@@ -8,6 +8,16 @@ on:
   pull_request:
     branches: [main]
 
+# Least privilege: CI only needs to read the repo. No write scopes on the token.
+permissions:
+  contents: read
+
+# Supersede in-flight runs on the same ref so a self-hosted runner is never
+# queued up behind stale commits.
+concurrency:
+  group: ci-self-hosted-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ci:
     # SECURITY: this repo is PUBLIC and the runner is self-hosted. Never let an

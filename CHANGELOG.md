@@ -1,5 +1,50 @@
 # Changelog
 
+## v0.144.0
+
+Cloud image-to-video animation of a render's keyframes (the cloud motion backend).
+
+`POST /api/storyboard/renders/<id>/animate-cloud { model, motionPrompts?, prompt? }`
+takes a COMPLETED render that has SDXL keyframes and animates each keyframe into a
+clip via a chosen cloud image-to-video model (the Phase 1 `image-input` set:
+Seedance / Hailuo / Runway / hh1), then assembles the clips into a silent mp4. It
+runs entirely on the control plane, no GPU pod, mirroring the GPU `finalize`
+endpoint so the two motion backends are symmetric. Phase 2 of the pluggable motion
+backend (`docs/i2v-backend-selector.md`).
+
+How it works:
+- A new `cloud_animate` `LongRunWorkflow` kind. One durable step per shot: presign
+  the keyframe (R2_RENDERS), `env.AI.run` the cloud i2v model with the per-model
+  shape from `buildGenParams`, store the clip at
+  `renders/<project>/<jobId>/clips/<shot>.mp4`. Then an assemble step runs the
+  `video-finish` container to concat, and re-puts the result with the owner's
+  `customMetadata.user_email` (the container's presigned PUT sets none, and
+  `/api/artifact` 403s without it).
+- Returns a `cloud-<uuid>` jobId. `handleRenderPoll` short-circuits `cloud-` jobs to
+  serve the render row directly: they are workflow-backed (not RunPod) and can run
+  for many minutes, so they must skip the RunPod-404 `classifyMissingJob` path that
+  would otherwise falsely fail a long job as a phantom.
+- The new history row carries `mode: "cloud-finalized"` (added to the renders-db
+  mode union + normalizer). Row status is updated by the by-`job_id`
+  `updateRenderFromView` using a synthetic view; failures call
+  `markRenderFailedByJobId`.
+- Output is silent by design; add a score afterward with the existing
+  `POST .../add-audio` on the new row.
+
+Verification: typecheck clean; full suite 571/571. Video gen + the video-finish
+container run through Cloudflare Workflows/Containers, which do not run under
+`wrangler dev`, so this needs a post-deploy smoke test (one animate-cloud call on a
+keyframes-only render; checklist in the PR).
+
+### Code
+- `src/index.ts` - `handleAnimateCloudSubmit` + route; `CloudAnimateParams` +
+  `LongRunWorkflow.runCloudAnimate` (new workflow kind); `cloud-` short-circuit in
+  `handleRenderPoll`.
+- `src/renders-db.ts` - `"cloud-finalized"` added to the `mode` union (RenderRow +
+  NewRenderRow) and to `normalizeRow`.
+- `docs/i2v-backend-selector.md` - Phase 2 marked shipped.
+- `package.json` - 0.143.0 -> 0.144.0.
+
 ## v0.143.0
 
 Image-to-video on the premium video models (keyframe animation), not just hh1-i2v.

@@ -50,7 +50,28 @@ image_key|image_url, user_input:<motion prompt>}` then poll `/api/job/<id>`) wor
 with any of these models. That is the cloud backend, available immediately and
 hand-drivable today; the phases below make it a first-class storyboard step.
 
-## Phase 2: cloud animation as a storyboard step
+## Phase 2 (SHIPPED v0.144.0): cloud animation as a storyboard step
+
+A control-plane endpoint that animates a render's keyframes via a chosen cloud
+model and assembles the result, so it is not hand-driven:
+
+- `POST /api/storyboard/renders/<id>/animate-cloud { model, motionPrompts?, prompt? }`
+  on a COMPLETED render that has keyframes. `model` must be a video model with the
+  `image-input` capability (the Phase 1 set). Returns a `cloud-<uuid>` jobId.
+- A `cloud_animate` LongRunWorkflow: one durable step per shot (presign the
+  keyframe, `env.AI.run` the cloud i2v model, store the clip in R2_RENDERS), then an
+  assemble step (`video-finish` container concat) that re-puts the result with the
+  owner's `customMetadata` so `/api/artifact` serves it. Status is kept current on
+  the render row via the by-`job_id` `updateRenderFromView`.
+- Poll at `GET /api/storyboard/render/<jobId>`: a `cloud-` short-circuit serves the
+  row directly (these are not RunPod jobs, and the long run must not hit the
+  RunPod-404 phantom path). New history row carries `mode: "cloud-finalized"`.
+- Output is silent by design; add a score with the existing
+  `POST .../add-audio` on the new row (no audio plumbing duplicated here).
+- Follow-ups: per-shot model override (`perShot`); parallel shot gens (steps are
+  sequential today).
+
+### Original design notes
 
 Add a control-plane endpoint that animates a render's keyframes via a chosen cloud
 model and assembles the result, so it is not hand-driven:

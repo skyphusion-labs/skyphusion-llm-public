@@ -620,6 +620,15 @@ export default {
     if (rf && request.method === "POST") {
       return handleFinalizeSubmit(request, env, rf[1]);
     }
+
+    // v0.144.0: animate an existing render's keyframes via a cloud image-to-
+    // video model (the cloud half of the pluggable motion backend; mirrors
+    // finalize, which is the GPU/Wan half). Submits a durable workflow, returns
+    // a cloud-<uuid> jobId polled at GET /api/storyboard/render/<jobId>.
+    const rac = url.pathname.match(/^\/api\/storyboard\/renders\/(\d+)\/animate-cloud$/);
+    if (rac && request.method === "POST") {
+      return handleAnimateCloudSubmit(request, env, rac[1]);
+    }
     // v0.60.0: retry a FAILED / CANCELLED / TIMED_OUT render. Resubmits
     // a fresh job to RunPod with the same project + bundle_key +
     // quality_tier + render_overrides + mode the failed row recorded.
@@ -2608,6 +2617,28 @@ async function handleRenderPoll(
   if (!isValidJobId(jobId)) {
     return json({ error: "invalid jobId format" }, { status: 400 });
   }
+  // v0.144.0: cloud-animate jobs (POST .../animate-cloud) are workflow-backed,
+  // not RunPod jobs. Their status lives entirely in the render row, which the
+  // LongRunWorkflow updates, and they can legitimately run for many minutes.
+  // They must NOT go through the RunPod 404 -> classifyMissingJob path, which
+  // would falsely fail a long-running job as a "phantom" once its grace window
+  // expires. Serve the row directly. The unguessable jobId is the capability,
+  // consistent with RunPod-backed polls (artifact bytes stay user-scoped via
+  // /api/artifact's customMetadata check).
+  if (jobId.startsWith("cloud-")) {
+    const row = await getRenderForPoll(env, jobId).catch(() => null);
+    if (!row) return json({ error: "render not found" }, { status: 404 });
+    return json({
+      ok: true,
+      jobId,
+      status: row.status,
+      statusRaw: row.status,
+      output: row.output ?? (row.output_key ? { output_key: row.output_key } : null),
+      error: row.error,
+      user: userEmail,
+    });
+  }
+
   if (!env.RUNPOD_API_KEY || !env.RUNPOD_ENDPOINT_ID) {
     return json(
       {
@@ -3341,6 +3372,124 @@ async function handleRegenShotSubmit(
 // untouched. The new row carries mode="full" at submit time; the
 // GPU envelope echoes mode="finalized" when COMPLETED arrives via
 // updateRenderFromView, so the badge becomes accurate post-render.
+
+// POST /api/storyboard/renders/<id>/animate-cloud (v0.144.0)
+//
+// The cloud half of the pluggable motion backend (finalize is the GPU/Wan
+// half). Takes a COMPLETED render that has SDXL keyframes and animates each one
+// into a clip via a chosen cloud image-to-video model (Seedance / Hailuo /
+// Runway / hh1, the image-input video catalog), then assembles the clips into a
+// silent mp4 via the video-finish container. Runs entirely on the control plane
+// in a durable LongRunWorkflow (one gen per shot), so no GPU pod is spun up.
+//
+// Inserts a NEW history row (mode="cloud-finalized") with a cloud-<uuid> jobId;
+// poll it at GET /api/storyboard/render/<jobId>. The output is silent by design;
+// add a score afterward with the existing POST .../add-audio on the new row.
+async function handleAnimateCloudSubmit(
+  request: Request,
+  env: Env,
+  idStr: string,
+): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const id = Number(idStr);
+  if (!Number.isInteger(id) || id <= 0) {
+    return json({ error: "invalid render id" }, { status: 400 });
+  }
+
+  let body: Record<string, unknown> = {};
+  try {
+    const raw = await request.json<Record<string, unknown>>();
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) body = raw;
+  } catch {
+    // body is optional (model is still required, validated below)
+  }
+
+  const model = typeof body.model === "string" ? body.model.trim() : "";
+  if (!model) {
+    return json(
+      { error: "model is required (a video model with the image-input capability)" },
+      { status: 400 },
+    );
+  }
+  const entry = MODELS.find((m) => m.id === model);
+  if (!entry || entry.type !== "video" || !entry.capabilities.includes("image-input")) {
+    return json(
+      {
+        error: `model "${model}" is not an image-to-video model (need type "video" with the "image-input" capability)`,
+      },
+      { status: 400 },
+    );
+  }
+
+  // Optional per-shot motion prompts ({ shot_id: prompt }) and a global fallback.
+  const motionPrompts: Record<string, string> = {};
+  if (body.motionPrompts && typeof body.motionPrompts === "object" && !Array.isArray(body.motionPrompts)) {
+    for (const [k, v] of Object.entries(body.motionPrompts as Record<string, unknown>)) {
+      if (typeof v === "string" && v.trim()) motionPrompts[k] = v;
+    }
+  }
+  const globalPrompt = typeof body.prompt === "string" ? body.prompt : "";
+
+  const row = await getRenderByIdForUser(env, id, userEmail);
+  if (!row) return json({ error: "render not found" }, { status: 404 });
+  if (row.status !== "COMPLETED") {
+    return json(
+      { error: `render is ${row.status}; it must be COMPLETED to animate its keyframes` },
+      { status: 400 },
+    );
+  }
+  const keyframes = (row.keyframes ?? []).filter((k) => k.shot_id && k.key);
+  if (keyframes.length === 0) {
+    return json({ error: "render has no keyframes to animate" }, { status: 400 });
+  }
+
+  const jobId = `cloud-${crypto.randomUUID()}`;
+  const startedAtIso = new Date().toISOString();
+
+  await insertRender(env, {
+    userEmail,
+    jobId,
+    project: row.project,
+    bundleKey: row.bundle_key,
+    qualityTier: row.quality_tier,
+    status: "IN_QUEUE",
+    mode: "cloud-finalized",
+    projectId: row.project_id,
+  });
+
+  try {
+    await env.LONGRUN.create({
+      params: {
+        kind: "cloud_animate",
+        userEmail,
+        jobId,
+        model,
+        project: row.project,
+        parentId: id,
+        keyframes,
+        motionPrompts,
+        globalPrompt,
+        startedAtIso,
+      } satisfies LongRunParams,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await markRenderFailedByJobId(env, jobId, `failed to start cloud animation: ${msg}`).catch(() => {});
+    return json({ error: "failed to start the cloud animation workflow" }, { status: 502 });
+  }
+
+  return json({
+    ok: true,
+    jobId,
+    status: "IN_QUEUE",
+    statusRaw: "IN_QUEUE",
+    parentId: id,
+    project: row.project,
+    model,
+    shots: keyframes.length,
+    user: userEmail,
+  });
+}
 
 async function handleFinalizeSubmit(
   request: Request,
@@ -8037,7 +8186,24 @@ interface ZipImportParams extends Record<string, unknown> {
   startedAtIso: string;
 }
 
-type LongRunParams = LongRunGenParams | ZipImportParams;
+// v0.144.0: cloud image-to-video animation of a render's keyframes. One gen per
+// shot, then assemble via the video-finish container. Keyframes + small prompt
+// strings ride the event payload (well under the 1 MiB cap); the heavy bytes
+// (keyframe images, clips) stay in R2 and move by key / presigned URL.
+interface CloudAnimateParams extends Record<string, unknown> {
+  kind: "cloud_animate";
+  userEmail: string;
+  jobId: string;
+  model: string;
+  project: string;
+  parentId: number;
+  keyframes: Array<{ shot_id: string; key: string }>;
+  motionPrompts: Record<string, string>;
+  globalPrompt: string;
+  startedAtIso: string;
+}
+
+type LongRunParams = LongRunGenParams | ZipImportParams | CloudAnimateParams;
 
 // Returned by the zip-import workflow run() and surfaced via the instance's
 // status().output to the polling client. userEmail is included so the status
@@ -8065,7 +8231,120 @@ export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
     if (event.payload.kind === "zip_import") {
       return this.runZipImport(event.payload, step);
     }
+    if (event.payload.kind === "cloud_animate") {
+      return this.runCloudAnimate(event.payload, step);
+    }
     return this.runGen(event.payload, step);
+  }
+
+  // v0.144.0: animate a render's keyframes via a cloud image-to-video model and
+  // assemble them into a silent mp4. Each shot is one durable step (a blocking
+  // env.AI.run held alive across the step boundary, the same pattern as runGen);
+  // clips land in R2_RENDERS; a final step calls the video-finish container to
+  // concat, then re-puts the result with the owner's customMetadata so
+  // /api/artifact will serve it. Row status is kept current via the by-job_id
+  // updateRenderFromView (synthetic view); any failure marks the row FAILED.
+  async runCloudAnimate(p: CloudAnimateParams, step: WorkflowStep): Promise<void> {
+    const { userEmail, jobId, model, project, keyframes, motionPrompts, globalPrompt, startedAtIso } = p;
+    try {
+      await step.do(
+        "mark-running",
+        { retries: { limit: 3, delay: "3 seconds", backoff: "exponential" } },
+        async (): Promise<void> => {
+          await updateRenderFromView(this.env, {
+            jobId,
+            status: "IN_PROGRESS",
+            statusRaw: "IN_PROGRESS",
+          } as RunpodJobView);
+        },
+      );
+
+      // Stable shot order (the renderer numbers shots shot_01..shot_NN).
+      const shots = [...keyframes].sort((a, b) => a.shot_id.localeCompare(b.shot_id));
+
+      const clipKeys: string[] = [];
+      for (const kf of shots) {
+        const clipKey = await step.do(
+          `animate-${kf.shot_id}`,
+          { retries: { limit: 1, delay: "30 seconds", backoff: "linear" } },
+          async (): Promise<string> => {
+            const imageUrl = await presignR2Get(this.env, kf.key, 1800);
+            const prompt = motionPrompts[kf.shot_id] || globalPrompt || "";
+            const params = buildGenParams("video", { modelId: model, prompt, imageUrl });
+            const result = (await aiRun(this.env, model, params)) as LongRunResult;
+            if (result.state && result.state !== "Completed") {
+              throw new Error(`gen state ${result.state} for ${kf.shot_id}`);
+            }
+            const url = result.result?.video;
+            if (!url) throw new Error(`gen completed but no video url for ${kf.shot_id}`);
+            const aresp = await fetch(url);
+            if (!aresp.ok) throw new Error(`fetch clip ${aresp.status} for ${kf.shot_id}`);
+            const bytes = new Uint8Array(await aresp.arrayBuffer());
+            const key = `renders/${project}/${jobId}/clips/${kf.shot_id}.mp4`;
+            await this.env.R2_RENDERS.put(key, bytes, {
+              httpMetadata: { contentType: "video/mp4" },
+              customMetadata: { user_email: userEmail },
+            });
+            return key;
+          },
+        );
+        clipKeys.push(clipKey);
+      }
+
+      const outputKey = await step.do(
+        "assemble",
+        { retries: { limit: 2, delay: "10 seconds", backoff: "exponential" } },
+        async (): Promise<string> => {
+          const out = `renders/${project}/${jobId}/cloud_full.mp4`;
+          const res = await runVideoFinish(this.env, {
+            clips: clipKeys.map((k) => ({ key: k })),
+            outputKey: out,
+            width: 1280,
+            height: 720,
+            fps: 24,
+          });
+          if (!res.ok) throw new Error(`assemble failed (${res.status}): ${res.error}`);
+          // The container PUTs via a presigned URL, which sets no customMetadata,
+          // so re-put with the owner: /api/artifact 403s on a missing or
+          // mismatched user_email.
+          const o = await this.env.R2_RENDERS.get(out);
+          if (o) {
+            const bytes = new Uint8Array(await o.arrayBuffer());
+            await this.env.R2_RENDERS.put(out, bytes, {
+              httpMetadata: { contentType: "video/mp4" },
+              customMetadata: { user_email: userEmail },
+            });
+          }
+          return out;
+        },
+      );
+
+      await step.do(
+        "finalize-row",
+        { retries: { limit: 3, delay: "5 seconds", backoff: "exponential" } },
+        async (): Promise<void> => {
+          const executionTimeMs = Date.now() - Date.parse(startedAtIso);
+          await updateRenderFromView(this.env, {
+            jobId,
+            status: "COMPLETED",
+            statusRaw: "COMPLETED",
+            output: {
+              output_key: outputKey,
+              mode: "cloud-finalized",
+              keyframes: shots,
+              clips: shots.map((s, i) => ({ shot_id: s.shot_id, key: clipKeys[i] })),
+              model,
+              has_audio: false,
+            },
+            executionTimeMs,
+          } as RunpodJobView);
+        },
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await markRenderFailedByJobId(this.env, jobId, `cloud animation failed: ${msg}`).catch(() => {});
+      throw err;
+    }
   }
 
   // v0.26.0: bulk ZIP import. Step 1 unzips the staged archive and stages each

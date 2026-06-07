@@ -28,7 +28,7 @@ export interface NewRenderRow {
   // v0.40.0: 'full' = the train + keyframes + I2V + assemble pipeline;
   // 'keyframes-only' = preview pass producing SDXL keyframes only.
   // Stored verbatim. Defaults to 'full' when omitted.
-  mode?: "full" | "keyframes-only";
+  mode?: "full" | "keyframes-only" | "cloud-finalized";
   // v0.55.0: optional FK to storyboard_projects(id). NULL on rows
   // submitted without an active project (the transient v0.42.0 flow).
   projectId?: number | null;
@@ -69,7 +69,7 @@ export interface RenderRow {
   // the mode for rows produced by the keyframes -> finalize pipeline.
   // Legacy rows are stored NULL; the row normalizer collapses NULL ->
   // 'full' so callers can rely on a non-null value.
-  mode: "full" | "keyframes-only" | "finalized";
+  mode: "full" | "keyframes-only" | "finalized" | "cloud-finalized";
   // v0.42.0: shot_ids the user marked as approved in the keyframes-
   // only preview, before clicking finalize. Metadata-only; the GPU
   // is not informed of this set in v0.42.0 (finalize runs Wan I2V +
@@ -755,7 +755,9 @@ function normalizeRow(r: Record<string, unknown>): RenderRow {
         ? "keyframes-only"
         : r.mode === "finalized"
           ? "finalized"
-          : "full",
+          : r.mode === "cloud-finalized"
+            ? "cloud-finalized"
+            : "full",
     // v0.42.0: parse the locked_shots_json column back into a string
     // array; NULL / empty / malformed -> null (read as "nothing
     // locked"). The normalizer keeps the same MAX_LOCKED_SHOTS cap as

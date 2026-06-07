@@ -85,7 +85,24 @@ model and assembles the result, so it is not hand-driven:
 - Mirrors the existing GPU `finalize` so the two backends are symmetric from the
   caller's view.
 
-## Phase 3: the selector in the Vivijure control panel
+## Phase 3 (SHIPPED v0.145.0): the selector in the Vivijure control panel
+
+Shipped as a control on the keyframes-only preview's finalize row in `planner.js`
+(`buildHistoryRow`): a "Motion" backend `<select>` (GPU Wan I2V vs Cloud per-shot
+i2v) plus a cloud model dropdown (the `image-input` catalog: Seedance / Hailuo /
+Runway / hh1) that appears only when Cloud is picked. GPU routes to the existing
+`finalizeRender` (`/finalize`); Cloud routes to the new `animateCloudRender`
+(`/animate-cloud { model }`). Both `loadHistory()` after submit, so the new row is
+polled by the existing history auto-refresh (the render-poll `cloud-` short-circuit
+serves it). Vanilla JS, no build step; cloud model options are hand-maintained like
+the Wan model option lists.
+
+Follow-up (the deeper integration below, not yet built): a `motion_backend` /
+`motion_model` field on the initial render-submit payload so the choice can be made
+up front (the cloud path is inherently post-keyframes, so the preview-row control is
+the natural surface for now).
+
+### Original design notes
 
 Data model (render submit payload + persisted on the storyboard / render row):
 

@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.145.0
+
+Motion backend selector in the control panel: choose GPU (Wan) or Cloud i2v.
+
+The keyframes-only preview's finalize row in the planner now lets you pick how to
+animate the keyframes: GPU (the pod's Wan 2.2 I2V, the existing `finalize`) or Cloud
+(a per-shot cloud image-to-video model via the v0.144.0 `animate-cloud` endpoint).
+Phase 3 of the pluggable motion backend (`docs/i2v-backend-selector.md`); it makes
+the cloud backend a click instead of a curl.
+
+- `buildHistoryRow` (`public/planner.js`): a "Motion" backend `<select>` (GPU vs
+  Cloud) plus a cloud model `<select>` that shows only when Cloud is picked. The
+  cloud options are the `image-input` video catalog (Seedance 2.0 (+fast), Hailuo
+  2.3 (+fast), Runway Gen-4.5, hh1-i2v), hand-maintained like the existing Wan model
+  option lists.
+- GPU routes to the existing `finalizeRender`; Cloud routes to a new
+  `animateCloudRender` that POSTs `/api/storyboard/renders/<id>/animate-cloud
+  { model }` and `loadHistory()`s. The new `cloud-<uuid>` row is polled by the
+  existing history auto-refresh (the render-poll `cloud-` short-circuit serves it).
+- Cloud output is silent by design; the existing add-audio action scores it.
+
+Vanilla JS / CSS only (no build step). `planner.js` passes `node --check`; the src
+typecheck + suite are unaffected (frontend-only change).
+
+### Code
+- `public/planner.js` - motion backend + model selectors in the finalize row;
+  `animateCloudRender`.
+- `public/styles.css` - `.planner-motion-backend` + select styling.
+- `docs/i2v-backend-selector.md` - Phase 3 marked shipped.
+- `package.json` - 0.144.0 -> 0.145.0.
+
 ## v0.144.0
 
 Cloud image-to-video animation of a render's keyframes (the cloud motion backend).

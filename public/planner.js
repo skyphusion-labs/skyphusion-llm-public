@@ -5650,16 +5650,74 @@ function buildHistoryRow(r) {
       ? lockedCount + " of " + r.keyframes.length + " shots locked (finalize will assemble these only)"
       : r.keyframes.length + " keyframes ready; lock the shots you want in the movie, or finalize as-is to include all";
     finalizeRow.appendChild(summary);
+
+    // v0.145.0: motion backend selector. The keyframes can be animated two ways:
+    // GPU (the pod's Wan 2.2 I2V, via finalize) or CLOUD (a per-shot cloud
+    // image-to-video model, via animate-cloud). The cloud model dropdown only
+    // shows when Cloud is picked. Cloud models are the image-input video catalog
+    // (v0.143.0); kept in sync by hand here, like the Wan model option lists.
+    const GPU_LABEL = "finalize (Wan I2V + assemble)";
+    const CLOUD_LABEL = "animate (cloud i2v)";
+    const GPU_TITLE = "run Wan I2V on every keyframe + assemble silent MP4 (about 20 to 30 minutes)";
+    const CLOUD_TITLE = "animate each keyframe with the selected cloud model + assemble a silent MP4 (no GPU pod; add a score after with add-audio)";
+
+    const motion = document.createElement("div");
+    motion.className = "planner-motion-backend";
+
+    const backendSel = document.createElement("select");
+    backendSel.className = "planner-motion-backend-select";
+    backendSel.title = "how to animate these keyframes into motion";
+    [["gpu", "GPU (Wan I2V)"], ["cloud", "Cloud (per-shot i2v)"]].forEach((pair) => {
+      const o = document.createElement("option");
+      o.value = pair[0];
+      o.textContent = pair[1];
+      backendSel.appendChild(o);
+    });
+
+    const cloudModelSel = document.createElement("select");
+    cloudModelSel.className = "planner-motion-model-select";
+    cloudModelSel.title = "cloud image-to-video model";
+    cloudModelSel.style.display = "none";
+    [
+      ["bytedance/seedance-2.0-fast", "Seedance 2.0 Fast"],
+      ["bytedance/seedance-2.0", "Seedance 2.0"],
+      ["minimax/hailuo-2.3-fast", "Hailuo 2.3 Fast"],
+      ["minimax/hailuo-2.3", "Hailuo 2.3"],
+      ["runwayml/gen-4.5", "Runway Gen-4.5"],
+      ["alibaba/hh1-i2v", "HappyHorse 1.0 I2V"],
+    ].forEach((pair) => {
+      const o = document.createElement("option");
+      o.value = pair[0];
+      o.textContent = pair[1];
+      cloudModelSel.appendChild(o);
+    });
+
     const finalizeBtn = document.createElement("button");
     finalizeBtn.type = "button";
     finalizeBtn.className = "planner-history-finalize-btn";
-    finalizeBtn.textContent = "finalize (Wan I2V + assemble)";
-    finalizeBtn.title = "run Wan I2V on every keyframe + assemble silent MP4 (about 20 to 30 minutes)";
+    finalizeBtn.textContent = GPU_LABEL;
+    finalizeBtn.title = GPU_TITLE;
+
+    backendSel.addEventListener("change", () => {
+      const cloud = backendSel.value === "cloud";
+      cloudModelSel.style.display = cloud ? "" : "none";
+      finalizeBtn.textContent = cloud ? CLOUD_LABEL : GPU_LABEL;
+      finalizeBtn.title = cloud ? CLOUD_TITLE : GPU_TITLE;
+    });
+
     finalizeBtn.addEventListener("click", (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
-      finalizeRender(r, finalizeBtn);
+      if (backendSel.value === "cloud") {
+        animateCloudRender(r, finalizeBtn, cloudModelSel.value);
+      } else {
+        finalizeRender(r, finalizeBtn);
+      }
     });
+
+    motion.appendChild(backendSel);
+    motion.appendChild(cloudModelSel);
+    finalizeRow.appendChild(motion);
     finalizeRow.appendChild(finalizeBtn);
     li.appendChild(finalizeRow);
   }
@@ -6107,6 +6165,55 @@ async function finalizeRender(row, btnEl) {
   // Reload the history list so the new in-flight row appears alongside
   // the preview it came from. loadHistory hydrates rows from the
   // server; the auto-refresh handles further polling.
+  loadHistory();
+}
+
+// v0.145.0: cloud motion backend. Animate the preview's keyframes via a cloud
+// image-to-video model (POST .../animate-cloud), the control-plane alternative
+// to the GPU finalize (Wan). Output is silent by design; add a score afterward
+// with the add-audio action. Mirrors finalizeRender's submit + error + reload
+// flow; the new cloud-<uuid> row is polled by the history auto-refresh (the
+// render-poll cloud short-circuit serves it).
+async function animateCloudRender(row, btnEl, model) {
+  const kfCount = Array.isArray(row.keyframes) ? row.keyframes.length : 0;
+  const confirmMsg =
+    "animate this preview on the cloud?\n\n"
+    + "this animates all " + kfCount + " keyframes with " + model
+    + " (one clip per shot) and assembles a SILENT MP4. No GPU pod is used; "
+    + "add a soundtrack afterward with the add-audio action.\n\ncontinue?";
+  if (!window.confirm(confirmMsg)) return;
+
+  btnEl.disabled = true;
+  btnEl.textContent = "submitting...";
+
+  let resp = null;
+  let data = null;
+  try {
+    resp = await fetch(
+      "/api/storyboard/renders/" + encodeURIComponent(row.id) + "/animate-cloud",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: model }),
+      },
+    );
+    data = await resp.json();
+  } catch (err) {
+    btnEl.disabled = false;
+    btnEl.textContent = "animate (cloud i2v)";
+    window.alert("cloud animate submit failed: " + err.message);
+    return;
+  }
+  if (!resp.ok || !data || !data.ok) {
+    btnEl.disabled = false;
+    btnEl.textContent = "animate (cloud i2v)";
+    const msg = (data && (data.error
+      || (Array.isArray(data.errors) && data.errors.join(", "))))
+      || ("HTTP " + (resp ? resp.status : "?"));
+    window.alert("cloud animate submit failed: " + msg);
+    return;
+  }
+  btnEl.textContent = "cloud animate submitted";
   loadHistory();
 }
 

@@ -3048,6 +3048,30 @@ textarea:focus {
   opacity: 0.6;
 }
 
+/* v0.145.0: motion backend selector (GPU Wan I2V vs cloud per-shot i2v),
+   shown in the finalize row of a keyframes-only preview. */
+.planner-motion-backend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.planner-motion-backend-select,
+.planner-motion-model-select {
+  font-size: 11px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.planner-motion-backend-select:focus,
+.planner-motion-model-select:focus {
+  outline: 1px solid var(--accent);
+}
+
 /* The finalize row is part of the expanded view; gate it the same
    way as sub / actions / keyframes when the row is collapsed. */
 .planner-history-item-collapsed .planner-history-finalize-row {

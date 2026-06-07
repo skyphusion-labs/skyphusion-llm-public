@@ -80,6 +80,14 @@ function imageToVideoParams(
         prompt: motion,
         duration: 5,
         ratio: "1280:720",
+        // v0.145.1: loosen Runway's input moderation to its lowest documented
+        // setting. The default flags AI-generated photoreal characters as
+        // possible real people / public figures and rejects the keyframe (a
+        // false positive on our own synthetic renders). This is the only
+        // moderation knob any of the wired i2v models exposes; Seedance / Hailuo
+        // / hh1 hard-code it provider-side with no override. Operator-gated
+        // platform (single key-holder, monitored logs, enforced acceptable use).
+        content_moderation: { public_figure_threshold: "low" },
       };
 
     // Alibaba hh1-i2v (the original i2v wiring) and the safe default: field

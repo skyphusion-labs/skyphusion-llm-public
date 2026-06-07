@@ -137,3 +137,24 @@ surfaces each model's duration + resolution constraints and a rough cost hint.
   off-GPU in `video-finish`.
 - **Audio**: Seedance/Veo can self-generate audio; we want silent + our own score,
   so `generate_audio:false` (Phase 1 already sets this).
+
+## Content moderation, per provider (v0.145.1)
+
+The cloud i2v vendors run input-image moderation, and it false-positives on our own
+AI-generated photoreal characters (it reads a synthetic human as a possible real
+person / public figure and rejects the keyframe). This bites exactly the renders we
+most want to animate (the photoreal ones); anime/stylized keyframes pass.
+
+What each model exposes (verified against the CF model pages 2026-06-07):
+- **Runway Gen-4.5** is the only one with a knob: `content_moderation:
+  { public_figure_threshold: "low" }`. We send the loosest documented value, so
+  Runway is the photoreal-friendly cloud lane.
+- **Seedance 2.0, Hailuo 2.3, hh1-i2v** expose NO moderation field; it is hard-coded
+  provider-side and cannot be overridden from our payload (Seedance is the strict
+  one that returns `InputImageSensitiveContentDetected.PrivacyInformation`).
+- **LoRA training and the SDXL keyframe pass are self-hosted** (our GPU), so they
+  have no vendor moderation at all; this concern is purely the third-party i2v edge.
+
+Operator posture: single key-holder, Cloudflare-Access-gated, logs monitored, AUP
+enforced. (If AI Gateway Guardrails is enabled at the dashboard, that is a separate
+layer the operator toggles there; it is not set in this code.)

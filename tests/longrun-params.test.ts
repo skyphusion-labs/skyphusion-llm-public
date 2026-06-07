@@ -93,6 +93,7 @@ describe("buildGenParams", () => {
       prompt: "drift",
       duration: 5,
       ratio: "1280:720",
+      content_moderation: { public_figure_threshold: "low" },
     });
     expect(p).not.toHaveProperty("resolution");
   });

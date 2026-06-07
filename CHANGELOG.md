@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.145.1
+
+Loosen Runway i2v input moderation to its lowest documented setting.
+
+The cloud i2v vendors moderate the input keyframe, and it false-positives on our own
+AI-generated photoreal characters (flagged as a possible real person / public
+figure, then rejected). Of the wired image-input models, only `runwayml/gen-4.5`
+exposes a knob, so `buildGenParams` now sends `content_moderation:
+{ public_figure_threshold: "low" }` for it, making Runway the photoreal-friendly
+cloud lane. Seedance 2.0, Hailuo 2.3, and hh1-i2v expose no moderation field (it is
+hard-coded provider-side; Seedance is the strict one returning
+`InputImageSensitiveContentDetected.PrivacyInformation`). LoRA training + the SDXL
+keyframe pass are self-hosted and have no vendor moderation. Operator-gated platform
+(single key-holder, Access-gated, monitored logs, enforced AUP). See
+`docs/i2v-backend-selector.md` for the per-provider table.
+
+### Code
+- `src/longrun-params.ts` - Runway i2v shape adds `content_moderation:
+  { public_figure_threshold: "low" }`.
+- `tests/longrun-params.test.ts` - Runway shape test updated (10/10 pass).
+- `docs/i2v-backend-selector.md` - per-provider content-moderation section.
+- `package.json` - 0.145.0 -> 0.145.1.
+
 ## v0.145.0
 
 Motion backend selector in the control panel: choose GPU (Wan) or Cloud i2v.

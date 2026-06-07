@@ -554,3 +554,54 @@ export function normalizePerShotModels(
   }
   return { perShot, errors };
 }
+
+// v0.151.0 (Phase 4 hybrid): per-shot BACKEND assignment for animate-hybrid.
+// Maps shot_id -> { backend: "gpu" | "cloud", model? } so one film can route
+// some shots to the pod's Wan i2v and others to a cloud i2v model. Pure +
+// testable; the route supplies `allowedModelIds` (the image-input video catalog)
+// for the cloud model check. A cloud entry may omit `model` (the route's
+// defaultCloudModel applies). Bad entries error (route 400s) rather than
+// silently dropping. Missing/empty input is valid (route falls back to
+// defaultBackend for every shot).
+export function normalizeHybridBackends(
+  raw: unknown,
+  allowedModelIds: ReadonlySet<string>,
+): {
+  backends: Record<string, { backend: "gpu" | "cloud"; model?: string }>;
+  errors: string[];
+} {
+  const backends: Record<string, { backend: "gpu" | "cloud"; model?: string }> = {};
+  const errors: string[] = [];
+  if (raw === undefined || raw === null) return { backends, errors };
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    errors.push("backends must be an object mapping shot_id to { backend, model? }");
+    return { backends, errors };
+  }
+  for (const [shotId, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!shotId.trim()) continue;
+    if (!v || typeof v !== "object" || Array.isArray(v)) {
+      errors.push(`backends["${shotId}"] must be an object { backend, model? }`);
+      continue;
+    }
+    const backend = (v as { backend?: unknown }).backend;
+    if (backend !== "gpu" && backend !== "cloud") {
+      errors.push(`backends["${shotId}"].backend must be "gpu" or "cloud"`);
+      continue;
+    }
+    const entry: { backend: "gpu" | "cloud"; model?: string } = { backend };
+    if (backend === "cloud") {
+      const model = (v as { model?: unknown }).model;
+      if (model !== undefined) {
+        if (typeof model !== "string" || !allowedModelIds.has(model)) {
+          errors.push(
+            `backends["${shotId}"].model "${String(model)}" is not an image-input video model`,
+          );
+          continue;
+        }
+        entry.model = model;
+      }
+    }
+    backends[shotId] = entry;
+  }
+  return { backends, errors };
+}

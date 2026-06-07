@@ -8,6 +8,7 @@ import {
   SLOT_IDS,
   normalizeProjectName,
   normalizePerShotModels,
+  normalizeHybridBackends,
   validateStoryboard,
 } from "../src/storyboard-validate";
 
@@ -706,5 +707,46 @@ describe("normalizePerShotModels", () => {
   it("rejects a non-string model value and a non-object input", () => {
     expect(normalizePerShotModels({ shot_01: 7 }, allowed).errors.length).toBe(1);
     expect(normalizePerShotModels([1, 2], allowed).errors[0]).toMatch(/must be an object/);
+  });
+});
+
+describe("normalizeHybridBackends", () => {
+  const allowed = new Set(["runwayml/gen-4.5", "bytedance/seedance-2.0"]);
+
+  it("treats missing/empty input as no assignments", () => {
+    expect(normalizeHybridBackends(undefined, allowed)).toEqual({ backends: {}, errors: [] });
+    expect(normalizeHybridBackends({}, allowed)).toEqual({ backends: {}, errors: [] });
+  });
+
+  it("keeps valid gpu + cloud entries (cloud model optional)", () => {
+    const r = normalizeHybridBackends(
+      {
+        shot_01: { backend: "gpu" },
+        shot_02: { backend: "cloud", model: "runwayml/gen-4.5" },
+        shot_03: { backend: "cloud" },
+      },
+      allowed,
+    );
+    expect(r.errors).toEqual([]);
+    expect(r.backends).toEqual({
+      shot_01: { backend: "gpu" },
+      shot_02: { backend: "cloud", model: "runwayml/gen-4.5" },
+      shot_03: { backend: "cloud" },
+    });
+  });
+
+  it("rejects an unknown backend and an unknown cloud model", () => {
+    const r = normalizeHybridBackends(
+      { shot_01: { backend: "wan" }, shot_02: { backend: "cloud", model: "openai/sora" } },
+      allowed,
+    );
+    expect(r.backends).toEqual({});
+    expect(r.errors.some((e) => /shot_01.*backend must be/.test(e))).toBe(true);
+    expect(r.errors.some((e) => /shot_02.*not an image-input/.test(e))).toBe(true);
+  });
+
+  it("rejects non-object entries and non-object input", () => {
+    expect(normalizeHybridBackends({ shot_01: "gpu" }, allowed).errors[0]).toMatch(/must be an object/);
+    expect(normalizeHybridBackends([1], allowed).errors[0]).toMatch(/must be an object/);
   });
 });

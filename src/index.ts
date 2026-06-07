@@ -71,7 +71,7 @@ import { finishInputFromPodOutput, parseVideoFinishInput, runVideoFinish } from 
 import { findPlanningModel, PLANNING_MODELS } from "./planner-catalog";
 import { serializeStoryboardYaml } from "./planner-yaml";
 import type { SlotId } from "./storyboard-validate";
-import { validateStoryboard, normalizePerShotModels } from "./storyboard-validate";
+import { validateStoryboard, normalizePerShotModels, normalizeHybridBackends } from "./storyboard-validate";
 import { assembleBundle, type TrainingImage } from "./bundle-assembler";
 import {
   cancelRenderJob,
@@ -640,6 +640,14 @@ export default {
     const rac = url.pathname.match(/^\/api\/storyboard\/renders\/(\d+)\/animate-cloud$/);
     if (rac && request.method === "POST") {
       return handleAnimateCloudSubmit(request, env, rac[1]);
+    }
+
+    // v0.151.0 (Phase 4 hybrid): animate a keyframes-only render across BOTH
+    // backends in one film (some shots GPU Wan, some cloud i2v), assembled into
+    // one silent MP4. Durable workflow; returns a cloud-<uuid> jobId.
+    const rah = url.pathname.match(/^\/api\/storyboard\/renders\/(\d+)\/animate-hybrid$/);
+    if (rah && request.method === "POST") {
+      return handleAnimateHybridSubmit(request, env, rah[1]);
     }
     // v0.60.0: retry a FAILED / CANCELLED / TIMED_OUT render. Resubmits
     // a fresh job to RunPod with the same project + bundle_key +
@@ -3649,6 +3657,145 @@ async function handleAnimateCloudSubmit(
     project: row.project,
     model,
     shots: keyframes.length,
+    user: userEmail,
+  });
+}
+
+// POST /api/storyboard/renders/<id>/animate-hybrid (v0.151.0, Phase 4 hybrid)
+//
+// Animate a COMPLETED keyframes-only render across BOTH backends in one film:
+// some shots on the GPU (pod Wan i2v via finalize finish_offloaded), some on a
+// cloud i2v model, then assemble into one silent MP4. Body:
+//   { backends?: { shot_id: { backend: "gpu"|"cloud", model? } },
+//     defaultBackend?: "gpu"|"cloud", defaultCloudModel?: <image-input model id>,
+//     motionPrompts?: { shot_id: prompt }, prompt?: <global motion> }
+// Returns a cloud-<uuid> jobId; poll at GET /api/storyboard/render/<jobId>.
+async function handleAnimateHybridSubmit(
+  request: Request,
+  env: Env,
+  idStr: string,
+): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const id = Number(idStr);
+  if (!Number.isInteger(id) || id <= 0) {
+    return json({ error: "invalid render id" }, { status: 400 });
+  }
+
+  let body: Record<string, unknown> = {};
+  try {
+    const raw = await request.json<Record<string, unknown>>();
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) body = raw;
+  } catch {
+    // body is optional (defaults to all-default-backend)
+  }
+
+  const imageInputVideoIds = new Set(
+    MODELS.filter((m) => m.type === "video" && m.capabilities.includes("image-input")).map(
+      (m) => m.id,
+    ),
+  );
+
+  const defaultBackend: "gpu" | "cloud" = body.defaultBackend === "cloud" ? "cloud" : "gpu";
+  const defaultCloudModel =
+    typeof body.defaultCloudModel === "string" && body.defaultCloudModel.trim()
+      ? body.defaultCloudModel.trim()
+      : "alibaba/hh1-i2v";
+  if (!imageInputVideoIds.has(defaultCloudModel)) {
+    return json(
+      { error: `defaultCloudModel "${defaultCloudModel}" is not an image-input video model` },
+      { status: 400 },
+    );
+  }
+
+  const { backends, errors: backendErrors } = normalizeHybridBackends(
+    body.backends,
+    imageInputVideoIds,
+  );
+  if (backendErrors.length > 0) {
+    return json({ error: backendErrors.join("; ") }, { status: 400 });
+  }
+
+  const motionPrompts: Record<string, string> = {};
+  if (body.motionPrompts && typeof body.motionPrompts === "object" && !Array.isArray(body.motionPrompts)) {
+    for (const [k, v] of Object.entries(body.motionPrompts as Record<string, unknown>)) {
+      if (typeof v === "string" && v.trim()) motionPrompts[k] = v;
+    }
+  }
+  const globalPrompt = typeof body.prompt === "string" ? body.prompt : "";
+
+  const row = await getRenderByIdForUser(env, id, userEmail);
+  if (!row) return json({ error: "render not found" }, { status: 404 });
+  if (row.status !== "COMPLETED") {
+    return json(
+      { error: `render is ${row.status}; it must be COMPLETED to animate its keyframes` },
+      { status: 400 },
+    );
+  }
+  const keyframes = (row.keyframes ?? []).filter((k) => k.shot_id && k.key);
+  if (keyframes.length === 0) {
+    return json({ error: "render has no keyframes to animate" }, { status: 400 });
+  }
+  const backendOf = (sid: string): "gpu" | "cloud" => backends[sid]?.backend ?? defaultBackend;
+  const gpuCount = keyframes.filter((k) => backendOf(k.shot_id) === "gpu").length;
+  // The GPU subset finalizes against the render's bundle; require one when any
+  // shot is GPU.
+  if (gpuCount > 0 && !row.bundle_key) {
+    return json(
+      { error: "render has no bundle_key; the GPU subset needs it to finalize" },
+      { status: 400 },
+    );
+  }
+
+  const jobId = `cloud-${crypto.randomUUID()}`;
+  const startedAtIso = new Date().toISOString();
+
+  await insertRender(env, {
+    userEmail,
+    jobId,
+    project: row.project,
+    bundleKey: row.bundle_key,
+    qualityTier: row.quality_tier,
+    status: "IN_QUEUE",
+    mode: "cloud-finalized",
+    projectId: row.project_id,
+    parentId: id,
+  });
+
+  try {
+    await env.LONGRUN.create({
+      params: {
+        kind: "hybrid_animate",
+        userEmail,
+        jobId,
+        project: row.project,
+        bundleKey: row.bundle_key,
+        qualityTier: row.quality_tier,
+        parentId: id,
+        keyframes,
+        backends,
+        defaultBackend,
+        defaultCloudModel,
+        motionPrompts,
+        globalPrompt,
+        startedAtIso,
+      } satisfies LongRunParams,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await markRenderFailedByJobId(env, jobId, `failed to start hybrid animation: ${msg}`).catch(() => {});
+    return json({ error: "failed to start the hybrid animation workflow" }, { status: 502 });
+  }
+
+  return json({
+    ok: true,
+    jobId,
+    status: "IN_QUEUE",
+    statusRaw: "IN_QUEUE",
+    parentId: id,
+    project: row.project,
+    shots: keyframes.length,
+    gpuShots: gpuCount,
+    cloudShots: keyframes.length - gpuCount,
     user: userEmail,
   });
 }
@@ -8371,7 +8518,35 @@ interface CloudAnimateParams extends Record<string, unknown> {
   startedAtIso: string;
 }
 
-type LongRunParams = LongRunGenParams | ZipImportParams | CloudAnimateParams;
+// v0.151.0 (Phase 4 hybrid): animate a keyframes-only render's shots across BOTH
+// backends in one film -- GPU (pod Wan i2v) for some shots, cloud i2v for others
+// -- then assemble all clips into one silent MP4. The GPU subset runs as one
+// finalize with finish_offloaded + process_shot_ids (per-shot clips, no on-GPU
+// assembly; pod SkyPhusion/vivijure-serverless#17); the cloud subset reuses the
+// cloud_animate per-shot loop; a final video-finish pass merges them in order.
+interface HybridAnimateParams extends Record<string, unknown> {
+  kind: "hybrid_animate";
+  userEmail: string;
+  jobId: string;
+  project: string;
+  bundleKey: string;
+  qualityTier: string;
+  parentId: number;
+  keyframes: Array<{ shot_id: string; key: string }>;
+  // shot_id -> { backend, model? }; shots absent use defaultBackend.
+  backends: Record<string, { backend: "gpu" | "cloud"; model?: string }>;
+  defaultBackend: "gpu" | "cloud";
+  defaultCloudModel: string;
+  motionPrompts: Record<string, string>;
+  globalPrompt: string;
+  startedAtIso: string;
+}
+
+type LongRunParams =
+  | LongRunGenParams
+  | ZipImportParams
+  | CloudAnimateParams
+  | HybridAnimateParams;
 
 // Returned by the zip-import workflow run() and surfaced via the instance's
 // status().output to the polling client. userEmail is included so the status
@@ -8401,6 +8576,9 @@ export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
     }
     if (event.payload.kind === "cloud_animate") {
       return this.runCloudAnimate(event.payload, step);
+    }
+    if (event.payload.kind === "hybrid_animate") {
+      return this.runHybridAnimate(event.payload, step);
     }
     return this.runGen(event.payload, step);
   }
@@ -8580,6 +8758,216 @@ export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
         status: "FAILED",
         error: msg,
         shots: shotLog,
+      }).catch(() => {});
+      throw err;
+    }
+  }
+
+  // v0.151.0 (Phase 4 hybrid): animate one film across BOTH backends. GPU shots
+  // run as a single finalize (finish_offloaded + process_shot_ids -> per-shot
+  // clips, no on-GPU assembly); the workflow polls that pod job to terminal with
+  // a durable step.do + step.sleep loop, then reads its clips. Cloud shots run
+  // the cloud_animate per-shot loop. Both lanes yield { shot_id -> clipKey } in
+  // R2_RENDERS; a final video-finish pass concats them in shot order. Row mode
+  // stays "cloud-finalized" (workflow-backed cloud-<uuid>); clips carry a
+  // `backend` tag so the UI can badge it "hybrid".
+  async runHybridAnimate(p: HybridAnimateParams, step: WorkflowStep): Promise<void> {
+    const {
+      userEmail, jobId, project, bundleKey, qualityTier, keyframes,
+      backends, defaultBackend, defaultCloudModel, motionPrompts, globalPrompt, startedAtIso,
+    } = p;
+    const shotLog: CloudAnimateLogShot[] = [];
+    // shot_id -> { key, backend, model? } for every animated shot.
+    const clipByShot = new Map<string, { key: string; backend: "gpu" | "cloud"; model?: string }>();
+    try {
+      await step.do(
+        "mark-running",
+        { retries: { limit: 3, delay: "3 seconds", backoff: "exponential" } },
+        async (): Promise<void> => {
+          await updateRenderFromView(this.env, {
+            jobId, status: "IN_PROGRESS", statusRaw: "IN_PROGRESS",
+          } as RunpodJobView);
+        },
+      );
+
+      const shots = [...keyframes].sort((a, b) => a.shot_id.localeCompare(b.shot_id));
+      const total = shots.length;
+      const backendOf = (sid: string): "gpu" | "cloud" =>
+        backends[sid]?.backend ?? defaultBackend;
+      const gpuShots = shots.filter((s) => backendOf(s.shot_id) === "gpu");
+      const cloudShots = shots.filter((s) => backendOf(s.shot_id) === "cloud");
+
+      // --- GPU subset: one finalize, finish_offloaded, durable poll loop ---
+      if (gpuShots.length > 0) {
+        const gpuJobId = await step.do(
+          "gpu-submit",
+          { retries: { limit: 2, delay: "10 seconds", backoff: "exponential" } },
+          async (): Promise<string> => {
+            const res = await submitFinalizeJob(this.env, {
+              project,
+              bundleKey,
+              qualityTier: qualityTier as "draft" | "standard" | "final" | undefined,
+              userEmail,
+              processShotIds: gpuShots.map((s) => s.shot_id),
+              // pod SkyPhusion/vivijure-serverless#17: emit per-shot clips, no on-GPU assembly.
+              renderOverrides: { finish_offloaded: true },
+            });
+            if (!res.ok) throw new Error(`gpu finalize submit failed: ${res.error}`);
+            return res.view.jobId;
+          },
+        );
+
+        // Poll to terminal: a short poll step (returns the concrete per-shot
+        // clips on COMPLETED -- step.do returns must be serializable, so we
+        // extract them here rather than passing the raw output object) + a
+        // durable sleep, up to ~45 min.
+        const MAX_POLLS = 90;
+        let gpuClips: Array<{ shot_id: string; key: string }> | null = null;
+        for (let i = 0; i < MAX_POLLS; i++) {
+          const snap = await step.do(
+            `gpu-poll-${i}`,
+            { retries: { limit: 3, delay: "5 seconds", backoff: "exponential" } },
+            async (): Promise<{ terminal: boolean; status: string; clips: Array<{ shot_id: string; key: string }> }> => {
+              const r = await pollRenderJob(this.env, gpuJobId);
+              if (!r.ok) return { terminal: false, status: "poll-error", clips: [] };
+              const status = r.view.status;
+              const o = r.view.output;
+              let clips: Array<{ shot_id: string; key: string }> = [];
+              if (o && typeof o === "object" && !Array.isArray(o) && Array.isArray((o as { clips?: unknown }).clips)) {
+                clips = ((o as { clips: unknown[] }).clips)
+                  .map((c) => ({
+                    shot_id: (c as { shot_id?: unknown })?.shot_id,
+                    key: (c as { key?: unknown })?.key,
+                  }))
+                  .filter((c): c is { shot_id: string; key: string } =>
+                    typeof c.shot_id === "string" && typeof c.key === "string");
+              }
+              return { terminal: isTerminalStatus(status), status, clips };
+            },
+          );
+          if (snap.terminal) {
+            if (snap.status !== "COMPLETED") throw new Error(`gpu finalize ${snap.status}`);
+            gpuClips = snap.clips;
+            break;
+          }
+          await step.sleep(`gpu-wait-${i}`, "30 seconds");
+        }
+        if (!gpuClips) throw new Error("gpu finalize did not reach a terminal state in time");
+
+        for (const c of gpuClips) {
+          clipByShot.set(c.shot_id, { key: c.key, backend: "gpu", model: "gpu:wan" });
+          shotLog.push({ shot_id: c.shot_id, model: "gpu:wan", status: "ok", log_id: null });
+        }
+        await setCloudAnimateProgress(this.env, jobId, clipByShot.size, total).catch(() => {});
+      }
+
+      // --- Cloud subset: per-shot env.AI.run i2v (cloud_animate loop) ---
+      for (const kf of cloudShots) {
+        const shotModel = backends[kf.shot_id]?.model || defaultCloudModel;
+        const res = await step.do(
+          `cloud-${kf.shot_id}`,
+          { retries: { limit: 1, delay: "30 seconds", backoff: "linear" } },
+          async (): Promise<{ key: string; logId: string | null; videoUrl: string }> => {
+            const imageUrl = await presignR2Get(this.env, kf.key, 1800);
+            const prompt = motionPrompts[kf.shot_id] || globalPrompt || "";
+            const params = buildGenParams("video", { modelId: shotModel, prompt, imageUrl });
+            const result = (await aiRun(this.env, shotModel, params)) as LongRunResult;
+            const logId = aiLogId(this.env);
+            if (result.state && result.state !== "Completed") {
+              throw new Error(`gen state ${result.state} for ${kf.shot_id}`);
+            }
+            const url = result.result?.video;
+            if (!url) throw new Error(`gen completed but no video url for ${kf.shot_id}`);
+            const aresp = await fetch(url);
+            if (!aresp.ok) throw new Error(`fetch clip ${aresp.status} for ${kf.shot_id}`);
+            const bytes = new Uint8Array(await aresp.arrayBuffer());
+            const key = `renders/${project}/${jobId}/clips/${kf.shot_id}.mp4`;
+            await this.env.R2_RENDERS.put(key, bytes, {
+              httpMetadata: { contentType: "video/mp4" },
+              customMetadata: { user_email: userEmail },
+            });
+            return { key, logId, videoUrl: url };
+          },
+        );
+        clipByShot.set(kf.shot_id, { key: res.key, backend: "cloud", model: shotModel });
+        shotLog.push({ shot_id: kf.shot_id, model: shotModel, status: "ok", log_id: res.logId, video_url: res.videoUrl });
+        await setCloudAnimateProgress(this.env, jobId, clipByShot.size, total).catch(() => {});
+      }
+
+      // --- Unified assembly: merge GPU + cloud clips in shot order ---
+      const outputKey = await step.do(
+        "assemble",
+        { retries: { limit: 2, delay: "10 seconds", backoff: "exponential" } },
+        async (): Promise<string> => {
+          const out = `renders/${project}/${jobId}/hybrid_full.mp4`;
+          const orderedKeys = shots
+            .map((s) => clipByShot.get(s.shot_id)?.key)
+            .filter((k): k is string => typeof k === "string");
+          if (orderedKeys.length === 0) throw new Error("hybrid: no clips produced to assemble");
+          const res = await runVideoFinish(this.env, {
+            clips: orderedKeys.map((k) => ({ key: k })),
+            outputKey: out,
+            width: 1280,
+            height: 720,
+            fps: 24,
+          });
+          if (!res.ok) throw new Error(`assemble failed (${res.status}): ${res.error}`);
+          const o = await this.env.R2_RENDERS.get(out);
+          if (o) {
+            const bytes = new Uint8Array(await o.arrayBuffer());
+            await this.env.R2_RENDERS.put(out, bytes, {
+              httpMetadata: { contentType: "video/mp4" },
+              customMetadata: { user_email: userEmail },
+            });
+          }
+          return out;
+        },
+      );
+
+      await step.do(
+        "finalize-row",
+        { retries: { limit: 3, delay: "5 seconds", backoff: "exponential" } },
+        async (): Promise<void> => {
+          const executionTimeMs = Date.now() - Date.parse(startedAtIso);
+          await updateRenderFromView(this.env, {
+            jobId, status: "COMPLETED", statusRaw: "COMPLETED",
+            output: {
+              output_key: outputKey,
+              mode: "cloud-finalized",
+              keyframes: shots,
+              clips: shots.map((s) => {
+                const c = clipByShot.get(s.shot_id);
+                return { shot_id: s.shot_id, key: c?.key, backend: c?.backend, model: c?.model };
+              }),
+              hybrid: true,
+              has_audio: false,
+            },
+            executionTimeMs,
+          } as RunpodJobView);
+        },
+      );
+
+      await step.do(
+        "notify",
+        { retries: { limit: 2, delay: "5 seconds", backoff: "exponential" } },
+        async (): Promise<void> => { await maybeNotifyRenderDone(this.env, jobId); },
+      );
+      await step.do(
+        "write-log",
+        { retries: { limit: 2, delay: "5 seconds", backoff: "exponential" } },
+        async (): Promise<void> => {
+          const executionTimeMs = Date.now() - Date.parse(startedAtIso);
+          await writeCloudAnimateLog(this.env, userEmail, {
+            jobId, model: "hybrid", status: "COMPLETED", executionTimeMs, shots: shotLog,
+          });
+        },
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await markRenderFailedByJobId(this.env, jobId, `hybrid animation failed: ${msg}`).catch(() => {});
+      await maybeNotifyRenderDone(this.env, jobId).catch(() => {});
+      await writeCloudAnimateLog(this.env, userEmail, {
+        jobId, model: "hybrid", status: "FAILED", error: msg, shots: shotLog,
       }).catch(() => {});
       throw err;
     }

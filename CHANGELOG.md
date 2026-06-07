@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.151.0
+
+Phase 4 finale, slice 1: GPU+cloud hybrid i2v backend + workflow (API-drivable).
+
+Animate one keyframes-only render across BOTH motion backends in a single film -- some
+shots on the GPU (pod Wan i2v) and some on a cloud i2v model -- then assemble all the
+clips into one silent MP4. This is the backend + orchestration; the per-shot backend
+picker UI is slice 2.
+
+- **`POST /api/storyboard/renders/<id>/animate-hybrid`**
+  `{ backends?: { shot_id: { backend: "gpu"|"cloud", model? } }, defaultBackend?,
+  defaultCloudModel?, motionPrompts?, prompt? }` on a COMPLETED keyframes-only render.
+  Validated by the pure, tested `normalizeHybridBackends`. Returns a `cloud-<uuid>`
+  jobId (workflow-backed; the v0.146.1 `pollRenderResolved` `cloud-` guard already
+  protects it).
+- **`hybrid_animate` LongRunWorkflow**: partitions shots by backend; the **GPU subset**
+  runs as ONE finalize with `render_overrides.finish_offloaded=true` +
+  `process_shot_ids` (pod SkyPhusion/vivijure-serverless#17, live in serverless-v0.6.0 --
+  emits per-shot clips, no on-GPU assembly), polled to terminal with a durable
+  `step.do` + `step.sleep` loop; the **cloud subset** reuses the `cloud_animate` per-shot
+  `env.AI.run` loop. Both lanes yield `{ shot_id -> clipKey }` in R2; a final
+  `runVideoFinish` concats them in shot order into `hybrid_full.mp4`. Row mode stays
+  `cloud-finalized`; `output.clips[].backend` tags each clip so the UI can badge "hybrid".
+  Progress / completion-notify / gateway-log / parent_id linkage all reused.
+
+No schema change. Spec: `docs/i2v-hybrid-backend.md`. The N-single-shot-finalize
+fallback is dropped now that #17 is live (one finalize covers the whole GPU subset).
+
+### Code
+- `src/storyboard-validate.ts` - `normalizeHybridBackends` (pure validator).
+- `src/index.ts` - `/animate-hybrid` route + `handleAnimateHybridSubmit`;
+  `HybridAnimateParams` + `hybrid_animate` dispatch + `runHybridAnimate` workflow.
+- `tests/storyboard-validate.test.ts` - `normalizeHybridBackends` coverage.
+- `docs/i2v-hybrid-backend.md` - finish_offloaded trigger resolved (was guessing `n`).
+- `package.json` - 0.150.0 -> 0.151.0.
+- typecheck clean; vitest 583/583 (4 new).
+
 ## v0.150.0
 
 Phase 4b close-the-loop: render directly from a bundle's injected keyframes (GPU i2v),

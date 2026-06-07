@@ -744,7 +744,7 @@ export async function pollRenderJob(
 // `analyze_audio` action was reverted in vivijure-serverless 0.4.60. These
 // types + parseAudioBeatPlan are shared: the request shape the route validates,
 // and the snake_case plan the container emits (normalized to camelCase here).
-// See docs/audio-beat-sync-container.md.
+// See docs/containers.md.
 
 // Worker-facing request (camelCase); the route handler builds the container
 // body from this. Defaults below are applied at the call site / in the

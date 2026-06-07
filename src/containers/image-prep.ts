@@ -7,7 +7,7 @@
 // see memory reference-cf-containers-work-now.
 //
 // Moves the pod-side rembg (multi_character_regional.py:_slot_portraits) off
-// the GPU image. See docs/image-prep-container.md.
+// the GPU image. See docs/containers.md.
 
 import { Container } from "@cloudflare/containers";
 import type { Env } from "../env";

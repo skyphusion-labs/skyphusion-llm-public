@@ -551,7 +551,7 @@ export default {
     // AUDIO_BEAT_SYNC Cloudflare Container (librosa). Replaces the v0.105.0
     // submit/poll pair against the reverted GPU pod analyze_audio action
     // (vivijure-serverless 0.4.60); beat analysis is fast enough (1-3s warm)
-    // that there is no jobId/poll dance. See docs/audio-beat-sync-container.md.
+    // that there is no jobId/poll dance. See docs/containers.md.
     if (url.pathname === "/api/audio/analyze" && request.method === "POST") {
       return handleAudioAnalyze(request, env);
     }
@@ -1898,12 +1898,12 @@ async function handleAddRenderNarration(
 }
 
 // v0.105.0: audio beat-sync. Submit an analyze_audio job; poll mirrors the
-// render poll. See docs/audio-beat-sync.md.
+// render poll. See docs/containers.md.
 // Beat analysis runs on the CPU-only AUDIO_BEAT_SYNC Cloudflare Container, not
 // the GPU pod. We presign a short-lived R2 GET URL, POST it to the container's
 // /analyze (it streams the audio over the public S3 endpoint, runs librosa,
 // returns the snake_case AudioBeatPlan), and normalize inline. One round trip,
-// no jobId/poll: warm latency is 1-3s. See docs/audio-beat-sync-container.md.
+// no jobId/poll: warm latency is 1-3s. See docs/containers.md.
 async function handleAudioAnalyze(request: Request, env: Env): Promise<Response> {
   const userEmail = getUserEmail(request);
   let body: AudioAnalyzeRequest;

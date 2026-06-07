@@ -8,7 +8,7 @@
 //
 // CPU-only beat detection in a container, not the GPU pod: spinning a RunPod
 // worker just to read an MP3 was wasteful (the pod analyze_audio action was
-// reverted in vivijure-serverless 0.4.60). See docs/audio-beat-sync-container.md.
+// reverted in vivijure-serverless 0.4.60). See docs/containers.md.
 
 import { Container } from "@cloudflare/containers";
 import type { Env } from "../env";

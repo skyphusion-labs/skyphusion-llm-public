@@ -71,7 +71,7 @@ export interface Env {
   // v0.107.0: Container DO for CPU rembg background removal on cast portraits
   // (class ImagePrepContainer in src/containers/image-prep.ts). Worker presigns
   // R2 GET/PUT and POSTs to /portrait/prep at bundle time; moves rembg off the
-  // GPU pod. See docs/image-prep-container.md.
+  // GPU pod. See docs/containers.md.
   IMAGE_PREP: DurableObjectNamespace;
   // v0.120.0: Container DO for CPU ffmpeg video finishing (class
   // VideoFinishContainer in src/containers/video-finish.ts). Worker presigns R2

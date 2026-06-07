@@ -7,6 +7,7 @@ import { describe, it, expect } from "vitest";
 import {
   SLOT_IDS,
   normalizeProjectName,
+  normalizePerShotModels,
   validateStoryboard,
 } from "../src/storyboard-validate";
 
@@ -668,5 +669,42 @@ describe("validateStoryboard", () => {
         ),
       ).toBe(true);
     });
+  });
+});
+
+describe("normalizePerShotModels", () => {
+  const allowed = new Set([
+    "runwayml/gen-4.5",
+    "minimax/hailuo-2.3-fast",
+    "bytedance/seedance-2.0",
+  ]);
+
+  it("treats missing / empty input as no overrides", () => {
+    expect(normalizePerShotModels(undefined, allowed)).toEqual({ perShot: {}, errors: [] });
+    expect(normalizePerShotModels(null, allowed)).toEqual({ perShot: {}, errors: [] });
+    expect(normalizePerShotModels({}, allowed)).toEqual({ perShot: {}, errors: [] });
+  });
+
+  it("keeps valid shot->model entries", () => {
+    const r = normalizePerShotModels(
+      { shot_01: "runwayml/gen-4.5", shot_02: "bytedance/seedance-2.0" },
+      allowed,
+    );
+    expect(r.errors).toEqual([]);
+    expect(r.perShot).toEqual({
+      shot_01: "runwayml/gen-4.5",
+      shot_02: "bytedance/seedance-2.0",
+    });
+  });
+
+  it("rejects an unknown model id with an error and omits it", () => {
+    const r = normalizePerShotModels({ shot_01: "openai/sora" }, allowed);
+    expect(r.perShot).toEqual({});
+    expect(r.errors.some((e) => /shot_01/.test(e) && /not an image-input/.test(e))).toBe(true);
+  });
+
+  it("rejects a non-string model value and a non-object input", () => {
+    expect(normalizePerShotModels({ shot_01: 7 }, allowed).errors.length).toBe(1);
+    expect(normalizePerShotModels([1, 2], allowed).errors[0]).toMatch(/must be an object/);
   });
 });

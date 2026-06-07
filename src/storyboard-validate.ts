@@ -520,3 +520,37 @@ export function validateStoryboard(input: unknown): ValidationResult {
   if (refsDir !== undefined) value.refs_dir = refsDir;
   return { ok: true, value };
 }
+
+// v0.147.0: per-shot cloud i2v model overrides for animate-cloud (Phase 4a).
+// Maps shot_id -> model id so one cloud animation can mix models across shots
+// (e.g. the standoff on Runway, the atmosphere on Seedance). Pure + testable;
+// the route supplies `allowedModelIds` (the image-input video catalog) so this
+// stays free of the model catalog import. Returns the accepted overrides plus a
+// list of human errors; the route 400s when any entry is bad rather than
+// silently dropping it (a shot the caller meant to override would otherwise run
+// on the default model unnoticed). A missing/empty input is valid (no overrides).
+export function normalizePerShotModels(
+  raw: unknown,
+  allowedModelIds: ReadonlySet<string>,
+): { perShot: Record<string, string>; errors: string[] } {
+  const perShot: Record<string, string> = {};
+  const errors: string[] = [];
+  if (raw === undefined || raw === null) return { perShot, errors };
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    errors.push("perShot must be an object mapping shot_id to a model id");
+    return { perShot, errors };
+  }
+  for (const [shotId, modelId] of Object.entries(raw as Record<string, unknown>)) {
+    if (!shotId.trim()) continue;
+    if (typeof modelId !== "string" || !modelId) {
+      errors.push(`perShot["${shotId}"] must be a model id string`);
+      continue;
+    }
+    if (!allowedModelIds.has(modelId)) {
+      errors.push(`perShot["${shotId}"] "${modelId}" is not an image-input video model`);
+      continue;
+    }
+    perShot[shotId] = modelId;
+  }
+  return { perShot, errors };
+}

@@ -71,7 +71,7 @@ import { finishInputFromPodOutput, parseVideoFinishInput, runVideoFinish } from 
 import { findPlanningModel, PLANNING_MODELS } from "./planner-catalog";
 import { serializeStoryboardYaml } from "./planner-yaml";
 import type { SlotId } from "./storyboard-validate";
-import { validateStoryboard } from "./storyboard-validate";
+import { validateStoryboard, normalizePerShotModels } from "./storyboard-validate";
 import { assembleBundle, type TrainingImage } from "./bundle-assembler";
 import {
   cancelRenderJob,
@@ -3460,6 +3460,24 @@ async function handleAnimateCloudSubmit(
   }
   const globalPrompt = typeof body.prompt === "string" ? body.prompt : "";
 
+  // v0.147.0 (Phase 4a): optional per-shot cloud-model overrides
+  // ({ shot_id: modelId }) so one animation can mix models across shots. Each
+  // override must be an image-input video model (same gate as the default
+  // `model` above); a bad entry 400s rather than silently falling back. Shots
+  // without an override use `model`.
+  const imageInputVideoIds = new Set(
+    MODELS.filter((m) => m.type === "video" && m.capabilities.includes("image-input")).map(
+      (m) => m.id,
+    ),
+  );
+  const { perShot, errors: perShotErrors } = normalizePerShotModels(
+    body.perShot,
+    imageInputVideoIds,
+  );
+  if (perShotErrors.length > 0) {
+    return json({ error: perShotErrors.join("; ") }, { status: 400 });
+  }
+
   const row = await getRenderByIdForUser(env, id, userEmail);
   if (!row) return json({ error: "render not found" }, { status: 404 });
   if (row.status !== "COMPLETED") {
@@ -3502,6 +3520,7 @@ async function handleAnimateCloudSubmit(
         parentId: id,
         keyframes,
         motionPrompts,
+        perShot,
         globalPrompt,
         startedAtIso,
       } satisfies LongRunParams,
@@ -8236,6 +8255,9 @@ interface CloudAnimateParams extends Record<string, unknown> {
   parentId: number;
   keyframes: Array<{ shot_id: string; key: string }>;
   motionPrompts: Record<string, string>;
+  // v0.147.0 (Phase 4a): per-shot model overrides ({ shot_id: modelId }); a shot
+  // not present here uses `model`. Validated at submit (image-input video only).
+  perShot: Record<string, string>;
   globalPrompt: string;
   startedAtIso: string;
 }
@@ -8282,10 +8304,14 @@ export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
   // /api/artifact will serve it. Row status is kept current via the by-job_id
   // updateRenderFromView (synthetic view); any failure marks the row FAILED.
   async runCloudAnimate(p: CloudAnimateParams, step: WorkflowStep): Promise<void> {
-    const { userEmail, jobId, model, project, keyframes, motionPrompts, globalPrompt, startedAtIso } = p;
+    const { userEmail, jobId, model, project, keyframes, motionPrompts, perShot, globalPrompt, startedAtIso } = p;
     // v0.146.0: per-shot trace for the gateway log file. Declared out here so a
     // mid-run failure can still write a partial log from the catch.
     const shotLog: CloudAnimateLogShot[] = [];
+    // v0.147.0 (Phase 4a): the model actually used per shot (override or default),
+    // collected so the finalize row can record each clip's model for the UI badge
+    // + per-shot clip labels. Index-aligned with clipKeys.
+    const shotModels: string[] = [];
     try {
       await step.do(
         "mark-running",
@@ -8306,14 +8332,16 @@ export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
       const clipKeys: string[] = [];
       for (let i = 0; i < shots.length; i++) {
         const kf = shots[i];
+        // v0.147.0 (Phase 4a): per-shot model override falls back to the default.
+        const shotModel = perShot[kf.shot_id] || model;
         const res = await step.do(
           `animate-${kf.shot_id}`,
           { retries: { limit: 1, delay: "30 seconds", backoff: "linear" } },
           async (): Promise<{ key: string; logId: string | null; videoUrl: string }> => {
             const imageUrl = await presignR2Get(this.env, kf.key, 1800);
             const prompt = motionPrompts[kf.shot_id] || globalPrompt || "";
-            const params = buildGenParams("video", { modelId: model, prompt, imageUrl });
-            const result = (await aiRun(this.env, model, params)) as LongRunResult;
+            const params = buildGenParams("video", { modelId: shotModel, prompt, imageUrl });
+            const result = (await aiRun(this.env, shotModel, params)) as LongRunResult;
             // v0.146.0: capture this call's AI Gateway log id (the binding sets
             // it per-invocation) so the per-render log can trace each shot.
             const logId = aiLogId(this.env);
@@ -8337,9 +8365,10 @@ export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
           },
         );
         clipKeys.push(res.key);
+        shotModels.push(shotModel);
         shotLog.push({
           shot_id: kf.shot_id,
-          model,
+          model: shotModel,
           status: "ok",
           log_id: res.logId,
           video_url: res.videoUrl,
@@ -8387,7 +8416,13 @@ export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
               output_key: outputKey,
               mode: "cloud-finalized",
               keyframes: shots,
-              clips: shots.map((s, i) => ({ shot_id: s.shot_id, key: clipKeys[i] })),
+              // v0.147.0 (Phase 4a): record each clip's actual model so the UI can
+              // label per-shot models and flag a mixed-model run.
+              clips: shots.map((s, i) => ({
+                shot_id: s.shot_id,
+                key: clipKeys[i],
+                model: shotModels[i],
+              })),
               model,
               has_audio: false,
             },

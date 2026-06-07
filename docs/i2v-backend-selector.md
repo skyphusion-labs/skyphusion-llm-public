@@ -120,8 +120,16 @@ surfaces each model's duration + resolution constraints and a rough cost hint.
 
 ## Phase 4 (optional): per-shot mixing + the reverse bridge
 
-- Per-scene override: `scenes[].motion_backend` / `motion_model`, so a film can
-  send the standoff to Wan and the atmosphere shots to Seedance.
+- **Phase 4a (SHIPPED v0.147.0): per-shot cloud-model mixing.** `animate-cloud`
+  accepts `perShot: { shot_id: modelId }` (each an image-input video model; bad
+  entries 400). `runCloudAnimate` resolves `perShot[shot] || model` per shot and
+  records each clip's model in `output.clips[].model`. The planner's keyframe strip
+  gains a per-shot model picker (revealed when Cloud is selected); completed rows
+  label each clip's model and badge a multi-model run as "cloud · mixed". Cloud-only
+  slice; mixing GPU Wan *and* cloud in one film is the hybrid below.
+- Per-scene override across backends (GPU vs cloud per shot): `scenes[].motion_backend`
+  / `motion_model`, so a film can send the standoff to Wan and the atmosphere shots to
+  Seedance. (Hybrid; not yet built.)
 - The reverse bridge: a per-scene `start_image` in the bundle assembler so
   externally-authored keyframes can drive the *pod's* Wan motion (today there is no
   injection point: the bundle carries only a top-level `start_image` and there is no

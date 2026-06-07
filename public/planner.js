@@ -5296,15 +5296,45 @@ function addNarrationToRender(r, btn) {
     });
 }
 
+// v0.147.0 (Phase 4a): the image-input cloud i2v catalog, hand-maintained like
+// the Wan model lists. Used by the default model dropdown AND the per-shot
+// override pickers in the keyframe strip. Kept in sync with the backend's
+// image-input video models (longrun-params.ts).
+const CLOUD_I2V_MODELS = [
+  ["bytedance/seedance-2.0-fast", "Seedance 2.0 Fast"],
+  ["bytedance/seedance-2.0", "Seedance 2.0"],
+  ["minimax/hailuo-2.3-fast", "Hailuo 2.3 Fast"],
+  ["minimax/hailuo-2.3", "Hailuo 2.3"],
+  ["runwayml/gen-4.5", "Runway Gen-4.5"],
+  ["alibaba/hh1-i2v", "HappyHorse 1.0 I2V"],
+];
+
+// Short display label for a cloud model id ("runwayml/gen-4.5" -> "Runway
+// Gen-4.5"; falls back to the trailing path segment for anything not in the
+// catalog).
+function cloudModelLabel(id) {
+  const hit = CLOUD_I2V_MODELS.find((p) => p[0] === id);
+  return hit ? hit[1] : (id ? String(id).split("/").pop() : "");
+}
+
 // v0.145.2: short, human label for a derived animation version. GPU finalize
 // rows read mode 'finalized'/'full' (Wan); cloud-animate rows read
 // 'cloud-finalized' + output.model (the i2v model). Returns "" for rows that
 // are not a derived animation (so callers can skip the badge).
+// v0.147.0 (Phase 4a): when a cloud run mixed models across shots, read it off
+// output.clips[].model and label it "cloud · mixed" rather than a single model.
 function animationVersionLabel(r) {
   if (r.mode === "cloud-finalized") {
     const out = r.output && typeof r.output === "object" ? r.output : null;
-    const model = out && typeof out.model === "string" ? out.model : "";
-    // Trim the provider prefix for the chip ("runwayml/gen-4.5" -> "gen-4.5").
+    // Mixed-model run: clips carry per-shot models; if more than one distinct
+    // model appears, the row is "cloud · mixed".
+    const clips = out && Array.isArray(out.clips) ? out.clips : [];
+    const distinct = Array.from(
+      new Set(clips.map((c) => (c && typeof c.model === "string" ? c.model : "")).filter(Boolean)),
+    );
+    if (distinct.length > 1) return "cloud · mixed";
+    const model =
+      distinct[0] || (out && typeof out.model === "string" ? out.model : "");
     // In-flight rows have no model yet (output holds only progress), so fall
     // back to a bare "cloud" rather than "cloud · cloud".
     if (!model) return "cloud";
@@ -5661,9 +5691,16 @@ function buildHistoryRow(r, childrenByParent) {
         : [];
     for (const c of outClips) {
       if (c && typeof c.shot_id === "string" && typeof c.key === "string") {
-        clipByShot.set(c.shot_id, c.key);
+        clipByShot.set(c.shot_id, {
+          key: c.key,
+          model: typeof c.model === "string" ? c.model : "",
+        });
       }
     }
+    // v0.147.0 (Phase 4a): per-shot model picker is offered on a keyframes-only
+    // preview (the row that carries the Cloud animate button); hidden until Cloud
+    // is selected. Not shown on derived-animation rows (those already ran).
+    const offerPerShotModel = r.mode === "keyframes-only" && r.status === "COMPLETED";
     for (const kf of r.keyframes) {
       if (!kf || typeof kf.key !== "string" || typeof kf.shot_id !== "string") continue;
       const wrap = document.createElement("div");
@@ -5698,16 +5735,50 @@ function buildHistoryRow(r, childrenByParent) {
       // under the still so the keyframe and its animation read as one unit.
       // Only present on derived-animation rows; preload="metadata" so opening a
       // row does not pull every shot's bytes (the fetch starts on play).
-      const clipKey = clipByShot.get(kf.shot_id);
-      if (clipKey) {
+      const clipRef = clipByShot.get(kf.shot_id);
+      if (clipRef) {
         const clip = document.createElement("video");
-        clip.src = "/api/artifact/" + clipKey;
+        clip.src = "/api/artifact/" + clipRef.key;
         clip.controls = true;
         clip.preload = "metadata";
         clip.playsInline = true;
         clip.className = "planner-history-keyframe-clip";
-        clip.title = "motion clip for " + kf.shot_id;
+        clip.title = "motion clip for " + kf.shot_id
+          + (clipRef.model ? " (" + cloudModelLabel(clipRef.model) + ")" : "");
         wrap.appendChild(clip);
+        // v0.147.0 (Phase 4a): label the clip with the model that produced it,
+        // so a mixed-model run is legible per shot.
+        if (clipRef.model) {
+          const ml = document.createElement("span");
+          ml.className = "planner-history-keyframe-model";
+          ml.textContent = cloudModelLabel(clipRef.model);
+          wrap.appendChild(ml);
+        }
+      }
+
+      // v0.147.0 (Phase 4a): per-shot cloud-model override. "(default)" leaves
+      // the shot on the row's default model; any other choice overrides just
+      // this shot. Hidden until the Cloud backend is selected (toggled by the
+      // Motion select's change handler via the .planner-keyframe-cloud-model
+      // class). data-shot-id lets the submit handler collect the map.
+      if (offerPerShotModel) {
+        const modelSel = document.createElement("select");
+        modelSel.className = "planner-keyframe-cloud-model";
+        modelSel.dataset.shotId = kf.shot_id;
+        modelSel.title = "cloud i2v model for " + kf.shot_id + " (default uses the row model)";
+        modelSel.style.display = "none";
+        const def = document.createElement("option");
+        def.value = "";
+        def.textContent = "(default)";
+        modelSel.appendChild(def);
+        CLOUD_I2V_MODELS.forEach((pair) => {
+          const o = document.createElement("option");
+          o.value = pair[0];
+          o.textContent = pair[1];
+          modelSel.appendChild(o);
+        });
+        modelSel.addEventListener("click", (ev) => ev.stopPropagation());
+        wrap.appendChild(modelSel);
       }
 
       // v0.129.0: per-shot still download (PNG). Available on every keyframe,
@@ -5818,16 +5889,9 @@ function buildHistoryRow(r, childrenByParent) {
 
     const cloudModelSel = document.createElement("select");
     cloudModelSel.className = "planner-motion-model-select";
-    cloudModelSel.title = "cloud image-to-video model";
+    cloudModelSel.title = "default cloud image-to-video model (per-shot overrides below)";
     cloudModelSel.style.display = "none";
-    [
-      ["bytedance/seedance-2.0-fast", "Seedance 2.0 Fast"],
-      ["bytedance/seedance-2.0", "Seedance 2.0"],
-      ["minimax/hailuo-2.3-fast", "Hailuo 2.3 Fast"],
-      ["minimax/hailuo-2.3", "Hailuo 2.3"],
-      ["runwayml/gen-4.5", "Runway Gen-4.5"],
-      ["alibaba/hh1-i2v", "HappyHorse 1.0 I2V"],
-    ].forEach((pair) => {
+    CLOUD_I2V_MODELS.forEach((pair) => {
       const o = document.createElement("option");
       o.value = pair[0];
       o.textContent = pair[1];
@@ -5845,13 +5909,24 @@ function buildHistoryRow(r, childrenByParent) {
       cloudModelSel.style.display = cloud ? "" : "none";
       finalizeBtn.textContent = cloud ? CLOUD_LABEL : GPU_LABEL;
       finalizeBtn.title = cloud ? CLOUD_TITLE : GPU_TITLE;
+      // v0.147.0 (Phase 4a): reveal the per-shot model overrides in the keyframe
+      // strip only when Cloud is the chosen backend (they are no-ops for GPU).
+      li.querySelectorAll(".planner-keyframe-cloud-model").forEach((sel) => {
+        sel.style.display = cloud ? "" : "none";
+      });
     });
 
     finalizeBtn.addEventListener("click", (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
       if (backendSel.value === "cloud") {
-        animateCloudRender(r, finalizeBtn, cloudModelSel.value);
+        // v0.147.0 (Phase 4a): gather per-shot overrides ({ shot_id: modelId })
+        // from the strip; an unset picker ("") just uses the default model.
+        const perShot = {};
+        li.querySelectorAll(".planner-keyframe-cloud-model").forEach((sel) => {
+          if (sel.value && sel.dataset.shotId) perShot[sel.dataset.shotId] = sel.value;
+        });
+        animateCloudRender(r, finalizeBtn, cloudModelSel.value, perShot);
       } else {
         finalizeRender(r, finalizeBtn);
       }
@@ -6316,13 +6391,24 @@ async function finalizeRender(row, btnEl) {
 // with the add-audio action. Mirrors finalizeRender's submit + error + reload
 // flow; the new cloud-<uuid> row is polled by the history auto-refresh (the
 // render-poll cloud short-circuit serves it).
-async function animateCloudRender(row, btnEl, model) {
+async function animateCloudRender(row, btnEl, model, perShot) {
   const kfCount = Array.isArray(row.keyframes) ? row.keyframes.length : 0;
+  // v0.147.0 (Phase 4a): summarize any per-shot model overrides in the confirm.
+  const overrides = perShot && typeof perShot === "object" ? perShot : {};
+  const overrideCount = Object.keys(overrides).length;
+  const overrideLine = overrideCount > 0
+    ? "\n" + overrideCount + " shot" + (overrideCount === 1 ? "" : "s")
+      + " overridden: "
+      + Object.entries(overrides)
+        .map(([s, m]) => s + " -> " + cloudModelLabel(m))
+        .join(", ")
+    : "";
   const confirmMsg =
     "animate this preview on the cloud?\n\n"
-    + "this animates all " + kfCount + " keyframes with " + model
+    + "this animates all " + kfCount + " keyframes with " + cloudModelLabel(model)
     + " (one clip per shot) and assembles a SILENT MP4. No GPU pod is used; "
-    + "add a soundtrack afterward with the add-audio action.\n\ncontinue?";
+    + "add a soundtrack afterward with the add-audio action." + overrideLine
+    + "\n\ncontinue?";
   if (!window.confirm(confirmMsg)) return;
 
   btnEl.disabled = true;
@@ -6331,12 +6417,14 @@ async function animateCloudRender(row, btnEl, model) {
   let resp = null;
   let data = null;
   try {
+    const reqBody = { model: model };
+    if (overrideCount > 0) reqBody.perShot = overrides;
     resp = await fetch(
       "/api/storyboard/renders/" + encodeURIComponent(row.id) + "/animate-cloud",
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ model: model }),
+        body: JSON.stringify(reqBody),
       },
     );
     data = await resp.json();

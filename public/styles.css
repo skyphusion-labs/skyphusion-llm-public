@@ -2971,6 +2971,29 @@ textarea:focus {
   display: block;
 }
 
+/* v0.147.0 (Phase 4a): the model that produced a per-shot clip, shown under it
+   so a mixed-model run is legible at a glance. */
+.planner-history-keyframe-model {
+  font-size: 10px;
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+  color: var(--accent);
+  text-align: center;
+  width: 96px;
+}
+
+/* v0.147.0 (Phase 4a): per-shot cloud-model override picker in the keyframe
+   strip (same width as the thumb; hidden until Cloud backend is chosen). */
+.planner-keyframe-cloud-model {
+  width: 96px;
+  font-size: 10px;
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+  background: var(--bg-elev2);
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px;
+}
+
 /* v0.145.2: derived-animation version badge (e.g. "cloud · gen-4.5", "GPU ·
    Wan") + the parent<->child cross-link chips in the meta bar. */
 .planner-history-mode-version {

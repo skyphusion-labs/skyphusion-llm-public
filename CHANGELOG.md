@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.147.0
+
+Phase 4a: per-shot cloud-model mixing for the cloud animation backend.
+
+A cloud animation ran every keyframe through one model. This lets a single run mix
+models across shots, e.g. the standoff on Runway Gen-4.5 (photoreal-friendly) and the
+atmosphere shots on Seedance, in one assembled MP4.
+
+- **API**: `POST /api/storyboard/renders/<id>/animate-cloud` accepts an optional
+  `perShot: { shot_id: modelId }`. Each override must be an image-input video model
+  (same gate as the default `model`); a bad entry 400s rather than silently falling
+  back. Shots without an override use `model`. Validated by the pure, tested
+  `normalizePerShotModels`.
+- **Workflow**: `runCloudAnimate` resolves `perShot[shot] || model` per shot, records
+  each clip's actual model in `output.clips[].model`, and the per-render gateway log
+  already traces per-shot model.
+- **UI** (`planner.js`): each keyframe in the preview strip gets a per-shot model
+  picker ("(default)" + the image-input catalog), revealed only when the Cloud
+  backend is chosen; the submit collects the overrides. Completed rows label each
+  clip with its model, and the version badge reads "cloud · mixed" when a run used
+  more than one. The cloud catalog is now a single `CLOUD_I2V_MODELS` const shared by
+  the default dropdown and the per-shot pickers.
+
+No schema change (per-shot models live in the existing `output_json`).
+
+### Code
+- `src/storyboard-validate.ts` - `normalizePerShotModels` (pure validator).
+- `src/index.ts` - animate-cloud submit parses/validates `perShot`; `CloudAnimateParams`
+  + `runCloudAnimate` thread per-shot model into gen, log, and `clips[].model`.
+- `public/planner.js` - per-shot pickers, mixed-model badge, per-clip model label,
+  shared `CLOUD_I2V_MODELS`.
+- `public/styles.css` - per-shot picker + clip model-label styles.
+- `tests/storyboard-validate.test.ts` - `normalizePerShotModels` coverage.
+- `docs/i2v-backend-selector.md` - Phase 4a marked shipped.
+- `package.json` - 0.146.1 -> 0.147.0.
+- typecheck clean; vitest green (new validator tests).
+
 ## v0.146.1
 
 Fix: stop the cron sweep / SSE stream from false-failing in-flight cloud

@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.152.0
+
+Phase 4 finale, slice 2: the hybrid per-shot backend picker UI.
+
+The v0.151.0 backend was API-only. The planner's Motion selector (on a keyframes-only
+preview's finalize row) gains a third option, **"Hybrid (per-shot GPU/Cloud)"**. When
+chosen, each keyframe's per-shot picker (the 4a strip control) reveals a **"GPU (Wan)"**
+option alongside the cloud models, so the user sets each shot's backend; an unset shot
+defaults to GPU. The submit builds the `backends` map and posts to
+`/api/storyboard/renders/<id>/animate-hybrid`. Completed rows badge **"hybrid"** when
+clips used both backends (read off `output.clips[].backend`).
+
+GPU vs Cloud routing in the same control: the per-shot picker's `"gpu"` value -> a GPU
+shot; a cloud-model value -> a cloud shot; the GPU option is hidden in plain Cloud mode
+(where the picker stays cloud-models-only) and a stale `"gpu"` pick is reset on switch.
+
+Frontend-only; no API change (the endpoint shipped in v0.151.0).
+
+### Code
+- `public/planner.js` - "Hybrid" Motion option; per-shot GPU option (hidden outside
+  hybrid); 3-way change + submit routing; `animateHybridRender`; "hybrid" version badge.
+- `package.json` - 0.151.0 -> 0.152.0.
+- node --check + typecheck clean; vitest 583/583.
+
 ## v0.151.0
 
 Phase 4 finale, slice 1: GPU+cloud hybrid i2v backend + workflow (API-drivable).

@@ -5526,9 +5526,17 @@ function cloudModelLabel(id) {
 function animationVersionLabel(r) {
   if (r.mode === "cloud-finalized") {
     const out = r.output && typeof r.output === "object" ? r.output : null;
-    // Mixed-model run: clips carry per-shot models; if more than one distinct
-    // model appears, the row is "cloud · mixed".
     const clips = out && Array.isArray(out.clips) ? out.clips : [];
+    // v0.152.0 (Phase 4 hybrid): clips carry a per-shot backend ("gpu"|"cloud").
+    // A run that used BOTH is "hybrid"; an all-gpu run (edge: a hybrid where every
+    // shot resolved to GPU) reads "GPU · Wan".
+    const usedBackends = new Set(
+      clips.map((c) => (c && typeof c.backend === "string" ? c.backend : "")).filter(Boolean),
+    );
+    if (usedBackends.has("gpu") && usedBackends.has("cloud")) return "hybrid";
+    if (usedBackends.size === 1 && usedBackends.has("gpu")) return "GPU · Wan";
+    // All-cloud run (hybrid returned above): clips carry per-shot models; more
+    // than one distinct model -> "cloud · mixed".
     const distinct = Array.from(
       new Set(clips.map((c) => (c && typeof c.model === "string" ? c.model : "")).filter(Boolean)),
     );
@@ -5971,6 +5979,15 @@ function buildHistoryRow(r, childrenByParent) {
         def.value = "";
         def.textContent = "(default)";
         modelSel.appendChild(def);
+        // v0.152.0 (Phase 4 hybrid): a "GPU (Wan)" option, revealed only in Hybrid
+        // mode (hidden in Cloud mode, where this picker is cloud-models-only). In
+        // Hybrid, an unset shot defaults to GPU; pick a cloud model to send it
+        // there instead.
+        const gpuOpt = document.createElement("option");
+        gpuOpt.value = "gpu";
+        gpuOpt.textContent = "GPU (Wan)";
+        gpuOpt.hidden = true;
+        modelSel.appendChild(gpuOpt);
         CLOUD_I2V_MODELS.forEach((pair) => {
           const o = document.createElement("option");
           o.value = pair[0];
@@ -6071,8 +6088,10 @@ function buildHistoryRow(r, childrenByParent) {
     // (v0.143.0); kept in sync by hand here, like the Wan model option lists.
     const GPU_LABEL = "finalize (Wan I2V + assemble)";
     const CLOUD_LABEL = "animate (cloud i2v)";
+    const HYBRID_LABEL = "animate (hybrid)";
     const GPU_TITLE = "run Wan I2V on every keyframe + assemble silent MP4 (about 20 to 30 minutes)";
     const CLOUD_TITLE = "animate each keyframe with the selected cloud model + assemble a silent MP4 (no GPU pod; add a score after with add-audio)";
+    const HYBRID_TITLE = "animate per-shot across BOTH backends (GPU Wan + cloud i2v) and assemble one silent MP4; set each shot's backend below (unset = GPU)";
 
     const motion = document.createElement("div");
     motion.className = "planner-motion-backend";
@@ -6080,7 +6099,11 @@ function buildHistoryRow(r, childrenByParent) {
     const backendSel = document.createElement("select");
     backendSel.className = "planner-motion-backend-select";
     backendSel.title = "how to animate these keyframes into motion";
-    [["gpu", "GPU (Wan I2V)"], ["cloud", "Cloud (per-shot i2v)"]].forEach((pair) => {
+    [
+      ["gpu", "GPU (Wan I2V)"],
+      ["cloud", "Cloud (per-shot i2v)"],
+      ["hybrid", "Hybrid (per-shot GPU/Cloud)"],
+    ].forEach((pair) => {
       const o = document.createElement("option");
       o.value = pair[0];
       o.textContent = pair[1];
@@ -6105,28 +6128,49 @@ function buildHistoryRow(r, childrenByParent) {
     finalizeBtn.title = GPU_TITLE;
 
     backendSel.addEventListener("change", () => {
-      const cloud = backendSel.value === "cloud";
-      cloudModelSel.style.display = cloud ? "" : "none";
-      finalizeBtn.textContent = cloud ? CLOUD_LABEL : GPU_LABEL;
-      finalizeBtn.title = cloud ? CLOUD_TITLE : GPU_TITLE;
-      // v0.147.0 (Phase 4a): reveal the per-shot model overrides in the keyframe
-      // strip only when Cloud is the chosen backend (they are no-ops for GPU).
+      const mode = backendSel.value; // "gpu" | "cloud" | "hybrid"
+      const showPicker = mode === "cloud" || mode === "hybrid";
+      cloudModelSel.style.display = mode === "cloud" ? "" : "none";
+      finalizeBtn.textContent =
+        mode === "cloud" ? CLOUD_LABEL : mode === "hybrid" ? HYBRID_LABEL : GPU_LABEL;
+      finalizeBtn.title =
+        mode === "cloud" ? CLOUD_TITLE : mode === "hybrid" ? HYBRID_TITLE : GPU_TITLE;
+      // v0.147.0 (Phase 4a) / v0.152.0 (hybrid): reveal the per-shot pickers for
+      // Cloud or Hybrid. The "GPU (Wan)" per-shot option shows only in Hybrid; a
+      // stale "gpu" pick is reset when switching to Cloud (cloud can't do GPU).
       li.querySelectorAll(".planner-keyframe-cloud-model").forEach((sel) => {
-        sel.style.display = cloud ? "" : "none";
+        sel.style.display = showPicker ? "" : "none";
+        const gpuOpt = sel.querySelector('option[value="gpu"]');
+        if (gpuOpt) gpuOpt.hidden = mode !== "hybrid";
+        if (mode === "cloud" && sel.value === "gpu") sel.value = "";
       });
     });
 
     finalizeBtn.addEventListener("click", (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
-      if (backendSel.value === "cloud") {
-        // v0.147.0 (Phase 4a): gather per-shot overrides ({ shot_id: modelId })
-        // from the strip; an unset picker ("") just uses the default model.
+      const mode = backendSel.value;
+      if (mode === "cloud") {
+        // v0.147.0 (Phase 4a): gather per-shot model overrides ({ shot_id: modelId }).
         const perShot = {};
         li.querySelectorAll(".planner-keyframe-cloud-model").forEach((sel) => {
-          if (sel.value && sel.dataset.shotId) perShot[sel.dataset.shotId] = sel.value;
+          if (sel.value && sel.value !== "gpu" && sel.dataset.shotId) {
+            perShot[sel.dataset.shotId] = sel.value;
+          }
         });
         animateCloudRender(r, finalizeBtn, cloudModelSel.value, perShot);
+      } else if (mode === "hybrid") {
+        // v0.152.0 (Phase 4 hybrid): build the per-shot backend map. A cloud-model
+        // value -> { backend:"cloud", model }; "gpu" -> { backend:"gpu" }; an unset
+        // picker ("") falls through to defaultBackend ("gpu") on the server.
+        const backends = {};
+        li.querySelectorAll(".planner-keyframe-cloud-model").forEach((sel) => {
+          const sid = sel.dataset.shotId;
+          if (!sid) return;
+          if (sel.value === "gpu") backends[sid] = { backend: "gpu" };
+          else if (sel.value) backends[sid] = { backend: "cloud", model: sel.value };
+        });
+        animateHybridRender(r, finalizeBtn, backends);
       } else {
         finalizeRender(r, finalizeBtn);
       }
@@ -6644,6 +6688,67 @@ async function animateCloudRender(row, btnEl, model, perShot) {
     return;
   }
   btnEl.textContent = "cloud animate submitted";
+  loadHistory();
+}
+
+// v0.152.0 (Phase 4 hybrid): animate a keyframes-only preview across BOTH
+// backends in one film via POST .../animate-hybrid. `backends` =
+// { shot_id: { backend: "gpu"|"cloud", model? } }; shots omitted default to GPU
+// (defaultBackend). Output is one silent MP4 (GPU clips + cloud clips merged in
+// shot order). Mirrors animateCloudRender's submit + reload; the new
+// cloud-<uuid> row polls via the history auto-refresh.
+async function animateHybridRender(row, btnEl, backends) {
+  const kfCount = Array.isArray(row.keyframes) ? row.keyframes.length : 0;
+  const entries = Object.entries(backends || {});
+  const cloudN = entries.filter(([, b]) => b && b.backend === "cloud").length;
+  const explicitGpuN = entries.filter(([, b]) => b && b.backend === "gpu").length;
+  const gpuTotal = kfCount - cloudN; // everything not explicitly cloud is GPU
+  const confirmMsg =
+    "animate this preview as a HYBRID film?\n\n"
+    + gpuTotal + " shot(s) on GPU Wan, " + cloudN + " on cloud i2v"
+    + (explicitGpuN ? " (" + explicitGpuN + " GPU set explicitly)" : "")
+    + ", assembled into one SILENT MP4. add a score afterward with the add-audio "
+    + "action.\n\n" + (cloudN === 0
+      ? "NOTE: no shots set to Cloud -- this is effectively an all-GPU finalize.\n\n"
+      : "")
+    + "continue?";
+  if (!window.confirm(confirmMsg)) return;
+
+  btnEl.disabled = true;
+  btnEl.textContent = "submitting...";
+
+  let resp = null;
+  let data = null;
+  try {
+    resp = await fetch(
+      "/api/storyboard/renders/" + encodeURIComponent(row.id) + "/animate-hybrid",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          backends: backends,
+          defaultBackend: "gpu",
+          defaultCloudModel: "alibaba/hh1-i2v",
+        }),
+      },
+    );
+    data = await resp.json();
+  } catch (err) {
+    btnEl.disabled = false;
+    btnEl.textContent = "animate (hybrid)";
+    window.alert("hybrid submit failed: " + err.message);
+    return;
+  }
+  if (!resp.ok || !data || data.ok === false) {
+    btnEl.disabled = false;
+    btnEl.textContent = "animate (hybrid)";
+    const msg = (data && (data.error
+      || (Array.isArray(data.errors) && data.errors.join(", "))))
+      || ("HTTP " + (resp ? resp.status : "?"));
+    window.alert("hybrid submit failed: " + msg);
+    return;
+  }
+  btnEl.textContent = "hybrid submitted";
   loadHistory();
 }
 

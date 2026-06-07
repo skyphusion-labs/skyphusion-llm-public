@@ -5109,8 +5109,21 @@ function renderHistoryList(rows, totalRows) {
       ? totalRows + " render" + (totalRows === 1 ? "" : "s")
       : "showing " + rows.length + " of " + totalRows;
 
+  // v0.145.2: index derived animations (finalize / animate-cloud children) by
+  // their parent keyframes render so a row can union its siblings. Built from
+  // ALL loaded rows (not just the filtered subset) so the version count on a
+  // keyframes preview stays accurate even when a filter hides some children.
+  const childrenByParent = new Map();
+  const all = Array.isArray(historyState.rows) ? historyState.rows : rows;
+  for (const x of all) {
+    if (typeof x.parent_id !== "number") continue;
+    const list2 = childrenByParent.get(x.parent_id);
+    if (list2) list2.push(x);
+    else childrenByParent.set(x.parent_id, [x]);
+  }
+
   for (const r of rows) {
-    list.appendChild(buildHistoryRow(r));
+    list.appendChild(buildHistoryRow(r, childrenByParent));
   }
 }
 
@@ -5283,7 +5296,33 @@ function addNarrationToRender(r, btn) {
     });
 }
 
-function buildHistoryRow(r) {
+// v0.145.2: short, human label for a derived animation version. GPU finalize
+// rows read mode 'finalized'/'full' (Wan); cloud-animate rows read
+// 'cloud-finalized' + output.model (the i2v model). Returns "" for rows that
+// are not a derived animation (so callers can skip the badge).
+function animationVersionLabel(r) {
+  if (r.mode === "cloud-finalized") {
+    const out = r.output && typeof r.output === "object" ? r.output : null;
+    const model = out && typeof out.model === "string" ? out.model : "";
+    // Trim the provider prefix for the chip ("runwayml/gen-4.5" -> "gen-4.5").
+    const shortModel = model ? model.split("/").pop() : "cloud";
+    return "cloud · " + shortModel;
+  }
+  if (r.mode === "finalized") return "GPU · Wan";
+  return "";
+}
+
+// v0.145.2: expand + scroll to another history row by its D1 id (used by the
+// parent<->child cross-links). No-op when the target row is not currently
+// rendered (e.g. filtered out).
+function focusHistoryRow(id) {
+  historyState.expandedIds.add(id);
+  applyHistoryFilters();
+  const li = document.querySelector('.planner-history-item[data-id="' + id + '"]');
+  if (li) li.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function buildHistoryRow(r, childrenByParent) {
   const li = document.createElement("li");
   li.className = "planner-history-item";
   li.dataset.jobId = r.job_id;
@@ -5337,6 +5376,57 @@ function buildHistoryRow(r) {
     modeBadge.textContent = "kf only";
     modeBadge.title = "this render produced SDXL keyframes only; no motion / no silent MP4";
     meta.appendChild(modeBadge);
+  }
+
+  // v0.145.2: version badge for a derived animation (GPU finalize or cloud
+  // i2v). One keyframes preview can have several of these; the label
+  // disambiguates them (e.g. "cloud · gen-4.5" vs "cloud · hailuo-2.3-fast"
+  // vs "GPU · Wan").
+  const versionLabel = animationVersionLabel(r);
+  if (versionLabel) {
+    const verBadge = document.createElement("span");
+    verBadge.className = "planner-history-mode planner-history-mode-version";
+    verBadge.textContent = versionLabel;
+    verBadge.title = "derived animation of a keyframes preview (" + versionLabel + ")";
+    meta.appendChild(verBadge);
+  }
+
+  // v0.145.2: backlink to the keyframes preview this animation derives from.
+  if (typeof r.parent_id === "number") {
+    const back = document.createElement("button");
+    back.type = "button";
+    back.className = "planner-history-parentlink";
+    back.textContent = "↳ from keyframes #" + r.parent_id;
+    back.title = "show the keyframes preview this animation was made from";
+    back.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      focusHistoryRow(r.parent_id);
+    });
+    meta.appendChild(back);
+  }
+
+  // v0.145.2: on a keyframes preview, a count of its derived animations so the
+  // user can see (and jump to) every GPU/cloud version made from these frames.
+  const myChildren =
+    childrenByParent && typeof r.id === "number" ? childrenByParent.get(r.id) : null;
+  if (Array.isArray(myChildren) && myChildren.length > 0) {
+    const kids = document.createElement("span");
+    kids.className = "planner-history-childlink";
+    kids.textContent =
+      myChildren.length + " animation" + (myChildren.length === 1 ? "" : "s");
+    kids.title = myChildren
+      .map((c) => (animationVersionLabel(c) || c.mode) + " (" + c.status + ")")
+      .join("\n");
+    kids.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      // Jump to the newest child (highest id) so the user lands on the most
+      // recent version; the rest are one scroll away.
+      const newest = myChildren.reduce((a, b) => (b.id > a.id ? b : a));
+      focusHistoryRow(newest.id);
+    });
+    meta.appendChild(kids);
   }
 
   // v0.38.1: inline label preview, shown only while the row is collapsed
@@ -5538,6 +5628,20 @@ function buildHistoryRow(r) {
     const strip = document.createElement("div");
     strip.className = "planner-history-keyframes";
     const regenEligible = r.status === "COMPLETED" && r.bundle_key;
+    // v0.145.2: union the per-shot rendered clip onto its keyframe. A derived
+    // animation row (finalize / animate-cloud) stores output.clips as
+    // [{ shot_id, key }] (one motion mp4 per shot); index by shot_id so each
+    // still can show the clip it produced. Empty for keyframes-only previews.
+    const clipByShot = new Map();
+    const outClips =
+      r.output && typeof r.output === "object" && Array.isArray(r.output.clips)
+        ? r.output.clips
+        : [];
+    for (const c of outClips) {
+      if (c && typeof c.shot_id === "string" && typeof c.key === "string") {
+        clipByShot.set(c.shot_id, c.key);
+      }
+    }
     for (const kf of r.keyframes) {
       if (!kf || typeof kf.key !== "string" || typeof kf.shot_id !== "string") continue;
       const wrap = document.createElement("div");
@@ -5567,6 +5671,22 @@ function buildHistoryRow(r) {
       cap.textContent = kf.shot_id;
       a.appendChild(cap);
       wrap.appendChild(a);
+
+      // v0.145.2: the motion clip rendered FROM this keyframe, shown directly
+      // under the still so the keyframe and its animation read as one unit.
+      // Only present on derived-animation rows; preload="metadata" so opening a
+      // row does not pull every shot's bytes (the fetch starts on play).
+      const clipKey = clipByShot.get(kf.shot_id);
+      if (clipKey) {
+        const clip = document.createElement("video");
+        clip.src = "/api/artifact/" + clipKey;
+        clip.controls = true;
+        clip.preload = "metadata";
+        clip.playsInline = true;
+        clip.className = "planner-history-keyframe-clip";
+        clip.title = "motion clip for " + kf.shot_id;
+        wrap.appendChild(clip);
+      }
 
       // v0.129.0: per-shot still download (PNG). Available on every keyframe,
       // independent of the regen / lock controls below.

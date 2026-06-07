@@ -2961,6 +2961,38 @@ textarea:focus {
 }
 .planner-history-keyframe-dl:hover { color: var(--accent); border-color: var(--accent); }
 
+/* v0.145.2: the per-shot motion clip rendered from a keyframe, shown directly
+   under its still (same width as the thumb) so the keyframe and its animation
+   read as one unit. */
+.planner-history-keyframe-clip {
+  width: 96px;
+  border-radius: 3px;
+  background: #000;
+  display: block;
+}
+
+/* v0.145.2: derived-animation version badge (e.g. "cloud · gen-4.5", "GPU ·
+   Wan") + the parent<->child cross-link chips in the meta bar. */
+.planner-history-mode-version {
+  background: var(--bg-elev2);
+  color: var(--accent);
+  border: 1px solid var(--border);
+}
+.planner-history-parentlink,
+.planner-history-childlink {
+  font-size: 10px;
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+  background: var(--bg-elev2);
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 6px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.planner-history-parentlink:hover,
+.planner-history-childlink:hover { color: var(--accent); border-color: var(--accent); }
+
 /* Mark the thumbnail while its regen is in flight. Subtle dim + a
    yellow border so the user knows which shot is regenerating without
    needing to read the button text. */

@@ -425,3 +425,13 @@ CREATE TABLE IF NOT EXISTS user_prefs (
 -- v0.139.0: epoch seconds the terminal-status email was claimed for a render
 -- (NULL = not yet). Once-only guard for the notify path.
 ALTER TABLE renders ADD COLUMN notified_at INTEGER;
+
+-- v0.145.2: FK to the keyframes-only preview render a derived animation was
+-- produced from (NULL on top-level renders). Set on finalize (GPU Wan) and
+-- animate-cloud (cloud i2v) child rows so History can union a derived animation
+-- back onto its keyframes and group the several versions (GPU + per-model cloud)
+-- of one keyframes set. 1:many; partial index serves the children lookup.
+ALTER TABLE renders ADD COLUMN parent_id INTEGER;
+
+CREATE INDEX IF NOT EXISTS renders_by_parent
+  ON renders(parent_id) WHERE parent_id IS NOT NULL;

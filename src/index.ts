@@ -3455,6 +3455,10 @@ async function handleAnimateCloudSubmit(
     status: "IN_QUEUE",
     mode: "cloud-finalized",
     projectId: row.project_id,
+    // v0.145.2: link this cloud animation back to the keyframes-only preview it
+    // animates, so History can union the result onto those keyframes and group
+    // it alongside any sibling versions (a GPU finalize, other cloud models).
+    parentId: id,
   });
 
   try {
@@ -3900,6 +3904,9 @@ async function handleFinalizeSubmit(
       // finalize child stays grouped with its source under the same
       // project filter. NULL parent.project_id propagates NULL here.
       projectId: row.project_id ?? null,
+      // v0.145.2: link the finalize child to its keyframes-only preview so
+      // History can union it onto those keyframes next to cloud-animate siblings.
+      parentId: id,
     });
   } catch (err) {
     console.error("finalize renders insert failed:", err);

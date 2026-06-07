@@ -1,5 +1,51 @@
 # Changelog
 
+## v0.145.2
+
+Link a derived animation back to the keyframes it was made from, and union the
+rendered output onto those keyframes in History.
+
+The `finalize` (GPU Wan) and `animate-cloud` (cloud i2v) endpoints each spawn a NEW
+render row carrying the assembled MP4 and the per-shot clips, but that row had no
+back-reference to the keyframes-only preview it derived from. `animate-cloud` even
+computed a `parentId` and carried it through the workflow params, then dropped it on
+the floor (no column, never stored). So the animated result was an orphan: the
+keyframes preview never showed its animation, and the per-shot clips persisted in
+`output_json.clips` were rendered nowhere. This adds the missing `renders.parent_id`
+FK and uses it.
+
+The join is 1:many on purpose: one keyframes preview can have a GPU finalize AND
+one-or-more cloud animations (e.g. Runway and Hailuo) at once, so the UI does NOT
+collapse a child onto the parent (which version would win?). Instead each animation
+row unions ITS OWN per-shot clips onto the (shared) keyframe stills, labels itself by
+version (`mode` + `output.model`, e.g. "cloud · gen-4.5", "GPU · Wan"), and links to
+its parent; the keyframes preview shows a count of its derived animations. Versions
+stay distinct, nothing overwrites.
+
+Apply the migration delta to prod ONCE (additive, nullable; safe before the new code
+deploys): `wrangler d1 execute skyphusion-llm --remote --file=migrate-v0.145.2.sql`
+
+```sql
+ALTER TABLE renders ADD COLUMN parent_id INTEGER;
+CREATE INDEX IF NOT EXISTS renders_by_parent
+  ON renders(parent_id) WHERE parent_id IS NOT NULL;
+```
+
+Existing orphan rows back-fill by hand if desired (set `parent_id` to the preview's
+id); new finalize / animate-cloud rows link automatically.
+
+### Code
+- `migrate-v0.145.2.sql` - new delta: `renders.parent_id` + partial index.
+- `schema.sql` - same column + index mirrored for fresh DBs.
+- `src/renders-db.ts` - `NewRenderRow.parentId` / `RenderRow.parent_id`;
+  `insertRender` binds it; both SELECTs + `normalizeRow` carry it.
+- `src/index.ts` - `animate-cloud` and `finalize` submits set `parentId: id`.
+- `public/planner.js` - per-shot clip union onto keyframe stills; version badge;
+  parent<->child cross-links; child index built in `renderHistoryList`.
+- `public/styles.css` - clip thumb, version badge, cross-link chip styles.
+- `package.json` - 0.145.1 -> 0.145.2.
+- typecheck clean; vitest unchanged (UI/SQL not covered by the Node pool).
+
 ## v0.145.1
 
 Loosen Runway i2v input moderation to its lowest documented setting.

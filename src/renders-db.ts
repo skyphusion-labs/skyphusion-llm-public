@@ -32,6 +32,9 @@ export interface NewRenderRow {
   // v0.55.0: optional FK to storyboard_projects(id). NULL on rows
   // submitted without an active project (the transient v0.42.0 flow).
   projectId?: number | null;
+  // v0.145.2: FK to the keyframes-only preview render this row was derived
+  // from (finalize / animate-cloud children). NULL on a top-level render.
+  parentId?: number | null;
 }
 
 // One uploaded SDXL keyframe (v0.39.0). The GPU side writes these to R2
@@ -85,6 +88,11 @@ export interface RenderRow {
   // legacy rows that predate the columns.
   folder_path: string | null;
   tags: string[];
+  // v0.145.2: FK to the keyframes-only preview render this row was derived
+  // from (finalize / animate-cloud children). NULL on a top-level render.
+  // The UI uses it to union a derived animation back onto its keyframes and
+  // to group the several versions (GPU + per-model cloud) of one keyframes set.
+  parent_id: number | null;
 }
 
 function nowSeconds(): number {
@@ -153,12 +161,15 @@ export async function insertRender(env: Env, row: NewRenderRow): Promise<void> {
   const projectId = typeof row.projectId === "number" && row.projectId > 0
     ? row.projectId
     : null;
+  const parentId = typeof row.parentId === "number" && row.parentId > 0
+    ? row.parentId
+    : null;
   await env.DB.prepare(
     `INSERT INTO renders (
       user_email, job_id, project, bundle_key, quality_tier,
       render_overrides, status, submitted_at, updated_at, mode,
-      project_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      project_id, parent_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(job_id) DO NOTHING`,
   )
     .bind(
@@ -173,6 +184,7 @@ export async function insertRender(env: Env, row: NewRenderRow): Promise<void> {
       now,
       mode,
       projectId,
+      parentId,
     )
     .run();
 }
@@ -573,7 +585,7 @@ export async function getRenderByIdForUser(
       render_overrides, status, output_key, output_json AS output,
       error, execution_time_ms, delay_time_ms,
       submitted_at, updated_at, completed_at, label, keyframes_json, mode,
-      locked_shots_json, project_id, folder_path, tags_json
+      locked_shots_json, project_id, folder_path, tags_json, parent_id
     FROM renders
     WHERE id = ? AND user_email = ?`,
   )
@@ -651,7 +663,7 @@ export async function listRendersForUser(
       render_overrides, status, output_key, output_json AS output,
       error, execution_time_ms, delay_time_ms,
       submitted_at, updated_at, completed_at, label, keyframes_json, mode,
-      locked_shots_json, project_id, folder_path, tags_json
+      locked_shots_json, project_id, folder_path, tags_json, parent_id
     FROM renders`;
   const stmt = projectId !== null && projectId > 0
     ? env.DB.prepare(
@@ -794,6 +806,12 @@ function normalizeRow(r: Record<string, unknown>): RenderRow {
         return [];
       }
     })(),
+    // v0.145.2: NULL on top-level renders; set on finalize / animate-cloud
+    // children to the keyframes-only preview render they derive from.
+    parent_id:
+      r.parent_id === null || r.parent_id === undefined
+        ? null
+        : Number(r.parent_id),
   };
 }
 

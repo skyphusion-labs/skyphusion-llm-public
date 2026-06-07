@@ -5305,8 +5305,10 @@ function animationVersionLabel(r) {
     const out = r.output && typeof r.output === "object" ? r.output : null;
     const model = out && typeof out.model === "string" ? out.model : "";
     // Trim the provider prefix for the chip ("runwayml/gen-4.5" -> "gen-4.5").
-    const shortModel = model ? model.split("/").pop() : "cloud";
-    return "cloud · " + shortModel;
+    // In-flight rows have no model yet (output holds only progress), so fall
+    // back to a bare "cloud" rather than "cloud · cloud".
+    if (!model) return "cloud";
+    return "cloud · " + model.split("/").pop();
   }
   if (r.mode === "finalized") return "GPU · Wan";
   return "";
@@ -5389,6 +5391,26 @@ function buildHistoryRow(r, childrenByParent) {
     verBadge.textContent = versionLabel;
     verBadge.title = "derived animation of a keyframes preview (" + versionLabel + ")";
     meta.appendChild(verBadge);
+  }
+
+  // v0.146.0: live progress for an in-flight cloud animation. The workflow
+  // writes output.progress = { done, total } as each shot lands, so the row
+  // shows "animating k/N" instead of a silent IN_PROGRESS for the minutes the
+  // run takes. Before the first shot completes there is no progress yet, so it
+  // reads "submitted".
+  const inFlight =
+    r.status === "IN_QUEUE" || r.status === "IN_PROGRESS" || r.status === "SUBMITTED";
+  if (inFlight && r.mode === "cloud-finalized") {
+    const prog =
+      r.output && typeof r.output === "object" ? r.output.progress : null;
+    const pBadge = document.createElement("span");
+    pBadge.className = "planner-history-mode planner-history-mode-progress";
+    pBadge.textContent =
+      prog && typeof prog.done === "number" && typeof prog.total === "number"
+        ? "animating " + prog.done + "/" + prog.total
+        : "submitted";
+    pBadge.title = "cloud animation in progress (one clip per shot)";
+    meta.appendChild(pBadge);
   }
 
   // v0.145.2: backlink to the keyframes preview this animation derives from.

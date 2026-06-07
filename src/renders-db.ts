@@ -277,6 +277,29 @@ export async function updateRenderFromView(env: Env, view: RunpodJobView): Promi
   }
 }
 
+// v0.146.0: cloud-animate progress feedback. A cloud animation runs one
+// provider call per shot for several minutes, so write a lightweight
+// "done of total" marker into output_json as each shot lands; the History row
+// surfaces "animating shot k/N" while the job is in flight. Guarded to
+// non-terminal rows so it can never clobber a row that already finished (the
+// finalize step overwrites output_json with the real output at COMPLETED).
+export async function setCloudAnimateProgress(
+  env: Env,
+  jobId: string,
+  done: number,
+  total: number,
+): Promise<void> {
+  const now = nowSeconds();
+  const json = JSON.stringify({ mode: "cloud-finalized", progress: { done, total } });
+  await env.DB.prepare(
+    `UPDATE renders SET output_json = ?, updated_at = ?
+       WHERE job_id = ?
+         AND status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED', 'TIMED_OUT')`,
+  )
+    .bind(json, now, jobId)
+    .run();
+}
+
 // v0.136.0: minimal row snapshot the poll handlers need when RunPod returns a
 // 404 for the job. submitted_at drives the grace-window decision; output /
 // output_key / error let us serve a cached terminal row (RunPod GC'd a job we

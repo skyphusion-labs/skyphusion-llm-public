@@ -105,8 +105,10 @@ import {
   markFinishFailed,
   markRenderFailedByJobId,
   normalizeFolderPath,
+  isTerminalStatus,
   normalizeLockedShots,
   normalizeTags,
+  setCloudAnimateProgress,
   setRenderAudioOutput,
   setRenderFolder,
   setRenderLabel,
@@ -114,6 +116,7 @@ import {
   setRenderTags,
   updateRenderFromView,
 } from "./renders-db";
+import { writeCloudAnimateLog, type CloudAnimateLogShot } from "./render-log";
 import { callWorkersAIStream } from "./providers/workers-ai";
 import { callOpenAIStream } from "./providers/openai";
 import { callGemini, callGeminiStream } from "./providers/google";
@@ -2570,6 +2573,33 @@ async function pollRenderResolved(
   env: Env,
   jobId: string,
 ): Promise<RenderPollOutcome> {
+  // v0.146.1: cloud-animate jobs (cloud-<uuid>) are workflow-backed, NOT RunPod
+  // jobs. They must never be RunPod-polled or run through the 404 -> phantom
+  // classifier, which false-fails a minutes-long animation once it passes the
+  // 150s phantom grace window. The GET poll handler already short-circuits
+  // these, but the cron sweep AND the SSE stream resolver also call this, and
+  // neither did - so an in-flight cloud render got marked FAILED mid-run while
+  // its shots were still completing at the provider. Guard here so every caller
+  // is covered: serve the row directly (terminal -> cached; still running ->
+  // "confirming" so callers keep waiting instead of failing it). The workflow
+  // owns the row's terminal transition.
+  if (jobId.startsWith("cloud-")) {
+    const row = await getRenderForPoll(env, jobId).catch(() => null);
+    if (!row) {
+      return { kind: "transient", error: "cloud render row not found", httpStatus: 404 };
+    }
+    if (isTerminalStatus(row.status)) {
+      return {
+        kind: "terminalCached",
+        status: row.status,
+        output: row.output,
+        outputKey: row.output_key,
+        error: row.error,
+      };
+    }
+    return { kind: "confirming", note: "cloud animation in progress" };
+  }
+
   const result = await pollRenderJob(env, jobId);
   if (result.ok) return { kind: "ok", view: result.view };
   if (result.status !== 404) {
@@ -8253,6 +8283,9 @@ export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
   // updateRenderFromView (synthetic view); any failure marks the row FAILED.
   async runCloudAnimate(p: CloudAnimateParams, step: WorkflowStep): Promise<void> {
     const { userEmail, jobId, model, project, keyframes, motionPrompts, globalPrompt, startedAtIso } = p;
+    // v0.146.0: per-shot trace for the gateway log file. Declared out here so a
+    // mid-run failure can still write a partial log from the catch.
+    const shotLog: CloudAnimateLogShot[] = [];
     try {
       await step.do(
         "mark-running",
@@ -8268,17 +8301,22 @@ export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
 
       // Stable shot order (the renderer numbers shots shot_01..shot_NN).
       const shots = [...keyframes].sort((a, b) => a.shot_id.localeCompare(b.shot_id));
+      const total = shots.length;
 
       const clipKeys: string[] = [];
-      for (const kf of shots) {
-        const clipKey = await step.do(
+      for (let i = 0; i < shots.length; i++) {
+        const kf = shots[i];
+        const res = await step.do(
           `animate-${kf.shot_id}`,
           { retries: { limit: 1, delay: "30 seconds", backoff: "linear" } },
-          async (): Promise<string> => {
+          async (): Promise<{ key: string; logId: string | null; videoUrl: string }> => {
             const imageUrl = await presignR2Get(this.env, kf.key, 1800);
             const prompt = motionPrompts[kf.shot_id] || globalPrompt || "";
             const params = buildGenParams("video", { modelId: model, prompt, imageUrl });
             const result = (await aiRun(this.env, model, params)) as LongRunResult;
+            // v0.146.0: capture this call's AI Gateway log id (the binding sets
+            // it per-invocation) so the per-render log can trace each shot.
+            const logId = aiLogId(this.env);
             if (result.state && result.state !== "Completed") {
               throw new Error(`gen state ${result.state} for ${kf.shot_id}`);
             }
@@ -8292,10 +8330,20 @@ export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
               httpMetadata: { contentType: "video/mp4" },
               customMetadata: { user_email: userEmail },
             });
-            return key;
+            // v0.146.0: progress feedback - mark this shot done so the History
+            // row can show "animating shot k/N" while the rest run. Best-effort.
+            await setCloudAnimateProgress(this.env, jobId, i + 1, total).catch(() => {});
+            return { key, logId, videoUrl: url };
           },
         );
-        clipKeys.push(clipKey);
+        clipKeys.push(res.key);
+        shotLog.push({
+          shot_id: kf.shot_id,
+          model,
+          status: "ok",
+          log_id: res.logId,
+          video_url: res.videoUrl,
+        });
       }
 
       const outputKey = await step.do(
@@ -8347,9 +8395,48 @@ export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
           } as RunpodJobView);
         },
       );
+
+      // v0.146.0: completion feedback + per-render log. Each is its own
+      // best-effort step so a hiccup here can never un-complete the render.
+      await step.do(
+        "notify",
+        { retries: { limit: 2, delay: "5 seconds", backoff: "exponential" } },
+        async (): Promise<void> => {
+          // Reuses the GPU render-done path (email + ntfy, gated on the owner's
+          // prefs; claims once so a replay can't double-send).
+          await maybeNotifyRenderDone(this.env, jobId);
+        },
+      );
+      await step.do(
+        "write-log",
+        { retries: { limit: 2, delay: "5 seconds", backoff: "exponential" } },
+        async (): Promise<void> => {
+          const executionTimeMs = Date.now() - Date.parse(startedAtIso);
+          await writeCloudAnimateLog(this.env, userEmail, {
+            jobId,
+            model,
+            status: "COMPLETED",
+            executionTimeMs,
+            shots: shotLog,
+          });
+        },
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       await markRenderFailedByJobId(this.env, jobId, `cloud animation failed: ${msg}`).catch(() => {});
+      // v0.146.0: notify + log on failure too, so the user learns it failed and
+      // can read why (mirrors the GPU phantom-fail notify). shotLog holds the
+      // shots that DID complete (the one that threw was never pushed); the
+      // top-level error names the failing shot since the thrown messages carry
+      // its id ("... for shot_NN").
+      await maybeNotifyRenderDone(this.env, jobId).catch(() => {});
+      await writeCloudAnimateLog(this.env, userEmail, {
+        jobId,
+        model,
+        status: "FAILED",
+        error: msg,
+        shots: shotLog,
+      }).catch(() => {});
       throw err;
     }
   }

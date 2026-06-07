@@ -1,5 +1,73 @@
 # Changelog
 
+## v0.146.1
+
+Fix: stop the cron sweep / SSE stream from false-failing in-flight cloud
+animations as "phantom" RunPod jobs.
+
+`pollRenderResolved` RunPod-polls a job and, on a 404 past the 150s grace window,
+marks the row FAILED ("RunPod has no record of this job"). Cloud-animate jobs
+(`cloud-<uuid>`) are workflow-backed, not RunPod jobs, and run for minutes (one
+provider call per shot). The GET poll handler already short-circuited them, but
+the **cron notify sweep** and the **SSE stream resolver** call `pollRenderResolved`
+directly with no guard, so a cloud render in flight got 404'd and phantom-failed
+mid-run while its shots were still completing at the provider (visible as
+"completing in AI Gateway but FAILED in the control panel"). Earlier cloud runs
+only survived by luck of sweep timing; longer ones lose the race every time.
+
+The guard now lives inside `pollRenderResolved` so all three callers are covered:
+a `cloud-` job is served from its own row (terminal -> cached; still running ->
+"confirming", i.e. keep waiting) and is never RunPod-polled or phantom-failed.
+As a side benefit the sweep can now NOTIFY a completed cloud job instead of
+failing it.
+
+### Code
+- `src/index.ts` - `pollRenderResolved` short-circuits `cloud-` job ids before
+  the RunPod poll / phantom path; import `isTerminalStatus`.
+- `package.json` - 0.146.0 -> 0.146.1.
+- typecheck clean; vitest green.
+
+## v0.146.0
+
+Cloud i2v feedback: live per-shot progress, completion notification, and a
+per-render AI Gateway log.
+
+A cloud animation runs one provider call per shot over several minutes, and until
+now it ran silently: no progress while it worked, no signal when it finished, and
+the History "logs" link 404'd (the GPU log writer never ran for cloud rows). Three
+additions close that:
+
+- **Progress.** As each shot's clip lands, the workflow writes
+  `output.progress = { done, total }`; the History row shows "animating k/N"
+  (and "submitted" before the first shot) instead of a silent IN_PROGRESS.
+- **Completion notification.** `runCloudAnimate` now calls the same
+  `maybeNotifyRenderDone` path the GPU poller uses, so a finished (or failed)
+  cloud animation emails / ntfy's the owner, gated on their prefs and claimed
+  once so a workflow replay can't double-send.
+- **AI Gateway log piping.** Each shot's gateway log id (`aiLogId`, captured
+  right after the `aiRun`) is recorded, and on terminal the run writes a
+  per-render log to the SAME conventional key as GPU jobs
+  (`renders/logs/<jobId>.txt`) so the existing History "logs" link just works.
+  The writer best-effort fetches each shot's gateway log object via
+  `env.AI.gateway(GATEWAY_ID).getLog(logId)` (request/response/cost) and inlines
+  it; a missing/expired id or disabled log storage degrades to the id alone.
+
+No schema change. The notification reuses `notified_at` (v0.139.0). The per-shot
+clip union + version badges land in v0.145.2; this builds on those rows.
+
+### Code
+- `src/render-log.ts` - `buildCloudAnimateLogText` (pure) + `writeCloudAnimateLog`
+  (best-effort gateway `getLog` enrich, conventional-key write).
+- `src/renders-db.ts` - `setCloudAnimateProgress` (guarded interim output_json write).
+- `src/index.ts` - `runCloudAnimate`: capture per-shot log id, write progress,
+  add `notify` + `write-log` steps, and notify + log on failure.
+- `public/planner.js` - in-flight "animating k/N" badge; version label falls back
+  to bare "cloud" before the model is known.
+- `public/styles.css` - progress badge style.
+- `tests/render-log.test.ts` - `buildCloudAnimateLogText` coverage (success + failure).
+- `package.json` - 0.145.2 -> 0.146.0.
+- typecheck clean; vitest green (new pure-builder tests added).
+
 ## v0.145.2
 
 Link a derived animation back to the keyframes it was made from, and union the

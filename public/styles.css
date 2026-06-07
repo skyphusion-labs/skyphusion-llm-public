@@ -2978,6 +2978,14 @@ textarea:focus {
   color: var(--accent);
   border: 1px solid var(--border);
 }
+
+/* v0.146.0: in-flight cloud-animation progress ("animating k/N"). Warm accent
+   so it reads as "working" next to the status pill. */
+.planner-history-mode-progress {
+  background: var(--bg-elev2);
+  color: var(--warn);
+  border: 1px solid var(--warn);
+}
 .planner-history-parentlink,
 .planner-history-childlink {
   font-size: 10px;

@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { buildRenderLogText, renderLogKey } from "../src/render-log";
+import {
+  buildRenderLogText,
+  buildCloudAnimateLogText,
+  renderLogKey,
+} from "../src/render-log";
 import type { RunpodJobView } from "../src/runpod-submit";
 
 const ISO = "2026-06-06T21:00:00.000Z";
@@ -56,5 +60,58 @@ describe("buildRenderLogText", () => {
     expect(txt).not.toContain("Execution:");
     expect(txt).not.toContain("Error:");
     expect(txt).not.toContain("Output / diagnostics:");
+  });
+});
+
+describe("buildCloudAnimateLogText", () => {
+  it("renders a per-shot section with the gateway log id, clip url, and log body", () => {
+    const txt = buildCloudAnimateLogText(
+      {
+        jobId: "cloud-abc",
+        model: "runwayml/gen-4.5",
+        status: "COMPLETED",
+        executionTimeMs: 390000,
+        shots: [
+          {
+            shot_id: "shot_01",
+            model: "runwayml/gen-4.5",
+            status: "ok",
+            log_id: "log-111",
+            video_url: "https://cdn/clip01.mp4",
+            gateway_log: { id: "log-111", success: true, cost: 0.2 },
+          },
+        ],
+      },
+      ISO,
+    );
+    expect(txt).toContain("Render log - cloud animation job cloud-abc");
+    expect(txt).toContain("Status: COMPLETED");
+    expect(txt).toContain("Model: runwayml/gen-4.5");
+    expect(txt).toContain("Execution: 390.0s");
+    expect(txt).toContain("Shots: 1");
+    expect(txt).toContain("--- shot_01 (ok) ---");
+    expect(txt).toContain("AI Gateway log id: log-111");
+    expect(txt).toContain("https://cdn/clip01.mp4");
+    expect(txt).toContain('"success": true');
+    expect(txt.endsWith("\n")).toBe(true);
+  });
+
+  it("surfaces a top-level error and a missing-log-id placeholder on failure", () => {
+    const txt = buildCloudAnimateLogText(
+      {
+        jobId: "cloud-xyz",
+        model: "minimax/hailuo-2.3-fast",
+        status: "FAILED",
+        error: "fetch clip 500 for shot_02",
+        shots: [
+          { shot_id: "shot_01", model: "minimax/hailuo-2.3-fast", status: "ok", log_id: null },
+        ],
+      },
+      ISO,
+    );
+    expect(txt).toContain("Status: FAILED");
+    expect(txt).toContain("Error:");
+    expect(txt).toContain("fetch clip 500 for shot_02");
+    expect(txt).toContain("AI Gateway log id: (none captured)");
   });
 });

@@ -562,6 +562,15 @@ export default {
     if (url.pathname === "/api/storyboard/render" && request.method === "POST") {
       return handleRenderSubmit(request, env);
     }
+
+    // v0.150.0 (Phase 4b): submit a GPU i2v render DIRECTLY against a bundle's
+    // injected per-scene keyframes (the reverse bridge), bypassing the SDXL
+    // keyframe-gen pass. This is the control-plane half that closes the loop
+    // without a pod change: the pod's finalize/i2v_only action reuses the
+    // bundle's clips/<id>_keyframe.png instead of regenerating.
+    if (url.pathname === "/api/storyboard/render-from-keyframes" && request.method === "POST") {
+      return handleRenderFromKeyframes(request, env);
+    }
     // v0.34.0: list this user's render history (D1-backed; ownership via user_email).
     if (url.pathname === "/api/storyboard/renders" && request.method === "GET") {
       return handleRendersList(request, env);
@@ -3390,6 +3399,101 @@ async function handleRegenShotSubmit(
     statusRaw: result.view.statusRaw,
     parentId: id,
     shotId,
+    user: userEmail,
+  });
+}
+
+// ---------- POST /api/storyboard/render-from-keyframes (v0.150.0) ----------
+//
+// Phase 4b reverse bridge, the control-plane piece that closes the loop. Runs
+// the pod's finalize / i2v_only action DIRECTLY against a freshly-assembled
+// bundle whose clips/<id>_keyframe.png entries were populated via
+// /api/storyboard/bundle's sceneStartImages. The pod's i2v_only pass reuses
+// those keyframes from disk (vivijure-src/core.py: render_phase i2v_only skips
+// the SDXL keyframe-gen pass), so externally / cloud-authored keyframes drive
+// the pod's Wan motion with NO SDXL pass and NO pod change. Unlike
+// /renders/<id>/finalize (which animates an existing preview's own keyframes),
+// this takes project + bundleKey straight from the body, so there is no prior
+// keyframe-gen pass to overwrite the injected frames.
+//
+// Body: { project, bundleKey, qualityTier?, renderOverrides?, audioKey? }.
+// Returns the RunPod jobId; poll via GET /api/storyboard/render/<jobId>.
+async function handleRenderFromKeyframes(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+
+  let body: {
+    project?: unknown;
+    bundleKey?: unknown;
+    qualityTier?: unknown;
+    renderOverrides?: unknown;
+    audioKey?: unknown;
+  };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const project = typeof body.project === "string" ? body.project.trim() : "";
+  const bundleKey = typeof body.bundleKey === "string" ? body.bundleKey.trim() : "";
+  if (!project) return json({ error: "project is required" }, { status: 400 });
+  if (!bundleKey) {
+    return json(
+      { error: "bundleKey is required (assemble it via POST /api/storyboard/bundle with sceneStartImages)" },
+      { status: 400 },
+    );
+  }
+
+  const qualityTier =
+    body.qualityTier === "draft" || body.qualityTier === "standard" || body.qualityTier === "final"
+      ? body.qualityTier
+      : undefined;
+  const renderOverrides =
+    body.renderOverrides && typeof body.renderOverrides === "object" && !Array.isArray(body.renderOverrides)
+      ? (body.renderOverrides as Record<string, unknown>)
+      : undefined;
+  const audioKey = typeof body.audioKey === "string" && body.audioKey ? body.audioKey : undefined;
+
+  const result = await submitFinalizeJob(env, {
+    project,
+    bundleKey,
+    qualityTier,
+    renderOverrides,
+    userEmail,
+    audioKey,
+  });
+  if (!result.ok) {
+    return json(
+      { ok: false, errors: [result.error], user: userEmail },
+      { status: result.status && result.status >= 400 ? result.status : 502 },
+    );
+  }
+
+  // Persist a history row so it polls + appears in History like any render. mode
+  // is stored 'full' at submit and flips to 'finalized' when the GPU envelope
+  // arrives via updateRenderFromView (same as /finalize). No parent row exists.
+  try {
+    await insertRender(env, {
+      userEmail,
+      jobId: result.view.jobId,
+      project,
+      bundleKey,
+      qualityTier: qualityTier ?? "final",
+      status: result.view.status,
+      mode: "full",
+    });
+  } catch (err) {
+    // Best-effort: the GPU job is already submitted; do not fail the response.
+    console.error("render-from-keyframes insert failed:", err);
+  }
+
+  return json({
+    ok: true,
+    jobId: result.view.jobId,
+    status: result.view.status,
+    statusRaw: result.view.statusRaw,
+    project,
+    bundleKey,
     user: userEmail,
   });
 }

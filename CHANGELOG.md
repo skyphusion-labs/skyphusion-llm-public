@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.150.0
+
+Phase 4b close-the-loop: render directly from a bundle's injected keyframes (GPU i2v),
+no pod change.
+
+The reverse bridge wrote per-scene keyframes into the bundle at
+`clips/<id>_keyframe.png`, but nothing fed them to the GPU without the SDXL keyframe
+pass overwriting them first. Verified against the pod (vivijure-src/core.py): only the
+`finalize` / i2v_only action reuses an on-disk keyframe; the normal + keyframes-only
+passes regenerate it. So this adds a control-plane path that submits the pod's
+**finalize/i2v_only action directly against a fresh bundle** — the pod skips SDXL gen
+and animates the injected `clips/<id>_keyframe.png`, with no pod change.
+
+- **`POST /api/storyboard/render-from-keyframes`** `{ project, bundleKey, qualityTier?,
+  renderOverrides?, audioKey? }` — submits `buildFinalizePayload` (action `finalize`)
+  against the given bundle (no prior render row needed, so no keyframe-gen pass to
+  overwrite the injected frames). Persists a history row; poll via the existing
+  `GET /api/storyboard/render/<jobId>`.
+- **Planner**: the bundle result panel gains a "render from keyframes (GPU i2v)" button
+  when the bundle included per-scene keyframes; it posts to the new endpoint and the row
+  polls in History like any render.
+
+The pod builds the manifest from `storyboard.yaml` on demand for a fresh bundle, so
+this is the standalone i2v entry the reverse bridge needed. A live end-to-end smoke
+test of a fresh-bundle finalize is the remaining confirmation (see
+`~/vivijure-reverse-bridge-pod-handoff.md`). An optional pod enhancement (Option A) to
+also honor injected keyframes in the *normal* render path is handed off there too; it
+is not required now that this endpoint exists.
+
+No schema change.
+
+### Code
+- `src/index.ts` - `POST /api/storyboard/render-from-keyframes` + `handleRenderFromKeyframes`.
+- `public/planner.js` - "render from keyframes (GPU i2v)" button on the bundle result +
+  `renderFromKeyframes`.
+- `docs/i2v-backend-selector.md` - Phase 4b loop-closing endpoint documented.
+- `package.json` - 0.149.0 -> 0.150.0.
+- node --check + typecheck clean; vitest 579/579.
+
 ## v0.149.0
 
 Phase 4b UI: attach a per-scene start keyframe at the bundle step.

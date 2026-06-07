@@ -4109,6 +4109,68 @@ function showBundleResult(data) {
     ),
   );
   root.appendChild(sizeLine);
+
+  // v0.150.0 (Phase 4b): if this bundle carries per-scene start keyframes, offer
+  // to render them directly on the GPU via Wan i2v (skipping the SDXL keyframe
+  // pass) -- the reverse-bridge loop, driven from the planner.
+  const injectedCount = Object.keys(bundleState.sceneStartImages || {}).length;
+  if (data.bundleKey && injectedCount > 0) {
+    const wrap = document.createElement("div");
+    wrap.className = "planner-actions";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "planner-primary";
+    btn.textContent = "render from keyframes (GPU i2v)";
+    btn.title = injectedCount + " injected keyframe" + (injectedCount === 1 ? "" : "s")
+      + ": animate them with Wan i2v on the GPU, no SDXL keyframe pass";
+    const status = document.createElement("span");
+    status.className = "planner-status";
+    btn.addEventListener("click", () => renderFromKeyframes(data.bundleKey, btn, status));
+    wrap.appendChild(btn);
+    wrap.appendChild(status);
+    root.appendChild(wrap);
+  }
+}
+
+// v0.150.0 (Phase 4b): submit a GPU i2v render DIRECTLY against the bundle's
+// injected per-scene keyframes (POST /api/storyboard/render-from-keyframes). The
+// pod's finalize/i2v_only pass reuses clips/<id>_keyframe.png with no fresh SDXL
+// pass. The new render row polls in History via the existing auto-refresh
+// (mirrors animateCloudRender's submit + reload flow).
+async function renderFromKeyframes(bundleKey, btn, status) {
+  const project = planState.storyboard && planState.storyboard.projectName;
+  if (!project) { status.textContent = "no project"; return; }
+  if (!window.confirm(
+    "render this bundle's " + Object.keys(bundleState.sceneStartImages || {}).length
+    + " injected keyframe(s) with GPU Wan i2v (no SDXL keyframe pass)?\n\ncontinue?"
+  )) return;
+  const tierEl = $("#planner-quality-tier");
+  const qualityTier = tierEl && tierEl.value ? tierEl.value : "final";
+  btn.disabled = true;
+  status.textContent = "submitting i2v render...";
+  let resp = null;
+  let data = null;
+  try {
+    resp = await fetch("/api/storyboard/render-from-keyframes", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ project: project, bundleKey: bundleKey, qualityTier: qualityTier }),
+    });
+    data = await resp.json();
+  } catch (err) {
+    btn.disabled = false;
+    status.textContent = "network error: " + err.message;
+    return;
+  }
+  if (!resp.ok || !data || data.ok === false) {
+    btn.disabled = false;
+    const msg = (data && (data.error || (Array.isArray(data.errors) && data.errors.join(", "))))
+      || ("HTTP " + (resp ? resp.status : "?"));
+    status.textContent = "failed: " + msg;
+    return;
+  }
+  status.textContent = "submitted" + (data.jobId ? " (" + data.jobId + ")" : "");
+  loadHistory();
 }
 
 function resetBundleStage() {

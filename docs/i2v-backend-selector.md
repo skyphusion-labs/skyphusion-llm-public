@@ -140,6 +140,18 @@ surfaces each model's duration + resolution constraints and a rough cost hint.
   to attach a keyframe per scene at the bundle step, and end-to-end validation once the
   pod's full Wan i2v render path is proven on the volume-free worker (keyframes-only is
   proven). Closes the loop the other way (cloud-authored keyframes -> baked-pod Wan).
+- **Phase 4b loop CLOSED (v0.149.0 UI + v0.150.0 i2v entry).** The per-scene keyframe
+  picker shipped in the planner bundle step (v0.149.0). Then a gap surfaced: the bundle's
+  `clips/<id>_keyframe.png` only "takes" on the pod's i2v_only path -- the normal +
+  keyframes-only render passes REGENERATE the SDXL keyframe and overwrite an injected one
+  (verified core.py:1077-1084; only `if i2v_only and still_path.is_file()` reuses). So
+  v0.150.0 adds **`POST /api/storyboard/render-from-keyframes`**, which submits the pod's
+  `finalize`/i2v_only action DIRECTLY against a fresh bundle (no prior render row, so no gen
+  pass to clobber the injected frames); the pod builds the manifest on demand and animates
+  the injected keyframes -- NO pod change. The bundle result panel gains a "render from
+  keyframes (GPU i2v)" button. Remaining: a live fresh-bundle finalize smoke test, plus an
+  OPTIONAL pod enhancement (Option A: honor injected keyframes in the normal render path
+  too) handed off in `~/vivijure-reverse-bridge-pod-handoff.md`.
 
 ## Open questions / tradeoffs
 

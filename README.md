@@ -145,7 +145,9 @@ The flow:
    the bundle to the [**vivijure-serverless**](https://github.com/SkyPhusion/vivijure-serverless)
    RunPod GPU endpoint, which trains per-character LoRAs, renders SDXL keyframes plus
    image-to-video, and returns the per-shot clips (plus updated project state) to R2.
-   Render history is tracked in D1.
+   A render can be a **full** pass or a fast **keyframes-only preview** (SDXL stills,
+   no motion); a completed preview is the input to the animation step below. Render
+   history is tracked in D1.
 6. **Finish** on render completion the `video-finish` container (ffmpeg) concatenates
    the per-shot clips, crossfades the cuts, and muxes the music bed into the final
    MP4 in R2, so picture finishing and audio muxing stay off the GPU.
@@ -156,6 +158,38 @@ The flow:
    mux it on through the same `video-finish` container. Text to speech to a muxed
    MP4, no re-render, no RunPod job. History exposes both as **"add audio"** and
    **"narrate"** buttons on a completed render.
+
+**Animating a keyframes-only preview (i2v backend selector).** The render step (5)
+can run as a fast **keyframes-only preview** (SDXL stills, no motion). From a
+completed preview you choose how to put it in motion, **per shot**, without
+re-running the keyframes:
+
+![per-shot hybrid backend picker](docs/images/hybrid-backend-picker.png)
+
+- **GPU Wan** (`POST /api/storyboard/render-from-keyframes`, v0.150.0) finalize the
+  preview's keyframes on the GPU backend (identity-locked Wan 2.2 i2v).
+- **Cloud i2v** (`POST /api/storyboard/renders/:id/animate-cloud`, v0.144.0) animate
+  each keyframe through a cloud image-to-video model (Seedance / Hailuo / Gen-4.5 /
+  HappyHorse), one `env.AI.run` call per shot, no GPU spin-up. Each shot can take a
+  different model (per-shot mixing, v0.147.0).
+- **Hybrid** (`POST /api/storyboard/renders/:id/animate-hybrid`, v0.151.0) route some
+  shots to GPU Wan and others to cloud i2v in the **same** film, assembled into one
+  silent cut: send the dialogue two-shots to Wan and the wide atmosphere shots to a
+  cheaper cloud model. The GPU subset runs as one `finish_offloaded` finalize (per-shot
+  clips, no on-GPU assembly); the cloud subset runs the per-shot loop; a `video-finish`
+  pass merges both in shot order. v0.154.0 adds per-lane progress, beat-sync trim across
+  both lanes, and continue-on-error (a failed shot is skipped and the cut is delivered
+  `partial`, not lost).
+
+All three produce a **silent** MP4 (score it afterward with **add audio** / **narrate**
+above). The planner exposes the choice as a per-shot backend picker on the preview's
+keyframe strip; completed rows badge `GPU · Wan`, `cloud · <model>`, `cloud · mixed`, or
+`hybrid`. Per-scene **start keyframes** can also be attached at the bundle step
+(`sceneStartImages`, v0.148.0) and edited with the per-scene keyframe picker (v0.149.0),
+so a render can begin from exact frames you pin. Design notes:
+[`docs/i2v-backend-selector.md`](docs/i2v-backend-selector.md),
+[`docs/i2v-hybrid-backend.md`](docs/i2v-hybrid-backend.md); to verify the GPU+cloud path
+end to end see [`docs/hybrid-verification-checklist.md`](docs/hybrid-verification-checklist.md).
 
 **CPU prep on Cloudflare Containers.** The prep steps that don't need a GPU run as
 Cloudflare Containers (`containers/`), so the expensive RunPod GPU worker stays

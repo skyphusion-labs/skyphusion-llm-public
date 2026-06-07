@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.153.0
+
+Hybrid GPU-lane keyframe parity: inject the parent's exact keyframes into the GPU
+finalize bundle.
+
+The hybrid (v0.151.0) GPU lane finalizes the parent's input bundle, which carries no
+keyframes. The pod restores the project's shared `state.tar.gz` (last-render-wins, not
+the specific parent row) before extracting the bundle, so the GPU lane could animate a
+different keyframe generation than the cloud lane (which presigns the parent row's exact
+R2 keyframe). Same project/seed -> usually identical; divergent if the project was
+re-rendered between the preview and the hybrid.
+
+Fix: the GPU lane now overlays the parent's keyframes into the finalize bundle at
+`clips/<id>_keyframe.png`. Because the pod restores state THEN extracts the bundle
+(`_restore_prior_state` -> `download_and_extract`), these overwrite the state-restored
+frames and `i2v_only` reuses them -> the GPU lane animates the **same** keyframes the
+cloud lane does, guaranteed. No pod change.
+
+- `readTar` (ustar reader, inverse of `emitTar`) lets a bundle be spliced without
+  re-assembling it from the storyboard + cast.
+- `overlayKeyframesIntoBundle` (bundle-assembler): download `bundle_key` -> gunzip ->
+  `readTar` -> splice the GPU shots' keyframes (from R2) -> `emitTar` -> gzip -> upload
+  `bundles/<project>-hybrid-<jobId>.tar.gz`.
+- `runHybridAnimate`: a `gpu-bundle-overlay` step builds that bundle; the GPU finalize
+  uses it.
+
+No schema change.
+
+### Code
+- `src/tar-emit.ts` - `readTar` (POSIX ustar reader).
+- `src/bundle-assembler.ts` - `overlayKeyframesIntoBundle` + `gunzipBytes`.
+- `src/index.ts` - hybrid GPU lane overlays the bundle before finalize.
+- `tests/tar-emit.test.ts` - `readTar` round-trip + overlay-replace coverage.
+- `package.json` - 0.152.0 -> 0.153.0.
+- typecheck clean; vitest 585/585 (2 new).
+
 ## v0.152.0
 
 Phase 4 finale, slice 2: the hybrid per-shot backend picker UI.

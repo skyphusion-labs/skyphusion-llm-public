@@ -112,6 +112,42 @@ function buildHeader(file: TarFile): Uint8Array {
   return header;
 }
 
+// v0.153.0: read a ustar tar bytestream back into entries (the inverse of
+// emitTar). Pure; tolerant of the small fixed schema emitTar produces (regular
+// files, names <= 100b, no PAX/prefix). Stops at the trailing zero block. Used
+// to overlay extra files onto an existing bundle without re-assembling it from
+// the storyboard + cast.
+export function readTar(bytes: Uint8Array): TarFile[] {
+  const out: TarFile[] = [];
+  const decoder = new TextDecoder();
+  let offset = 0;
+  while (offset + BLOCK_SIZE <= bytes.length) {
+    const header = bytes.subarray(offset, offset + BLOCK_SIZE);
+    // A zero block marks end-of-archive (emitTar writes two trailing blocks).
+    let allZero = true;
+    for (let i = 0; i < BLOCK_SIZE; i++) {
+      if (header[i] !== 0) { allZero = false; break; }
+    }
+    if (allZero) break;
+    // name @ 0, width 100, null-terminated
+    let nameEnd = 0;
+    while (nameEnd < 100 && header[nameEnd] !== 0) nameEnd++;
+    const name = decoder.decode(header.subarray(0, nameEnd));
+    // size @ 124, width 12, octal (null/space terminated)
+    const sizeStr = decoder
+      .decode(header.subarray(124, 124 + 12))
+      .replace(/\0/g, "")
+      .trim();
+    const size = sizeStr ? parseInt(sizeStr, 8) : 0;
+    const contentStart = offset + BLOCK_SIZE;
+    if (name) {
+      out.push({ name, content: new Uint8Array(bytes.subarray(contentStart, contentStart + size)) });
+    }
+    offset = contentStart + BLOCK_SIZE * Math.ceil(size / BLOCK_SIZE);
+  }
+  return out;
+}
+
 export function emitTar(files: TarFile[]): Uint8Array {
   // Pre-compute total size so we can allocate one buffer (avoids a fragile
   // chain of concatenations and lets the caller hand a single Uint8Array to

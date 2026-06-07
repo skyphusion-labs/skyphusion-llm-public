@@ -3,7 +3,7 @@
 // the GPU side's Python tarfile module will read it back unchanged.
 
 import { describe, it, expect } from "vitest";
-import { emitTar, type TarFile } from "../src/tar-emit";
+import { emitTar, readTar, type TarFile } from "../src/tar-emit";
 
 const BLOCK = 512;
 
@@ -161,5 +161,37 @@ describe("emitTar", () => {
     const out = emitTar([{ name: "x", content: new Uint8Array(0) }]);
     const parsed = parseUstarTar(out);
     expect(parsed[0].mode).toBe(0o644);
+  });
+});
+
+describe("readTar (round-trip with emitTar)", () => {
+  it("reads back the names + byte content emitTar wrote, including non-block-aligned sizes", () => {
+    const files: TarFile[] = [
+      { name: "storyboard.yaml", content: new TextEncoder().encode("title: x\n") },
+      { name: "clips/shot_01_keyframe.png", content: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]) },
+      { name: "characters/registry.json", content: new TextEncoder().encode("{}".repeat(400)) },
+      { name: "empty", content: new Uint8Array(0) },
+    ];
+    const round = readTar(emitTar(files));
+    expect(round.map((f) => f.name)).toEqual(files.map((f) => f.name));
+    for (let i = 0; i < files.length; i++) {
+      expect(Array.from(round[i].content)).toEqual(Array.from(files[i].content));
+    }
+  });
+
+  it("an injected entry replaces an existing one when re-emitted (overlay semantics)", () => {
+    const orig = emitTar([
+      { name: "storyboard.yaml", content: new TextEncoder().encode("a") },
+      { name: "clips/shot_01_keyframe.png", content: new Uint8Array([1]) },
+    ]);
+    const byName = new Map(readTar(orig).map((f) => [f.name, f] as const));
+    byName.set("clips/shot_01_keyframe.png", {
+      name: "clips/shot_01_keyframe.png",
+      content: new Uint8Array([9, 9, 9]),
+    });
+    const merged = readTar(emitTar([...byName.values()]));
+    const kf = merged.find((f) => f.name === "clips/shot_01_keyframe.png");
+    expect(kf && Array.from(kf.content)).toEqual([9, 9, 9]);
+    expect(merged.find((f) => f.name === "storyboard.yaml")).toBeTruthy();
   });
 });

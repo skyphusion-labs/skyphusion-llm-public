@@ -33,7 +33,7 @@ import {
   type StoryboardValidated,
 } from "./storyboard-validate";
 import { serializeStoryboardYaml } from "./planner-yaml";
-import { emitTar, type TarFile } from "./tar-emit";
+import { emitTar, readTar, type TarFile } from "./tar-emit";
 import { presignR2Get, presignR2Put } from "./r2-presign";
 
 // One training image, supplied either as a pre-staged R2 object key
@@ -180,6 +180,69 @@ async function gzipBytes(bytes: Uint8Array): Promise<Uint8Array> {
     offset += c.length;
   }
   return out;
+}
+
+// v0.153.0: inverse of gzipBytes, for reading an existing bundle back to tar.
+async function gunzipBytes(bytes: Uint8Array): Promise<Uint8Array> {
+  const ds = new DecompressionStream("gzip");
+  const writer = ds.writable.getWriter();
+  void writer.write(bytes).then(() => writer.close());
+  const reader = ds.readable.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    total += value.length;
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    out.set(c, offset);
+    offset += c.length;
+  }
+  return out;
+}
+
+// v0.153.0 (Phase 4 hybrid keyframe parity): build a NEW bundle = an existing
+// bundle + per-scene start keyframes overlaid at clips/<id>_keyframe.png. The
+// pod's finalize restores projects/<name>/state.tar.gz THEN extracts the bundle
+// (rp_handler _restore_prior_state -> download_and_extract), so these entries
+// overwrite the state-restored keyframes and i2v_only reuses these EXACT frames.
+// Used by the hybrid GPU lane so it animates the parent row's keyframes (not
+// whatever the project's last render left in the shared state.tar.gz). No
+// storyboard/cast needed -- we read the source bundle and splice. Returns the
+// new bundle key (in R2_RENDERS).
+export async function overlayKeyframesIntoBundle(
+  env: Env,
+  srcBundleKey: string,
+  outBundleKey: string,
+  keyframes: Array<{ shot_id: string; key: string }>,
+): Promise<{ ok: true; bundleKey: string } | { ok: false; error: string }> {
+  const src = await env.R2_RENDERS.get(srcBundleKey);
+  if (!src) return { ok: false, error: `source bundle not found: ${srcBundleKey}` };
+  const tarBytes = await gunzipBytes(new Uint8Array(await src.arrayBuffer()));
+
+  // Index existing entries by name so an injected keyframe replaces any prior
+  // entry at the same path (and preserves the rest of the bundle verbatim).
+  const byName = new Map<string, TarFile>();
+  for (const e of readTar(tarBytes)) byName.set(e.name, e);
+
+  for (const kf of keyframes) {
+    if (!kf.shot_id || !kf.key) continue;
+    const obj = await env.R2_RENDERS.get(kf.key);
+    if (!obj) return { ok: false, error: `keyframe not found in R2: ${kf.key}` };
+    const name = `clips/${kf.shot_id}_keyframe.png`;
+    byName.set(name, { name, content: new Uint8Array(await obj.arrayBuffer()) });
+  }
+
+  const outGz = await gzipBytes(emitTar([...byName.values()]));
+  await env.R2_RENDERS.put(outBundleKey, outGz, {
+    httpMetadata: { contentType: "application/gzip" },
+    customMetadata: { source: "skyphusion-hybrid-overlay" },
+  });
+  return { ok: true, bundleKey: outBundleKey };
 }
 
 // ---- image-prep container: background-remove a cast portrait ----

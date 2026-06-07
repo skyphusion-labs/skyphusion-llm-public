@@ -72,7 +72,7 @@ import { findPlanningModel, PLANNING_MODELS } from "./planner-catalog";
 import { serializeStoryboardYaml } from "./planner-yaml";
 import type { SlotId } from "./storyboard-validate";
 import { validateStoryboard, normalizePerShotModels, normalizeHybridBackends } from "./storyboard-validate";
-import { assembleBundle, type TrainingImage } from "./bundle-assembler";
+import { assembleBundle, overlayKeyframesIntoBundle, type TrainingImage } from "./bundle-assembler";
 import {
   cancelRenderJob,
   deriveProjectFromBundleKey,
@@ -8799,13 +8799,30 @@ export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
 
       // --- GPU subset: one finalize, finish_offloaded, durable poll loop ---
       if (gpuShots.length > 0) {
+        // v0.153.0: inject the parent's EXACT keyframes into the GPU finalize
+        // bundle (clips/<id>_keyframe.png). The pod restores state.tar.gz then
+        // extracts the bundle, so these overwrite the state-restored frames and
+        // i2v_only reuses them -- guaranteeing the GPU lane animates the same
+        // keyframes the cloud lane does (not whatever the project's last render
+        // left in the shared state.tar.gz).
+        const gpuBundleKey = await step.do(
+          "gpu-bundle-overlay",
+          { retries: { limit: 2, delay: "10 seconds", backoff: "exponential" } },
+          async (): Promise<string> => {
+            const out = `bundles/${project}-hybrid-${jobId}.tar.gz`;
+            const res = await overlayKeyframesIntoBundle(this.env, bundleKey, out, gpuShots);
+            if (!res.ok) throw new Error(`hybrid bundle overlay failed: ${res.error}`);
+            return res.bundleKey;
+          },
+        );
+
         const gpuJobId = await step.do(
           "gpu-submit",
           { retries: { limit: 2, delay: "10 seconds", backoff: "exponential" } },
           async (): Promise<string> => {
             const res = await submitFinalizeJob(this.env, {
               project,
-              bundleKey,
+              bundleKey: gpuBundleKey,
               qualityTier: qualityTier as "draft" | "standard" | "final" | undefined,
               userEmail,
               processShotIds: gpuShots.map((s) => s.shot_id),

@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.149.0
+
+Phase 4b UI: attach a per-scene start keyframe at the bundle step.
+
+The v0.148.0 backend accepted `sceneStartImages` but nothing in the planner produced
+it. The bundle stage now has an optional collapsible "per-scene start keyframes"
+section: one row per scene (id + prompt snippet + a file picker). Attaching an image
+stages it to R2 via the existing `/api/storyboard/character-ref` path (so the JSON
+body stays small and the key survives a reload, like character refs), and `bundleNow`
+sends `sceneStartImages: { sceneId: { key } }`. The assembler writes each to
+`clips/<id>_keyframe.png`, which the pod uses as that scene's Wan i2v start frame.
+Scene ids resolve the same way the validator/pod do (explicit id, else `shot_NN`).
+
+Frontend-only; no API change (the endpoint already accepts the field). Staged keys
+persist through the bundle-stage stash so a tab reopen restores them.
+
+### Code
+- `public/planner.html` - collapsible per-scene keyframe section in the bundle stage.
+- `public/planner.js` - `bundleState.sceneStartImages`; `renderSceneKeyframes` +
+  `sceneIdAt`; `showBundleStage` reset/restore (4th arg); `bundleNow` sends the field;
+  persisted in `collectBundleStageState` / `restoreBundleStagePanel`.
+- `public/styles.css` - per-scene picker styles.
+- `package.json` - 0.148.0 -> 0.149.0.
+- node --check clean; typecheck clean; vitest 579/579 (frontend not under the pool).
+
 ## v0.148.0
 
 Phase 4b (control-plane half): the reverse bridge -- per-scene start images in the

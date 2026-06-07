@@ -337,6 +337,14 @@
         images, click "bundle" to assemble the .tar.gz the GPU worker pulls.
       </p>
       <div id="planner-bundle-cast" class="planner-bundle-cast"></div>
+      <!-- v0.149.0 (Phase 4b): optional per-scene start keyframes. Attaching an
+           image here ships it as clips/<id>_keyframe.png in the bundle, which the
+           GPU pod uses as that scene's i2v motion start frame. -->
+      <details id="planner-bundle-scenes-wrap" class="planner-bundle-scenes-wrap" hidden>
+        <summary>per-scene start keyframes (optional)</summary>
+        <p class="planner-stage-hint">attach an authored keyframe to drive a scene's GPU (Wan) motion from that exact frame; scenes left empty render normally.</p>
+        <div id="planner-bundle-scenes" class="planner-bundle-scenes"></div>
+      </details>
       <div class="planner-actions">
         <button id="planner-bundle-btn" type="button" class="planner-primary">bundle</button>
         <span id="planner-bundle-meta" class="planner-status"></span>

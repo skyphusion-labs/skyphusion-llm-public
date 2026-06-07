@@ -1988,6 +1988,74 @@ textarea:focus {
   margin-bottom: 16px;
 }
 
+/* v0.149.0 (Phase 4b): optional per-scene start-keyframe pickers. */
+.planner-bundle-scenes-wrap {
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  background: var(--bg-elev);
+}
+.planner-bundle-scenes-wrap > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.planner-bundle-scenes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.planner-bundle-scene-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+}
+.planner-bundle-scene-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.planner-bundle-scene-prompt {
+  font-size: 11px;
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.planner-bundle-scene-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.planner-bundle-scene-status {
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+.planner-bundle-scene-status-done {
+  color: var(--accent);
+}
+.planner-bundle-scene-file {
+  font-size: 11px;
+  max-width: 180px;
+}
+.planner-bundle-scene-clear {
+  font-size: 10px;
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+  background: var(--bg-elev2);
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.planner-bundle-scene-clear:hover { color: var(--accent); border-color: var(--accent); }
+
 .planner-slot-upload {
   background: var(--bg-elev);
   border: 1px solid var(--border);

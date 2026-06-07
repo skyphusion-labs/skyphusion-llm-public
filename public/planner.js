@@ -511,6 +511,11 @@ const planState = {
 const bundleState = {
   // perSlotUploads[slot] = [{filename, size, mime, key, status, error}]
   perSlotUploads: {},
+  // v0.149.0 (Phase 4b): sceneStartImages[sceneId] = { key, filename } for
+  // authored per-scene start keyframes. Sent to /api/storyboard/bundle, which
+  // writes each to clips/<id>_keyframe.png so the pod drives that scene's Wan
+  // motion from it. Staged keys (like character refs) so they survive a reload.
+  sceneStartImages: {},
   bundleKey: null,
   // v0.135.1: remember the assembled bundle's gzipped size + entry count so a
   // page reload restores the real numbers instead of showing "0 B / 0 files".
@@ -673,6 +678,9 @@ function collectBundleStageState() {
   if (!stage || stage.hidden) return null;
   return {
     perSlotUploads: { ...bundleState.perSlotUploads },
+    // v0.149.0 (Phase 4b): persist staged per-scene start keyframes (R2 keys)
+    // so a tab reopen restores them like the character refs.
+    sceneStartImages: { ...bundleState.sceneStartImages },
     bundleKey: bundleState.bundleKey,
     sizeBytes: bundleState.sizeBytes,
     fileCount: bundleState.fileCount,
@@ -908,9 +916,14 @@ function restoreBundleStagePanel(savedBundle, savedPlanResult) {
     );
   }
 
-  // showBundleStage rebuilds the widgets; pass the filtered uploads so the
-  // freshly-built rows hydrate with previously-staged R2 keys.
-  showBundleStage(savedPlanResult.storyboard, savedPlanResult.cast || [], filteredUploads);
+  // showBundleStage rebuilds the widgets; pass the filtered uploads + restored
+  // per-scene keyframes so the freshly-built rows hydrate with their R2 keys.
+  showBundleStage(
+    savedPlanResult.storyboard,
+    savedPlanResult.cast || [],
+    filteredUploads,
+    savedBundle.sceneStartImages || {},
+  );
 
   // If the bundle was already assembled, restore the result panel + bundle
   // key + open the render stage (without yet activating it).
@@ -3544,10 +3557,12 @@ function repromptWithErrors() {
 
 // ---------- Bundle stage ----------
 
-function showBundleStage(storyboard, characters, initialUploads) {
+function showBundleStage(storyboard, characters, initialUploads, initialSceneStartImages) {
   planState.storyboard = storyboard;
   planState.cast = characters;
   bundleState.perSlotUploads = initialUploads ? { ...initialUploads } : {};
+  // v0.149.0 (Phase 4b): reset (or restore) the per-scene start keyframes.
+  bundleState.sceneStartImages = initialSceneStartImages ? { ...initialSceneStartImages } : {};
   bundleState.bundleKey = null;
   bundleState.sizeBytes = 0;
   bundleState.fileCount = 0;
@@ -3603,12 +3618,125 @@ function showBundleStage(storyboard, characters, initialUploads) {
     }
   }
 
+  // v0.149.0 (Phase 4b): per-scene start-keyframe pickers (rehydrate from any
+  // keys passed in via initialSceneStartImages, set above).
+  renderSceneKeyframes(storyboard);
+
   const stage = $("#planner-bundle");
   stage.hidden = false;
   stage.scrollIntoView({ behavior: "smooth", block: "start" });
   $("#planner-bundle-result").hidden = true;
   setBundleStatus("", "");
   setBundleMeta("");
+}
+
+// v0.149.0 (Phase 4b): resolve a scene's id the same way the validator + pod do
+// (explicit id, else shot_NN by 1-based index).
+function sceneIdAt(scene, index) {
+  return (scene && typeof scene.id === "string" && scene.id.trim())
+    ? scene.id.trim()
+    : "shot_" + String(index + 1).padStart(2, "0");
+}
+
+// v0.149.0 (Phase 4b): build the optional per-scene start-keyframe section. One
+// row per scene: id + prompt snippet + a file input (or, once staged, a thumb +
+// clear). A staged image lands in bundleState.sceneStartImages[id] = {key,
+// filename}; bundleNow ships it as clips/<id>_keyframe.png.
+function renderSceneKeyframes(storyboard) {
+  const wrap = $("#planner-bundle-scenes-wrap");
+  const host = $("#planner-bundle-scenes");
+  if (!wrap || !host) return;
+  host.innerHTML = "";
+  const scenes = Array.isArray(storyboard.scenes) ? storyboard.scenes : [];
+  if (scenes.length === 0) {
+    wrap.hidden = true;
+    return;
+  }
+  wrap.hidden = false;
+
+  scenes.forEach((scene, i) => {
+    const id = sceneIdAt(scene, i);
+    const row = document.createElement("div");
+    row.className = "planner-bundle-scene-row";
+    row.dataset.sceneId = id;
+
+    const label = document.createElement("div");
+    label.className = "planner-bundle-scene-label";
+    const idEl = document.createElement("strong");
+    idEl.textContent = id;
+    label.appendChild(idEl);
+    const prompt = typeof scene.prompt === "string" ? scene.prompt : "";
+    if (prompt) {
+      const snip = document.createElement("span");
+      snip.className = "planner-bundle-scene-prompt";
+      snip.textContent = prompt.length > 80 ? prompt.slice(0, 80) + "…" : prompt;
+      label.appendChild(snip);
+    }
+    row.appendChild(label);
+
+    const controls = document.createElement("div");
+    controls.className = "planner-bundle-scene-controls";
+
+    const status = document.createElement("span");
+    status.className = "planner-bundle-scene-status";
+
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp";
+    input.className = "planner-bundle-scene-file";
+
+    const clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    clearBtn.className = "planner-bundle-scene-clear";
+    clearBtn.textContent = "clear";
+    clearBtn.hidden = true;
+
+    const applyStaged = (filename) => {
+      status.textContent = "✓ " + filename;
+      status.classList.add("planner-bundle-scene-status-done");
+      input.hidden = true;
+      clearBtn.hidden = false;
+    };
+    const applyEmpty = () => {
+      status.textContent = "";
+      status.classList.remove("planner-bundle-scene-status-done");
+      input.hidden = false;
+      input.value = "";
+      clearBtn.hidden = true;
+    };
+
+    // Rehydrate a restored key.
+    const existing = bundleState.sceneStartImages[id];
+    if (existing && existing.key) applyStaged(existing.filename || "keyframe");
+
+    input.addEventListener("change", async () => {
+      const file = input.files && input.files[0];
+      if (!file) return;
+      status.textContent = "staging…";
+      status.classList.remove("planner-bundle-scene-status-done");
+      input.disabled = true;
+      try {
+        const key = await uploadOneRef(file);
+        bundleState.sceneStartImages[id] = { key, filename: file.name };
+        applyStaged(file.name);
+      } catch (err) {
+        status.textContent = "failed: " + err.message;
+      } finally {
+        input.disabled = false;
+      }
+    });
+
+    clearBtn.addEventListener("click", () => {
+      delete bundleState.sceneStartImages[id];
+      applyEmpty();
+    });
+
+    controls.appendChild(status);
+    controls.appendChild(input);
+    controls.appendChild(clearBtn);
+    row.appendChild(controls);
+    host.appendChild(row);
+  });
 }
 
 // v0.48.0: synthesize bundleState.perSlotUploads[slot] entries from a
@@ -3866,19 +3994,29 @@ async function bundleNow() {
     return;
   }
 
+  // v0.149.0 (Phase 4b): collect any staged per-scene start keyframes into the
+  // { sceneId: { key } } shape the bundle endpoint expects. Omitted when none.
+  const sceneStartImages = {};
+  for (const [sceneId, entry] of Object.entries(bundleState.sceneStartImages || {})) {
+    if (entry && entry.key) sceneStartImages[sceneId] = { key: entry.key };
+  }
+  const hasSceneStarts = Object.keys(sceneStartImages).length > 0;
+
   setBundleStatus("assembling .tar.gz on the worker...", "loading");
   $("#planner-bundle-btn").disabled = true;
 
   let resp = null;
   let data = null;
   try {
+    const reqBody = {
+      storyboard: planState.storyboard,
+      characterRefs,
+    };
+    if (hasSceneStarts) reqBody.sceneStartImages = sceneStartImages;
     resp = await fetch("/api/storyboard/bundle", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        storyboard: planState.storyboard,
-        characterRefs,
-      }),
+      body: JSON.stringify(reqBody),
     });
     data = await resp.json();
   } catch (err) {

@@ -72,7 +72,7 @@ import { findPlanningModel, PLANNING_MODELS } from "./planner-catalog";
 import { serializeStoryboardYaml } from "./planner-yaml";
 import type { SlotId } from "./storyboard-validate";
 import { validateStoryboard, normalizePerShotModels, normalizeHybridBackends } from "./storyboard-validate";
-import { assembleBundle, overlayKeyframesIntoBundle, type TrainingImage } from "./bundle-assembler";
+import { assembleBundle, overlayKeyframesIntoBundle, readShotDurationsFromBundle, type TrainingImage } from "./bundle-assembler";
 import {
   cancelRenderJob,
   deriveProjectFromBundleKey,
@@ -109,6 +109,7 @@ import {
   normalizeLockedShots,
   normalizeTags,
   setCloudAnimateProgress,
+  setHybridProgress,
   setRenderAudioOutput,
   setRenderFolder,
   setRenderLabel,
@@ -8771,14 +8772,45 @@ export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
   // R2_RENDERS; a final video-finish pass concats them in shot order. Row mode
   // stays "cloud-finalized" (workflow-backed cloud-<uuid>); clips carry a
   // `backend` tag so the UI can badge it "hybrid".
+  //
+  // v0.154.0 (slice-3 polish):
+  //  - #1 dual-lane progress: output.progress carries per-lane gpu/cloud counts
+  //    plus the GPU pod render fraction during the ~20-30 min wait.
+  //  - #4 beat-sync trim: each clip is trimmed to its authored target_seconds
+  //    (storyboard.yaml from the bundle, GPU manifest overriding for GPU shots).
+  //  - #3 continue-on-error: a failed shot/lane is recorded (failed_shots) and
+  //    skipped; the run completes (partial:true) as long as ANY clip was made.
+  //  The cloud lane runs first (fast, ticks per shot) then the GPU long pole.
   async runHybridAnimate(p: HybridAnimateParams, step: WorkflowStep): Promise<void> {
     const {
       userEmail, jobId, project, bundleKey, qualityTier, keyframes,
       backends, defaultBackend, defaultCloudModel, motionPrompts, globalPrompt, startedAtIso,
     } = p;
     const shotLog: CloudAnimateLogShot[] = [];
-    // shot_id -> { key, backend, model? } for every animated shot.
+    // shot_id -> { key, backend, model? } for every shot that SUCCEEDED.
     const clipByShot = new Map<string, { key: string; backend: "gpu" | "cloud"; model?: string }>();
+    // v0.154.0 (#3): shots that failed are recorded (not fatal) so the run can
+    // still deliver a partial cut of whatever did animate.
+    const failedShots: Array<{ shot_id: string; backend: "gpu" | "cloud"; model?: string; error: string }> = [];
+    // v0.154.0 (#4): beat-trim target seconds per shot. Storyboard durations are
+    // the base; the GPU off-GPU-finish manifest overrides for GPU shots.
+    const targetByShot = new Map<string, number>();
+
+    const shots = [...keyframes].sort((a, b) => a.shot_id.localeCompare(b.shot_id));
+    const backendOf = (sid: string): "gpu" | "cloud" =>
+      backends[sid]?.backend ?? defaultBackend;
+    const gpuShots = shots.filter((s) => backendOf(s.shot_id) === "gpu");
+    const cloudShots = shots.filter((s) => backendOf(s.shot_id) === "cloud");
+
+    // v0.154.0 (#1): per-lane progress marker. cloudDone advances in the cloud
+    // loop; gpuDone is passed in (the pod render fraction, rounded to shots).
+    let cloudDone = 0;
+    const writeProgress = (gpuDone: number, gpuStatus: string): Promise<void> =>
+      setHybridProgress(this.env, jobId, {
+        gpu: { done: gpuDone, total: gpuShots.length, status: gpuStatus },
+        cloud: { done: cloudDone, total: cloudShots.length },
+      }).catch(() => {});
+
     try {
       await step.do(
         "mark-running",
@@ -8789,140 +8821,205 @@ export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
           } as RunpodJobView);
         },
       );
+      await writeProgress(0, gpuShots.length > 0 ? "queued" : "done");
 
-      const shots = [...keyframes].sort((a, b) => a.shot_id.localeCompare(b.shot_id));
-      const total = shots.length;
-      const backendOf = (sid: string): "gpu" | "cloud" =>
-        backends[sid]?.backend ?? defaultBackend;
-      const gpuShots = shots.filter((s) => backendOf(s.shot_id) === "gpu");
-      const cloudShots = shots.filter((s) => backendOf(s.shot_id) === "cloud");
-
-      // --- GPU subset: one finalize, finish_offloaded, durable poll loop ---
-      if (gpuShots.length > 0) {
-        // v0.153.0: inject the parent's EXACT keyframes into the GPU finalize
-        // bundle (clips/<id>_keyframe.png). The pod restores state.tar.gz then
-        // extracts the bundle, so these overwrite the state-restored frames and
-        // i2v_only reuses them -- guaranteeing the GPU lane animates the same
-        // keyframes the cloud lane does (not whatever the project's last render
-        // left in the shared state.tar.gz).
-        const gpuBundleKey = await step.do(
-          "gpu-bundle-overlay",
-          { retries: { limit: 2, delay: "10 seconds", backoff: "exponential" } },
-          async (): Promise<string> => {
-            const out = `bundles/${project}-hybrid-${jobId}.tar.gz`;
-            const res = await overlayKeyframesIntoBundle(this.env, bundleKey, out, gpuShots);
-            if (!res.ok) throw new Error(`hybrid bundle overlay failed: ${res.error}`);
-            return res.bundleKey;
-          },
+      // v0.154.0 (#4): authored per-shot durations from the bundle's
+      // storyboard.yaml (beat-synced films stamp target_seconds on every scene
+      // via applyBeatTiming). Best-effort: an empty map means clips keep their
+      // native i2v length, matching cloud_animate.
+      if (bundleKey) {
+        const durations = await step.do(
+          "read-durations",
+          { retries: { limit: 2, delay: "5 seconds", backoff: "exponential" } },
+          async (): Promise<Record<string, number>> =>
+            await readShotDurationsFromBundle(this.env, bundleKey),
         );
-
-        const gpuJobId = await step.do(
-          "gpu-submit",
-          { retries: { limit: 2, delay: "10 seconds", backoff: "exponential" } },
-          async (): Promise<string> => {
-            const res = await submitFinalizeJob(this.env, {
-              project,
-              bundleKey: gpuBundleKey,
-              qualityTier: qualityTier as "draft" | "standard" | "final" | undefined,
-              userEmail,
-              processShotIds: gpuShots.map((s) => s.shot_id),
-              // pod SkyPhusion/vivijure-serverless#17: emit per-shot clips, no on-GPU assembly.
-              renderOverrides: { finish_offloaded: true },
-            });
-            if (!res.ok) throw new Error(`gpu finalize submit failed: ${res.error}`);
-            return res.view.jobId;
-          },
-        );
-
-        // Poll to terminal: a short poll step (returns the concrete per-shot
-        // clips on COMPLETED -- step.do returns must be serializable, so we
-        // extract them here rather than passing the raw output object) + a
-        // durable sleep, up to ~45 min.
-        const MAX_POLLS = 90;
-        let gpuClips: Array<{ shot_id: string; key: string }> | null = null;
-        for (let i = 0; i < MAX_POLLS; i++) {
-          const snap = await step.do(
-            `gpu-poll-${i}`,
-            { retries: { limit: 3, delay: "5 seconds", backoff: "exponential" } },
-            async (): Promise<{ terminal: boolean; status: string; clips: Array<{ shot_id: string; key: string }> }> => {
-              const r = await pollRenderJob(this.env, gpuJobId);
-              if (!r.ok) return { terminal: false, status: "poll-error", clips: [] };
-              const status = r.view.status;
-              const o = r.view.output;
-              let clips: Array<{ shot_id: string; key: string }> = [];
-              if (o && typeof o === "object" && !Array.isArray(o) && Array.isArray((o as { clips?: unknown }).clips)) {
-                clips = ((o as { clips: unknown[] }).clips)
-                  .map((c) => ({
-                    shot_id: (c as { shot_id?: unknown })?.shot_id,
-                    key: (c as { key?: unknown })?.key,
-                  }))
-                  .filter((c): c is { shot_id: string; key: string } =>
-                    typeof c.shot_id === "string" && typeof c.key === "string");
-              }
-              return { terminal: isTerminalStatus(status), status, clips };
-            },
-          );
-          if (snap.terminal) {
-            if (snap.status !== "COMPLETED") throw new Error(`gpu finalize ${snap.status}`);
-            gpuClips = snap.clips;
-            break;
-          }
-          await step.sleep(`gpu-wait-${i}`, "30 seconds");
-        }
-        if (!gpuClips) throw new Error("gpu finalize did not reach a terminal state in time");
-
-        for (const c of gpuClips) {
-          clipByShot.set(c.shot_id, { key: c.key, backend: "gpu", model: "gpu:wan" });
-          shotLog.push({ shot_id: c.shot_id, model: "gpu:wan", status: "ok", log_id: null });
-        }
-        await setCloudAnimateProgress(this.env, jobId, clipByShot.size, total).catch(() => {});
+        for (const [sid, secs] of Object.entries(durations)) targetByShot.set(sid, secs);
       }
 
       // --- Cloud subset: per-shot env.AI.run i2v (cloud_animate loop) ---
       for (const kf of cloudShots) {
         const shotModel = backends[kf.shot_id]?.model || defaultCloudModel;
-        const res = await step.do(
-          `cloud-${kf.shot_id}`,
-          { retries: { limit: 1, delay: "30 seconds", backoff: "linear" } },
-          async (): Promise<{ key: string; logId: string | null; videoUrl: string }> => {
-            const imageUrl = await presignR2Get(this.env, kf.key, 1800);
-            const prompt = motionPrompts[kf.shot_id] || globalPrompt || "";
-            const params = buildGenParams("video", { modelId: shotModel, prompt, imageUrl });
-            const result = (await aiRun(this.env, shotModel, params)) as LongRunResult;
-            const logId = aiLogId(this.env);
-            if (result.state && result.state !== "Completed") {
-              throw new Error(`gen state ${result.state} for ${kf.shot_id}`);
-            }
-            const url = result.result?.video;
-            if (!url) throw new Error(`gen completed but no video url for ${kf.shot_id}`);
-            const aresp = await fetch(url);
-            if (!aresp.ok) throw new Error(`fetch clip ${aresp.status} for ${kf.shot_id}`);
-            const bytes = new Uint8Array(await aresp.arrayBuffer());
-            const key = `renders/${project}/${jobId}/clips/${kf.shot_id}.mp4`;
-            await this.env.R2_RENDERS.put(key, bytes, {
-              httpMetadata: { contentType: "video/mp4" },
-              customMetadata: { user_email: userEmail },
-            });
-            return { key, logId, videoUrl: url };
-          },
-        );
-        clipByShot.set(kf.shot_id, { key: res.key, backend: "cloud", model: shotModel });
-        shotLog.push({ shot_id: kf.shot_id, model: shotModel, status: "ok", log_id: res.logId, video_url: res.videoUrl });
-        await setCloudAnimateProgress(this.env, jobId, clipByShot.size, total).catch(() => {});
+        try {
+          const res = await step.do(
+            `cloud-${kf.shot_id}`,
+            { retries: { limit: 1, delay: "30 seconds", backoff: "linear" } },
+            async (): Promise<{ key: string; logId: string | null; videoUrl: string }> => {
+              const imageUrl = await presignR2Get(this.env, kf.key, 1800);
+              const prompt = motionPrompts[kf.shot_id] || globalPrompt || "";
+              const params = buildGenParams("video", { modelId: shotModel, prompt, imageUrl });
+              const result = (await aiRun(this.env, shotModel, params)) as LongRunResult;
+              const logId = aiLogId(this.env);
+              if (result.state && result.state !== "Completed") {
+                throw new Error(`gen state ${result.state} for ${kf.shot_id}`);
+              }
+              const url = result.result?.video;
+              if (!url) throw new Error(`gen completed but no video url for ${kf.shot_id}`);
+              const aresp = await fetch(url);
+              if (!aresp.ok) throw new Error(`fetch clip ${aresp.status} for ${kf.shot_id}`);
+              const bytes = new Uint8Array(await aresp.arrayBuffer());
+              const key = `renders/${project}/${jobId}/clips/${kf.shot_id}.mp4`;
+              await this.env.R2_RENDERS.put(key, bytes, {
+                httpMetadata: { contentType: "video/mp4" },
+                customMetadata: { user_email: userEmail },
+              });
+              return { key, logId, videoUrl: url };
+            },
+          );
+          clipByShot.set(kf.shot_id, { key: res.key, backend: "cloud", model: shotModel });
+          shotLog.push({ shot_id: kf.shot_id, model: shotModel, status: "ok", log_id: res.logId, video_url: res.videoUrl });
+        } catch (err) {
+          // v0.154.0 (#3): record the failed cloud shot and keep going.
+          const msg = err instanceof Error ? err.message : String(err);
+          failedShots.push({ shot_id: kf.shot_id, backend: "cloud", model: shotModel, error: msg });
+          shotLog.push({ shot_id: kf.shot_id, model: shotModel, status: "failed", log_id: null, error: msg });
+        }
+        cloudDone++;
+        await writeProgress(0, gpuShots.length > 0 ? "queued" : "done");
       }
 
-      // --- Unified assembly: merge GPU + cloud clips in shot order ---
+      // --- GPU subset: one finalize, finish_offloaded, durable poll loop ---
+      if (gpuShots.length > 0) {
+        try {
+          // v0.153.0: inject the parent's EXACT keyframes into the GPU finalize
+          // bundle (clips/<id>_keyframe.png). The pod restores state.tar.gz then
+          // extracts the bundle, so these overwrite the state-restored frames and
+          // i2v_only reuses them -- guaranteeing the GPU lane animates the same
+          // keyframes the cloud lane does (not whatever the project's last render
+          // left in the shared state.tar.gz).
+          const gpuBundleKey = await step.do(
+            "gpu-bundle-overlay",
+            { retries: { limit: 2, delay: "10 seconds", backoff: "exponential" } },
+            async (): Promise<string> => {
+              const out = `bundles/${project}-hybrid-${jobId}.tar.gz`;
+              const res = await overlayKeyframesIntoBundle(this.env, bundleKey, out, gpuShots);
+              if (!res.ok) throw new Error(`hybrid bundle overlay failed: ${res.error}`);
+              return res.bundleKey;
+            },
+          );
+
+          const gpuJobId = await step.do(
+            "gpu-submit",
+            { retries: { limit: 2, delay: "10 seconds", backoff: "exponential" } },
+            async (): Promise<string> => {
+              const res = await submitFinalizeJob(this.env, {
+                project,
+                bundleKey: gpuBundleKey,
+                qualityTier: qualityTier as "draft" | "standard" | "final" | undefined,
+                userEmail,
+                processShotIds: gpuShots.map((s) => s.shot_id),
+                // pod SkyPhusion/vivijure-serverless#17: emit per-shot clips, no on-GPU assembly.
+                renderOverrides: { finish_offloaded: true },
+              });
+              if (!res.ok) throw new Error(`gpu finalize submit failed: ${res.error}`);
+              return res.view.jobId;
+            },
+          );
+          await writeProgress(0, "rendering");
+
+          // Poll to terminal: a short poll step (returns the concrete per-shot
+          // clips + their target_seconds on COMPLETED, plus the render fraction
+          // while running -- step.do returns must be serializable, so we extract
+          // here rather than passing the raw output object) + a durable sleep.
+          const MAX_POLLS = 90;
+          type GpuClip = { shot_id: string; key: string; target_seconds: number | null };
+          let gpuClips: GpuClip[] | null = null;
+          for (let i = 0; i < MAX_POLLS; i++) {
+            const snap = await step.do(
+              `gpu-poll-${i}`,
+              { retries: { limit: 3, delay: "5 seconds", backoff: "exponential" } },
+              async (): Promise<{ terminal: boolean; status: string; fraction: number | null; clips: GpuClip[] }> => {
+                const r = await pollRenderJob(this.env, gpuJobId);
+                if (!r.ok) return { terminal: false, status: "poll-error", fraction: null, clips: [] };
+                const status = r.view.status;
+                const o = r.view.output;
+                let clips: GpuClip[] = [];
+                let fraction: number | null = null;
+                if (o && typeof o === "object" && !Array.isArray(o)) {
+                  const oo = o as Record<string, unknown>;
+                  // v0.154.0 (#1): the pod streams a 0-1 render fraction (or scene
+                  // counts); surface it so the long GPU wait shows movement.
+                  if (typeof oo.progress === "number" && oo.progress >= 0 && oo.progress <= 1) {
+                    fraction = oo.progress;
+                  } else if (
+                    typeof oo.scene_index === "number" &&
+                    typeof oo.scene_total === "number" &&
+                    oo.scene_total > 0
+                  ) {
+                    fraction = Math.max(0, (oo.scene_index - 1) / oo.scene_total);
+                  }
+                  if (Array.isArray(oo.clips)) {
+                    clips = (oo.clips as unknown[])
+                      .map((c) => {
+                        const cc = (c ?? {}) as Record<string, unknown>;
+                        return {
+                          shot_id: cc.shot_id,
+                          key: cc.key,
+                          // v0.154.0 (#4): the manifest carries the pod's beat target.
+                          target_seconds: typeof cc.target_seconds === "number" ? cc.target_seconds : null,
+                        };
+                      })
+                      .filter((c): c is GpuClip =>
+                        typeof c.shot_id === "string" && typeof c.key === "string");
+                  }
+                }
+                return { terminal: isTerminalStatus(status), status, fraction, clips };
+              },
+            );
+            if (snap.terminal) {
+              if (snap.status !== "COMPLETED") throw new Error(`gpu finalize ${snap.status}`);
+              gpuClips = snap.clips;
+              break;
+            }
+            const gpuDone = snap.fraction !== null ? Math.round(snap.fraction * gpuShots.length) : 0;
+            await writeProgress(Math.min(gpuDone, gpuShots.length), "rendering");
+            await step.sleep(`gpu-wait-${i}`, "30 seconds");
+          }
+          if (!gpuClips) throw new Error("gpu finalize did not reach a terminal state in time");
+
+          for (const c of gpuClips) {
+            clipByShot.set(c.shot_id, { key: c.key, backend: "gpu", model: "gpu:wan" });
+            shotLog.push({ shot_id: c.shot_id, model: "gpu:wan", status: "ok", log_id: null });
+            if (c.target_seconds !== null && Number.isFinite(c.target_seconds) && c.target_seconds > 0) {
+              targetByShot.set(c.shot_id, c.target_seconds); // manifest overrides storyboard
+            }
+          }
+          await writeProgress(gpuShots.length, "done");
+        } catch (err) {
+          // v0.154.0 (#3): the GPU lane is one pod job (all-or-nothing). On
+          // failure, record every GPU shot that produced no clip and continue
+          // assembling whatever the cloud lane delivered.
+          const msg = err instanceof Error ? err.message : String(err);
+          for (const s of gpuShots) {
+            if (clipByShot.has(s.shot_id)) continue;
+            failedShots.push({ shot_id: s.shot_id, backend: "gpu", model: "gpu:wan", error: msg });
+            shotLog.push({ shot_id: s.shot_id, model: "gpu:wan", status: "failed", log_id: null, error: msg });
+          }
+          await writeProgress(0, "failed");
+        }
+      }
+
+      // --- Unified assembly: merge GPU + cloud clips in shot order, beat-trimmed ---
       const outputKey = await step.do(
         "assemble",
         { retries: { limit: 2, delay: "10 seconds", backoff: "exponential" } },
         async (): Promise<string> => {
           const out = `renders/${project}/${jobId}/hybrid_full.mp4`;
-          const orderedKeys = shots
-            .map((s) => clipByShot.get(s.shot_id)?.key)
-            .filter((k): k is string => typeof k === "string");
-          if (orderedKeys.length === 0) throw new Error("hybrid: no clips produced to assemble");
+          // v0.154.0 (#4): pass each clip's target_seconds so video-finish trims
+          // it to the authored beat duration (omitted -> native length).
+          const orderedClips = shots
+            .map((s): { key: string; targetSeconds?: number } | null => {
+              const c = clipByShot.get(s.shot_id);
+              if (!c) return null;
+              const ts = targetByShot.get(s.shot_id);
+              return ts !== undefined && Number.isFinite(ts) && ts > 0
+                ? { key: c.key, targetSeconds: ts }
+                : { key: c.key };
+            })
+            .filter((c): c is { key: string; targetSeconds?: number } => c !== null);
+          if (orderedClips.length === 0) throw new Error("hybrid: no clips produced to assemble");
           const res = await runVideoFinish(this.env, {
-            clips: orderedKeys.map((k) => ({ key: k })),
+            clips: orderedClips,
             outputKey: out,
             width: 1280,
             height: 720,
@@ -8941,6 +9038,8 @@ export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
         },
       );
 
+      // v0.154.0 (#3): the run completed; flag it partial when any shot failed.
+      const partial = failedShots.length > 0;
       await step.do(
         "finalize-row",
         { retries: { limit: 3, delay: "5 seconds", backoff: "exponential" } },
@@ -8957,6 +9056,8 @@ export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
                 return { shot_id: s.shot_id, key: c?.key, backend: c?.backend, model: c?.model };
               }),
               hybrid: true,
+              partial,
+              failed_shots: failedShots,
               has_audio: false,
             },
             executionTimeMs,
@@ -8975,7 +9076,11 @@ export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
         async (): Promise<void> => {
           const executionTimeMs = Date.now() - Date.parse(startedAtIso);
           await writeCloudAnimateLog(this.env, userEmail, {
-            jobId, model: "hybrid", status: "COMPLETED", executionTimeMs, shots: shotLog,
+            jobId,
+            model: "hybrid",
+            status: partial ? "COMPLETED (partial)" : "COMPLETED",
+            executionTimeMs,
+            shots: shotLog,
           });
         },
       );

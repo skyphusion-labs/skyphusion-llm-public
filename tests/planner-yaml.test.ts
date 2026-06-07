@@ -1,7 +1,7 @@
 // Tests for serializeStoryboardYaml (v0.28.0). Pure emitter, no I/O.
 
 import { describe, it, expect } from "vitest";
-import { serializeStoryboardYaml } from "../src/planner-yaml";
+import { serializeStoryboardYaml, parseShotDurations } from "../src/planner-yaml";
 import type { StoryboardValidated } from "../src/storyboard-validate";
 
 function minimal(): StoryboardValidated {
@@ -198,5 +198,76 @@ describe("serializeStoryboardYaml", () => {
     const yaml = serializeStoryboardYaml(board);
     expect(yaml).not.toContain("projectName:");
     expect(yaml).not.toContain("project_name:");
+  });
+});
+
+describe("parseShotDurations", () => {
+  it("round-trips per-shot target_seconds keyed by scene id", () => {
+    const board: StoryboardValidated = {
+      title: "cherry",
+      projectName: "cherry",
+      full_prompt: "",
+      style_prefix: "",
+      style_category: "None",
+      style_preset: "None",
+      use_characters: [],
+      cast_rules: "",
+      scenes: [
+        { id: "shot_01", prompt: "A.", start: 0, end: 3.5, target_seconds: 3.5 },
+        { id: "shot_02", prompt: "B.", start: 3.5, end: 8, target_seconds: 4.5 },
+        { id: "shot_03", prompt: "C.", target_seconds: 6 },
+      ],
+    };
+    const durations = parseShotDurations(serializeStoryboardYaml(board));
+    expect(durations).toEqual({ shot_01: 3.5, shot_02: 4.5, shot_03: 6 });
+  });
+
+  it("falls back to positional shot_NN when a scene has no id", () => {
+    const board = minimal();
+    board.scenes = [
+      { prompt: "First.", target_seconds: 2 },
+      { prompt: "Second.", target_seconds: 3 },
+    ];
+    expect(parseShotDurations(serializeStoryboardYaml(board))).toEqual({
+      shot_01: 2,
+      shot_02: 3,
+    });
+  });
+
+  it("mixes explicit ids and positional fallbacks by scene order", () => {
+    const board = minimal();
+    board.scenes = [
+      { prompt: "First.", target_seconds: 2 }, // -> shot_01
+      { id: "intro", prompt: "Second.", target_seconds: 3 }, // -> intro
+      { prompt: "Third.", target_seconds: 4 }, // -> shot_03 (positional, not shot_02)
+    ];
+    expect(parseShotDurations(serializeStoryboardYaml(board))).toEqual({
+      shot_01: 2,
+      intro: 3,
+      shot_03: 4,
+    });
+  });
+
+  it("omits scenes with no target_seconds (non-beat-synced films get no trim)", () => {
+    const board = minimal();
+    board.scenes = [
+      { id: "shot_01", prompt: "A." },
+      { id: "shot_02", prompt: "B.", target_seconds: 5 },
+    ];
+    expect(parseShotDurations(serializeStoryboardYaml(board))).toEqual({ shot_02: 5 });
+  });
+
+  it("ignores a target_seconds-looking line inside a scene prompt", () => {
+    const board = minimal();
+    board.scenes = [
+      { id: "shot_01", prompt: "He wrote target_seconds: 99 on the board.", target_seconds: 4 },
+    ];
+    // The prompt is double-quoted on the `  - prompt:` line, so its embedded
+    // text never matches the `    target_seconds:` scene-field pattern.
+    expect(parseShotDurations(serializeStoryboardYaml(board))).toEqual({ shot_01: 4 });
+  });
+
+  it("returns an empty map for input with no scenes block", () => {
+    expect(parseShotDurations("title: \"x\"\nfull_prompt: \"\"\n")).toEqual({});
   });
 });

@@ -5517,6 +5517,33 @@ function cloudModelLabel(id) {
   return hit ? hit[1] : (id ? String(id).split("/").pop() : "");
 }
 
+// v0.154.0 (Phase 4 hybrid, slice-3 #1): badge text for an in-flight animation.
+// A hybrid run writes per-lane counts (progress.gpu / progress.cloud) so the row
+// reads "GPU rendering 1/2 · cloud 3/3" during the long GPU wait; a plain
+// cloud-animate run (only progress.done/total) reads "animating done/total".
+function hybridProgressText(prog) {
+  if (!prog || typeof prog !== "object") return "submitted";
+  const gpu = prog.gpu && typeof prog.gpu === "object" ? prog.gpu : null;
+  const cloud = prog.cloud && typeof prog.cloud === "object" ? prog.cloud : null;
+  if (gpu || cloud) {
+    const parts = [];
+    if (gpu && typeof gpu.total === "number" && gpu.total > 0) {
+      const st = typeof gpu.status === "string" ? gpu.status : "";
+      const word =
+        st === "rendering" ? "rendering " : st === "queued" ? "queued " : st === "failed" ? "failed " : "";
+      parts.push("GPU " + word + (gpu.done || 0) + "/" + gpu.total);
+    }
+    if (cloud && typeof cloud.total === "number" && cloud.total > 0) {
+      parts.push("cloud " + (cloud.done || 0) + "/" + cloud.total);
+    }
+    if (parts.length) return parts.join(" · ");
+  }
+  if (typeof prog.done === "number" && typeof prog.total === "number") {
+    return "animating " + prog.done + "/" + prog.total;
+  }
+  return "submitted";
+}
+
 // v0.145.2: short, human label for a derived animation version. GPU finalize
 // rows read mode 'finalized'/'full' (Wan); cloud-animate rows read
 // 'cloud-finalized' + output.model (the i2v model). Returns "" for rows that
@@ -5643,12 +5670,34 @@ function buildHistoryRow(r, childrenByParent) {
       r.output && typeof r.output === "object" ? r.output.progress : null;
     const pBadge = document.createElement("span");
     pBadge.className = "planner-history-mode planner-history-mode-progress";
-    pBadge.textContent =
-      prog && typeof prog.done === "number" && typeof prog.total === "number"
-        ? "animating " + prog.done + "/" + prog.total
-        : "submitted";
-    pBadge.title = "cloud animation in progress (one clip per shot)";
+    pBadge.textContent = hybridProgressText(prog);
+    // v0.154.0 (slice-3 #1): a hybrid run carries per-lane gpu/cloud counts.
+    pBadge.title =
+      prog && (prog.gpu || prog.cloud)
+        ? "hybrid animation in progress (GPU finalize + cloud i2v)"
+        : "cloud animation in progress (one clip per shot)";
     meta.appendChild(pBadge);
+  }
+
+  // v0.154.0 (slice-3 #3): a completed run that dropped some shots
+  // (continue-on-error) is flagged partial; surface which shots failed.
+  if (
+    !inFlight &&
+    r.mode === "cloud-finalized" &&
+    r.output && typeof r.output === "object" && r.output.partial === true
+  ) {
+    const failed = Array.isArray(r.output.failed_shots) ? r.output.failed_shots : [];
+    const partBadge = document.createElement("span");
+    partBadge.className = "planner-history-mode planner-history-mode-partial";
+    partBadge.textContent =
+      failed.length ? "partial (" + failed.length + " failed)" : "partial";
+    partBadge.title = failed.length
+      ? "some shots failed and were skipped; the cut omits them:\n"
+        + failed
+          .map((f) => "  - " + (f && f.shot_id) + " [" + (f && f.backend) + "]: " + (f && f.error))
+          .join("\n")
+      : "some shots failed and were skipped from the assembled cut";
+    meta.appendChild(partBadge);
   }
 
   // v0.145.2: backlink to the keyframes preview this animation derives from.
@@ -6703,6 +6752,24 @@ async function animateHybridRender(row, btnEl, backends) {
   const cloudN = entries.filter(([, b]) => b && b.backend === "cloud").length;
   const explicitGpuN = entries.filter(([, b]) => b && b.backend === "gpu").length;
   const gpuTotal = kfCount - cloudN; // everything not explicitly cloud is GPU
+  // v0.154.0 (slice-3 #2): qualitative cost hint. We have no per-provider price
+  // table, so surface HOW each lane bills rather than an invented dollar figure.
+  const costLines = [];
+  if (gpuTotal > 0) {
+    costLines.push(
+      "  - GPU: " + gpuTotal + " shot(s) run as one scale-to-zero pod render "
+      + "(~20-30 min of GPU time, billed per-minute)",
+    );
+  }
+  if (cloudN > 0) {
+    costLines.push(
+      "  - Cloud: " + cloudN + " shot(s), billed per-second per provider "
+      + "(one i2v call each)",
+    );
+  }
+  const costHint = costLines.length
+    ? "approx cost:\n" + costLines.join("\n") + "\n\n"
+    : "";
   const confirmMsg =
     "animate this preview as a HYBRID film?\n\n"
     + gpuTotal + " shot(s) on GPU Wan, " + cloudN + " on cloud i2v"
@@ -6711,6 +6778,7 @@ async function animateHybridRender(row, btnEl, backends) {
     + "action.\n\n" + (cloudN === 0
       ? "NOTE: no shots set to Cloud -- this is effectively an all-GPU finalize.\n\n"
       : "")
+    + costHint
     + "continue?";
   if (!window.confirm(confirmMsg)) return;
 

@@ -32,7 +32,7 @@ import {
   type SlotId,
   type StoryboardValidated,
 } from "./storyboard-validate";
-import { serializeStoryboardYaml } from "./planner-yaml";
+import { serializeStoryboardYaml, parseShotDurations } from "./planner-yaml";
 import { emitTar, readTar, type TarFile } from "./tar-emit";
 import { presignR2Get, presignR2Put } from "./r2-presign";
 
@@ -243,6 +243,30 @@ export async function overlayKeyframesIntoBundle(
     customMetadata: { source: "skyphusion-hybrid-overlay" },
   });
   return { ok: true, bundleKey: outBundleKey };
+}
+
+// v0.154.0 (Phase 4 hybrid, slice-3): read the authored per-shot durations from
+// a bundle's storyboard.yaml. The hybrid assembler beat-trims each clip (GPU and
+// cloud) to its target_seconds; this surfaces them without re-running the pod's
+// beat analysis. Best-effort: a missing bundle / storyboard / parse failure
+// yields {} and the clips keep their native length (matching cloud_animate).
+export async function readShotDurationsFromBundle(
+  env: Env,
+  bundleKey: string,
+): Promise<Record<string, number>> {
+  try {
+    const src = await env.R2_RENDERS.get(bundleKey);
+    if (!src) return {};
+    const tarBytes = await gunzipBytes(new Uint8Array(await src.arrayBuffer()));
+    for (const e of readTar(tarBytes)) {
+      if (e.name === "storyboard.yaml") {
+        return parseShotDurations(new TextDecoder().decode(e.content));
+      }
+    }
+  } catch {
+    // best-effort; fall through to no durations
+  }
+  return {};
 }
 
 // ---- image-prep container: background-remove a cast portrait ----

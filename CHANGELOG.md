@@ -1,5 +1,56 @@
 # Changelog
 
+## v0.154.0
+
+Phase 4 hybrid slice-3 polish: dual-lane progress, beat-sync trim on both lanes,
+and continue-on-error partial success.
+
+The hybrid finale (v0.151.0-v0.153.0) shipped a working GPU+cloud per-shot animator,
+but slice-3 (the open questions in `docs/i2v-hybrid-backend.md`) was deferred. This
+closes it:
+
+- **Dual-lane progress (#1).** A single "done/total" counter hid which lane was
+  moving during the ~20-30 min GPU finalize. The workflow now writes per-lane counts
+  (`output.progress.gpu` / `.cloud`) and surfaces the pod's render fraction during the
+  GPU wait, so the History row reads e.g. "GPU rendering 1/2 · cloud 3/3". The cloud
+  lane now runs first (minutes, ticks per shot) so movement is visible immediately,
+  then the GPU long pole. The overall `progress.done/total` is kept for the v0.146.0
+  badge.
+- **Beat-sync trim on both lanes (#4).** The assemble pass previously concatenated
+  clips at their native i2v length (no trim), so a hybrid silently lost the beat-sync
+  the all-GPU finalize gives. Now each clip is trimmed to its authored `target_seconds`:
+  the bundle's `storyboard.yaml` (beat-synced films stamp `target_seconds` on every
+  scene via `applyBeatTiming`) is the base, and the GPU off-GPU-finish manifest's
+  `target_seconds` overrides for GPU shots. A film with no authored durations keeps
+  native length (unchanged from cloud_animate).
+- **Continue-on-error partial success (#3).** A single shot/provider hiccup used to
+  fail the whole (expensive) run. Now a failed cloud shot or a failed GPU lane is
+  recorded in `output.failed_shots` and skipped; the run assembles whatever succeeded
+  and completes with `output.partial = true` (the row only fails if NO clip was made).
+  The History row badges "partial (N failed)" with a per-shot tooltip.
+- **Cost hint (#2).** The hybrid confirm dialog adds an honest, non-dollar cost line
+  (GPU shots = one scale-to-zero pod render billed per-minute; cloud shots = per-second
+  per provider). We have no per-provider price table, so no invented figures.
+
+No schema change (all new fields live in `output_json`, like `clips[].backend` does).
+Verification needs a live hybrid run (Workflows/Containers do not run under
+`wrangler dev`); the next hybrid is its smoke test.
+
+### Code
+- `src/planner-yaml.ts` - `parseShotDurations` (extract `{shot_id -> target_seconds}`
+  from an emitted `storyboard.yaml`).
+- `src/bundle-assembler.ts` - `readShotDurationsFromBundle` (gunzip + readTar + parse).
+- `src/renders-db.ts` - `setHybridProgress` (per-lane gpu/cloud + overall counter).
+- `src/index.ts` - `runHybridAnimate`: cloud-lane-first ordering, per-lane progress,
+  GPU render-fraction surfacing, storyboard+manifest beat-trim into `assemble`,
+  continue-on-error with `partial`/`failed_shots`.
+- `public/planner.js` - `hybridProgressText` (per-lane badge), partial badge, qualitative
+  cost hint in the hybrid confirm dialog.
+- `public/styles.css` - `.planner-history-mode-partial` badge style.
+- `tests/planner-yaml.test.ts` - `parseShotDurations` coverage (6 new).
+- `package.json` - 0.153.0 -> 0.154.0.
+- typecheck clean; vitest 591/591 (6 new).
+
 ## v0.153.0
 
 Hybrid GPU-lane keyframe parity: inject the parent's exact keyframes into the GPU

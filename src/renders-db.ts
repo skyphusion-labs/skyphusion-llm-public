@@ -300,6 +300,40 @@ export async function setCloudAnimateProgress(
     .run();
 }
 
+// v0.154.0 (Phase 4 hybrid, slice-3): per-lane progress for a hybrid animation.
+// A hybrid run drives a GPU finalize (~20-30 min) and a cloud per-shot loop, so a
+// single "done/total" counter hides which lane is moving. This writes both lanes
+// plus an overall done/total (kept for the v0.146.0 cloud-animate badge that reads
+// progress.done/total). `gpu.status` reflects the GPU lane phase ("queued" |
+// "rendering" | "done" | "failed"); gpu.done can carry the pod's render fraction
+// (rounded to whole shots) so the long GPU wait shows movement. Same terminal
+// guard as setCloudAnimateProgress so it can never clobber a finished row.
+export interface HybridLaneProgress {
+  gpu: { done: number; total: number; status?: string };
+  cloud: { done: number; total: number };
+}
+
+export async function setHybridProgress(
+  env: Env,
+  jobId: string,
+  lanes: HybridLaneProgress,
+): Promise<void> {
+  const now = nowSeconds();
+  const done = lanes.gpu.done + lanes.cloud.done;
+  const total = lanes.gpu.total + lanes.cloud.total;
+  const json = JSON.stringify({
+    mode: "cloud-finalized",
+    progress: { done, total, gpu: lanes.gpu, cloud: lanes.cloud },
+  });
+  await env.DB.prepare(
+    `UPDATE renders SET output_json = ?, updated_at = ?
+       WHERE job_id = ?
+         AND status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED', 'TIMED_OUT')`,
+  )
+    .bind(json, now, jobId)
+    .run();
+}
+
 // v0.136.0: minimal row snapshot the poll handlers need when RunPod returns a
 // 404 for the job. submitted_at drives the grace-window decision; output /
 // output_key / error let us serve a cached terminal row (RunPod GC'd a job we

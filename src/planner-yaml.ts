@@ -56,6 +56,57 @@ function emitScene(scene: StoryboardScene): string[] {
   return lines;
 }
 
+// v0.154.0 (Phase 4 hybrid, slice-3): extract { shot_id -> target_seconds }
+// from a storyboard.yaml this module emitted. Used by the hybrid assembler to
+// beat-trim BOTH lanes' clips to the authored per-shot durations (beat-synced
+// films carry target_seconds on every scene, stamped by applyBeatTiming). The
+// scene key is its `id` when present, else the positional shot_NN (1-based),
+// matching the renderer's shot numbering (bundle-assembler). Pure + tolerant:
+// the format is the deterministic one serializeStoryboardYaml produces, so a
+// targeted line scan is enough; any unrecognized line is skipped, and a scene
+// with no (or non-positive) target_seconds is simply omitted from the map.
+export function parseShotDurations(yaml: string): Record<string, number> {
+  const out: Record<string, number> = {};
+  let inScenes = false;
+  let idx = 0; // 1-based scene counter, advanced at each scene marker
+  let curId: string | null = null;
+  let curTarget: number | null = null;
+  const flush = (): void => {
+    if (idx === 0) return;
+    const shot = curId || `shot_${String(idx).padStart(2, "0")}`;
+    if (curTarget !== null && Number.isFinite(curTarget) && curTarget > 0) {
+      out[shot] = curTarget;
+    }
+  };
+  for (const line of yaml.split(/\r?\n/)) {
+    if (!inScenes) {
+      if (/^scenes:\s*$/.test(line)) inScenes = true;
+      continue;
+    }
+    // Scene blocks are emitted last, so everything after `scenes:` is a scene.
+    // A new scene begins with the block-sequence marker ("  - prompt: ...").
+    if (/^ {2}-\s/.test(line)) {
+      flush();
+      idx++;
+      curId = null;
+      curTarget = null;
+      continue;
+    }
+    const idM = line.match(/^ {4}id:\s*"((?:[^"\\]|\\.)*)"\s*$/);
+    if (idM) {
+      curId = idM[1].replace(/\\(.)/g, "$1");
+      continue;
+    }
+    const tsM = line.match(/^ {4}target_seconds:\s*([0-9]+(?:\.[0-9]+)?)\s*$/);
+    if (tsM) {
+      curTarget = parseFloat(tsM[1]);
+      continue;
+    }
+  }
+  flush();
+  return out;
+}
+
 export function serializeStoryboardYaml(value: StoryboardValidated): string {
   const lines: string[] = [];
   lines.push(`title: ${quote(value.title)}`);

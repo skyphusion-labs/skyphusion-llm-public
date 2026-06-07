@@ -3077,6 +3077,13 @@ textarea:focus {
   color: var(--warn);
   border: 1px solid var(--warn);
 }
+/* v0.154.0: a completed hybrid run that dropped some shots (continue-on-error).
+   Uses the error color so it reads as "delivered, but incomplete". */
+.planner-history-mode-partial {
+  background: var(--bg-elev2);
+  color: var(--error);
+  border: 1px solid var(--error);
+}
 .planner-history-parentlink,
 .planner-history-childlink {
   font-size: 10px;

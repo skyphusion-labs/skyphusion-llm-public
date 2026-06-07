@@ -134,7 +134,10 @@ Reuses `CLOUD_I2V_MODELS`.
    (pure, tested) + `/animate-hybrid` route + `hybrid_animate` workflow kind
    (GPU subset finish-offloaded + cloud subset + unified assembly). API-drivable.
 2. **UI**: per-shot backend picker + hybrid badge + per-clip backend label.
-3. **Polish**: dual-lane progress, cost hint, partial-failure policy.
+3. **Polish** (SHIPPED v0.154.0): dual-lane progress (per-lane gpu/cloud counts +
+   GPU render fraction), beat-sync trim on both lanes (storyboard `target_seconds`
+   + GPU manifest override), continue-on-error partial success (`output.partial` /
+   `failed_shots`), and a qualitative cost hint in the confirm dialog.
 
 ## Code seams (grounded, for the implementer)
 

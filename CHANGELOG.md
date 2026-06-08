@@ -1,5 +1,47 @@
 # Changelog
 
+## v0.158.0
+
+Rework the planner render step to the namespaced `render_overrides` contract,
+the UI counterpart to v0.157.0. The advanced-settings panel had ~115 controls
+feeding the old flat `render_overrides` keys + the ~24 vivijure-serverless
+`*Overrides` blocks -- all dropped by the clean-room backend (v0.157.0). They were
+dead controls that looked live: a user could set adetailer / consistency / wan
+negatives / lora scale and nothing reached the pod.
+
+Now every control traces 1:1 to a `config.py` field, or it's gone (Conrad's call:
+"if it's not in the config or the storyboard right now, it goes"). The panel is
+regrouped under three disclosures -- **keyframe** (seed, size, base model,
+guidance, steps, identity method + scales, and `multi_char` regional/pose/per-slot
+scales/max-slots/pose-scale), **i2v** (model, num_frames, steps, guidance, fps,
+flow_shift), **lora** (rank, max_steps, lr, resolution) -- and `buildRenderOverrides`
+emits `{ keyframe, i2v, lora }`. The expert raw-JSON textarea is restricted to those
+sections + the routing flags (`keyframes_only` / `finish_offloaded`); a stray flat
+key is dropped, so the planner never emits anything outside the contract.
+
+Removed (~90 controls, no `config.py` home): adetailer, consistency, continuity,
+character-generation/bible, image-prompting, scene-length, movie, production,
+top-level-switches, quality-gate, ffmpeg-quality, image-models, lora-train-extras,
+prompt-templates, the base-SDXL local_diffusion knobs, the multi_char geometry
+extras, the face_lock repo/model fields, and flat misc (output w/h, crossfade, the
+old single `lora_scale`, `seed_mode`, `identity_lock`). Their builder functions,
+help text, state/prefs persistence, and event wiring all go with them.
+
+### Code
+
+- `public/planner.js` - rewrite `buildRenderOverrides` to emit `{keyframe,i2v,lora}`
+  (textarea restricted to sections + flags); delete `collectOverrideBlocks` + 24
+  dead `build*Overrides` functions (~32 KB) and the two `Object.assign(...,
+  collectOverrideBlocks())` merges (render + finalize); rewrite `FIELD_HELP` to 25
+  brief, accurate entries; prune the dead controls from state save/restore, prefs,
+  and event wiring. Pure-function tested; all removed-control refs are null-safe.
+- `public/planner.html` - replace the ~115-control advanced panel with the
+  keyframe / i2v / lora disclosures (survivor IDs preserved, no duplicates); trim
+  the common row (drop lora_scale + consistency); drop the prompt_templates expert
+  textarea; rewrite the raw-JSON textarea to the namespaced shape (91 KB -> 39 KB).
+- `package.json` - 0.157.0 -> 0.158.0.
+- No src/ or backend change. typecheck clean; 583 tests pass (src unaffected).
+
 ## v0.157.0
 
 Redesign the render-submit contract to the namespaced `render_overrides`

@@ -181,165 +181,35 @@ function stepDelta(dir) {
 // language. The popover auto-derives values/range/default, so each entry only
 // needs `what`. Empty on a control still means "use the bundle/pod default".
 const FIELD_HELP = {
-  // --- common row ---
-  "planner-seed": { what: "Fixed RNG seed for the whole render. The same seed plus the same settings reproduces a render exactly; leave blank for a fresh random seed each time." },
-  "planner-lora-scale": { what: "How hard each character's trained LoRA pulls the keyframe toward that character's identity. Higher is more on-model but less prompt-flexible; lower is more creative but a weaker likeness. 0.6 to 1.0 is the usual range." },
-  "planner-consistency": { what: "Overall shot-to-shot consistency preset. off does no extra locking; standard is mild; strict locks the seed, identity, and anatomy guards for maximum stability at some cost to variety." },
-
-  // --- identity & face ---
-  "planner-adetailer": { what: "Run the ADetailer pass on each keyframe: detect faces and hands, then inpaint them at higher detail. A big quality win on people, at the cost of extra time per shot." },
-  "planner-seed-mode": { what: "How the seed changes across shots. locked uses the same seed every shot (most consistent); sequential adds the shot index (varied but reproducible); random is fresh per shot (most variety, least repeatable)." },
-  "planner-multi-character": { what: "When to run the multi-character compositing path for shots with two or more cast slots. auto composites only when 2+ slots appear; always composites every multi-slot shot; off does a single generation even for multi-slot shots." },
-  "planner-identity-lock": { what: "Lock each cast member's portrait likeness onto the generated keyframe so faces stay on-model across shots." },
-  "planner-face-lock-mode": { what: "Technique used to lock faces to the cast portraits. img2img is lightest and lowest VRAM; ip_adapter uses an image-prompt adapter; instantid is the strongest identity (face ControlNet plus embeddings); both stacks img2img and ip_adapter (heaviest)." },
-  "planner-fl-mode": { what: "Module-level default face-lock strategy (the per-render 'face lock mode' above overrides this when set)." },
-  "planner-fl-ip-scale": { what: "IP-Adapter strength for face lock. Pushing toward 1.0 is the quickest fix when a LoRA is too weak; too high looks pasted-on." },
-  "planner-fl-ip-repo": { what: "HuggingFace repo for the IP-Adapter weights used in face lock." },
-  "planner-fl-ip-subfolder": { what: "Subfolder inside the IP-Adapter repo that holds the SDXL weights." },
-  "planner-fl-ip-weight": { what: "Filename of the IP-Adapter weight file to load." },
-  "planner-fl-iid-enabled": { what: "Turn InstantID on or off. InstantID is the strongest identity lock (face ControlNet plus face embeddings) but the heaviest pass." },
-  "planner-fl-iid-cn-scale": { what: "InstantID ControlNet strength: how tightly the face keypoint map steers pose and structure toward the portrait." },
-  "planner-fl-iid-ip-scale": { what: "InstantID face image-prompt strength: how strongly the result resembles the portrait." },
-  "planner-fl-iid-base-model": { what: "SDXL base model InstantID builds on." },
-  "planner-fl-iid-cn-model": { what: "InstantID IdentityNet ControlNet repo." },
-  "planner-fl-iid-adapter-repo": { what: "InstantID IP-Adapter repo." },
-  "planner-fl-iid-adapter-weight": { what: "InstantID IP-Adapter weight filename." },
-  "planner-fl-iid-antelope-root": { what: "Filesystem root for the insightface antelopev2 face-analysis models on the pod volume." },
-  "planner-mc-mode": { what: "Module-level multi-character compositing mode governing how shots with 2+ cast slots are rendered." },
-  "planner-mc-layout": { what: "How multiple characters are arranged in a frame. layer is a feathered alpha overlay (more natural); side_by_side tiles them horizontally." },
-  "planner-mc-max-slots": { what: "Maximum cast slots fed into one keyframe generation. More tries to fit more people in a shot, but identity routing gets harder." },
-  "planner-mc-feather": { what: "Feather width, in pixels, for the alpha-mask edges when layering characters. Higher gives softer blends." },
-  "planner-mc-auto": { what: "Whether to auto-composite when a scene has 2+ cast slots (only relevant in auto mode). false requires mode=always to composite." },
-  "planner-mc-engine": { what: "Multi-character render engine. regional does a single SDXL pass with per-region IP-Adapter masks (the default); composite_legacy is the older per-slot panels plus grabcut plus tile path, kept as an escape hatch." },
-  "planner-mc-lora-scale": { what: "Per-slot LoRA scale in the regional engine. 0.3 is the confirmed setting that keeps identities from bleeding into each other." },
-  "planner-mc-ip-scale": { what: "Per-slot IP-Adapter scale in the regional engine. 0.7 is the confirmed identity-routing setting." },
-  "planner-mc-pose": { what: "OpenPose ControlNet pose conditioning. On, for shots with 2+ cast slots, draws one body per pose skeleton so the characters are placed APART (the masks alone only route identity, so two subjects drift shoulder-to-shoulder). Needs the openpose controlnet primed on the volume; off by default." },
-  "planner-mc-cn-scale": { what: "How firmly the bodies follow the pose skeleton (0 to 2). 0.55 places them reliably without overriding the prompt's action; higher is stricter and stiffer." },
-  "planner-mc-pose-inset": { what: "Pulls the two pose figures toward frame center (0 to 0.25). 0.12 puts them at roughly 30 and 70 percent, which closes the empty center band that the model used to fill with a hallucinated stray cape. Lower spreads them wider." },
-  "planner-mc-pose-gap": { what: "Gap fraction between the pose columns (0 to 0.15). Smaller brings the figures closer together." },
-  "planner-mc-pose-figw": { what: "How wide each figure is drawn within its column (0.3 to 1). Wider fills more of the center, also helping suppress the stray-cape artifact." },
-  "planner-mc-pose-neg": { what: "Extra negative-prompt terms applied only on the pose path, to suppress hallucinations in the gap between figures (floating cloth, a third figure, stray fabric). Leave the default unless you see a specific artifact." },
-
-  // --- video & motion (Wan) ---
-  "planner-keyframe-sdxl-size": { what: "Resolution bucket the per-shot keyframe still is generated at, as WxH. 1216x832 is the multi-subject coherence setting; the still is then cover-cropped up to the output size." },
-  "planner-output-width": { what: "Final film width in pixels." },
-  "planner-output-height": { what: "Final film height in pixels." },
-  "planner-fps": { what: "Frame rate of the assembled film." },
-  "planner-crossfade-seconds": { what: "Length of the crossfade between scenes during assembly. 0 gives hard cuts." },
-  "planner-wan-num-frames": { what: "Frames Wan generates per shot. More means longer motion clips and slower renders. Tier-derived per shot by default; set this to force a value." },
-  "planner-wan-inference-steps": { what: "Wan denoise steps per shot. Lower trades motion quality for speed." },
-  "planner-wan-guidance-scale": { what: "Wan prompt adherence (CFG). Low is more creative motion, high is more literal to the prompt." },
-  "planner-wd-t2v-model-id": { what: "The Wan text-to-video base, used only for keyframe-less shots (no start image). Pod default is Wan 2.2 T2V A14B. Pick from the bases primed on the volume, or leave on auto." },
-  "planner-wd-i2v-model-id": { what: "The Wan image-to-video base that animates each SDXL keyframe -- the main motion model. Pod default is Wan 2.2 I2V A14B. Pick from the bases primed on the volume, or leave on auto." },
-  "planner-wd-use-i2v": { what: "Use the image-to-video model when a shot has a start keyframe (recommended). false forces text-to-video even with a start image." },
-  "planner-wd-num-frames": { what: "Base Wan frame count. The flat 'Wan num_frames' above wins when both are set." },
-  "planner-wd-max-frames": { what: "Hard cap on Wan frames per shot." },
-  "planner-wd-fps": { what: "Wan model output frame rate before assembly." },
-  "planner-wd-inference-steps": { what: "Base Wan denoise steps. The flat 'Wan inference_steps' above wins when both are set." },
-  "planner-wd-guidance-scale": { what: "Base Wan CFG (prompt adherence)." },
-  "planner-wd-flow-shift": { what: "UniPC scheduler flow-shift for Wan (text-to-video only); affects motion timing and smoothness." },
-  "planner-wd-cpu-offload": { what: "Offload the Wan model to CPU between steps. Lowers VRAM at a speed cost; turn off on big cards for speed." },
-  "planner-wd-seconds-per-shot": { what: "Fallback per-shot clip duration when a scene has no explicit length." },
-  "planner-wd-negative-prompt": { what: "Override the pod's default Wan negative prompt (it suppresses duplicates, deformities, and similar). Leave blank to keep the built-in negative." },
-
-  // --- image & SDXL ---
-  "planner-ld-model-id": { what: "The SDXL base for the img2img / portrait path only (cast portraits + chained-scene continuity passes), NOT the per-shot keyframe. For the rendered art style use the 'art style (keyframe SDXL base)' picker in the common row at the top. Pod default sdxl-turbo; turbo is allowed here since this path does not need CFG." },
-  "planner-ld-resolution": { what: "SDXL base landscape resolution as WxH." },
-  "planner-ld-portrait-resolution": { what: "SDXL portrait resolution as WxH, used for cast portrait generation." },
-  "planner-ld-steps": { what: "SDXL base inference steps (turbo needs very few)." },
-  "planner-ld-guidance-scale": { what: "SDXL base CFG. Turbo ignores CFG (uses 0)." },
-  "planner-ld-denoising-strength": { what: "img2img denoise strength for the SDXL base path. Higher changes the image more from its init." },
-  "planner-ld-device": { what: "Force the SDXL pipeline onto gpu or cpu." },
-  "planner-ld-dtype": { what: "SDXL pipeline precision. float16 is fastest and lowest VRAM; bfloat16 and float32 use more." },
-  "planner-ld-seq-cpu-offload": { what: "Sequentially offload SDXL to CPU while Wan runs. Helps fit both on roughly 24GB cards at a speed cost." },
-  "planner-ld-keyframe-model-id": { what: "The single biggest art-style lever. This SDXL base renders each shot's keyframe (the still Wan I2V animates), so the whole clip inherits its look. Anime = Animagine XL 4.0; photoreal = RealVisXL V5.0; neutral = stock SDXL base 1.0; 'auto' uses the pod's baked default (photoreal)." },
-  "planner-ld-keyframe-guidance-scale": { what: "CFG for the keyframe SDXL pass; needs greater than 1 for negative prompts to take effect." },
-  "planner-ld-keyframe-steps": { what: "Inference steps for the keyframe SDXL pass." },
-  "planner-gen-seed-per-shot-step": { what: "In sequential seed mode, how much the seed increments from one shot to the next." },
-
-  // --- LoRA & training ---
-  "planner-lora-steps": { what: "Training steps for fresh character LoRA training during this render. More gives a better likeness but is slower, with diminishing returns past roughly 1000." },
-  "planner-lora-lr": { what: "AdamW learning rate for LoRA training. Higher learns faster but can overfit or distort." },
-  "planner-lora-rank": { what: "LoRA rank (dimension). Higher captures more detail but makes a bigger file and risks overfitting." },
-  "planner-lora-resolution": { what: "Training image resolution in pixels. Higher captures finer detail but is slower and uses more VRAM." },
-  "planner-qg-enabled": { what: "Run the post-training quality gate: render probe images from the new LoRA and score their SSIM similarity to the cast portrait. SSIM is a weak metric, so this is often left off." },
-  "planner-qg-probe-count": { what: "How many probe keyframes to render per slot to score the LoRA. More gives a steadier score for more GPU time." },
-  "planner-qg-min-ssim": { what: "SSIM floor; a LoRA scoring below this is judged a failure." },
-  "planner-qg-pass-ssim": { what: "SSIM pass threshold; a score between the floor and this is a warning." },
-  "planner-qg-lora-scale": { what: "LoRA scale used while rendering the probe images." },
-  "planner-qg-base-seed": { what: "Base seed for the probe renders; probe number i uses base seed plus i." },
-  "planner-qg-allow-warn": { what: "Let a 'warn' verdict still ship the LoRA. false blocks the render on a weak LoRA." },
-  "planner-lte-enabled": { what: "Master switch for LoRA training. false skips training entirely and uses whatever LoRAs already exist." },
-  "planner-lte-min-images": { what: "Minimum training images required before a slot's LoRA will train." },
-  "planner-lte-max-images": { what: "Cap on training images used per slot." },
-  "planner-lte-trigger-template": { what: "Template for each LoRA's trigger word; {name} is replaced with the character name." },
-  "planner-lo-default-scale": { what: "Fallback LoRA scale used when a shot does not specify one. The common 'lora scale' is the per-render value that wins." },
-
-  // --- continuity & timing ---
-  "planner-cons-strict": { what: "Default strict-consistency for new projects. Strict locks the seed, identity, and anatomy guards." },
-  "planner-cons-chain-denoising": { what: "img2img denoise when chaining a scene off the previous one in strict mode. Lower stays closer to the prior frame." },
-  "planner-cons-kf-suffix": { what: "Text appended to every keyframe prompt in strict mode to hold face and costume steady." },
-  "planner-cons-motion-suffix": { what: "Text appended to every Wan motion prompt in strict mode (for example, 'subtle natural motion, preserve face and outfit')." },
-  "planner-vc-chain-scenes": { what: "Chain continuity across scenes (carry the look and last frame forward). Off produces independent clips. This one control now drives both the video-consistency and movie chain settings." },
-  "planner-vc-regen-kf": { what: "Regenerate a fresh keyframe for each shot. false reuses the previous shot's last frame as the start image." },
-  "planner-vc-motion-suffix-movie": { what: "Use the movie-mode motion suffix on Wan prompts." },
-  "planner-vc-ip-scale": { what: "IP-Adapter strength used to carry identity across shots in the video-consistency path." },
-  "planner-ct-enabled": { what: "Master continuity toggle: chain each shot's init from prior frames. off disables chain-init." },
-  "planner-ct-use-last-frame": { what: "Chain from the last frame of the previous clip." },
-  "planner-ct-max-anchors": { what: "How many anchor frames to retain for continuity." },
-  "planner-ct-chain-denoising": { what: "Denoise strength when chaining a scene off prior frames. Lower stays closer to the anchor." },
-  "planner-ip-anatomy-guard": { what: "Prepend anatomy and quality positives plus anti-deformity negatives to every prompt. Improves hands and anatomy; the regional multi-character path disables it so it does not suppress the second subject." },
-  "planner-ip-negative-mode": { what: "Negative-prompt length. focused is short and often sharper; full uses the long community negative list." },
-  "planner-ip-positive-extra": { what: "Extra positive tags appended to every SDXL prompt (for example, 'anatomically correct, coherent anatomy')." },
-  "planner-ip-negative-extra": { what: "Extra negative tags appended to every SDXL prompt (for example, 'bad hands, extra fingers'). Anti-duplication phrases here can suppress a second character on multi-character shots." },
-  "planner-cg-ref-denoising": { what: "img2img denoise for the cast-portrait reference lock during character generation. Lower stays closer to the reference portrait." },
-  "planner-cg-ref-suffix": { what: "Suffix appended to the reference-generation prompt to match the portrait likeness." },
-  "planner-sl-target-scene-seconds": { what: "Target duration the planner aims for per scene." },
-  "planner-sl-min-scene-seconds": { what: "Floor on scene duration." },
-  "planner-sl-max-scene-seconds": { what: "Ceiling on scene duration." },
-  "planner-sl-max-video-seconds": { what: "Hard cap on total film length." },
-  "planner-sl-max-scenes": { what: "Hard cap on scene count." },
-  "planner-mv-default-clip-seconds": { what: "Per-clip render length in movie mode." },
-  "planner-mv-min-clip-seconds": { what: "Floor on clip duration in movie mode." },
-  "planner-mv-default-force-shots": { what: "Force an exact shot count. 0 lets the plan decide." },
-  "planner-mv-default-duration-minutes": { what: "Default total film length, in minutes, for movie mode." },
-  "planner-mv-crossfade-seconds": { what: "Crossfade between scenes in movie mode." },
-  "planner-mv-wan-num-frames": { what: "Movie-mode override for Wan frames per shot." },
-  "planner-mv-wan-inference-steps": { what: "Movie-mode override for Wan denoise steps." },
-  "planner-mv-wan-fps": { what: "Movie-mode override for Wan output fps." },
-  "planner-mv-motion-suffix": { what: "Motion text appended to Wan prompts in movie mode (for example, 'smooth cinematic camera motion')." },
-
-  // --- pipeline & production ---
-  "planner-cb-enabled": { what: "Condense each cast member's description into a short character bible block injected into every shot prompt." },
-  "planner-cb-max-chars": { what: "Character bible truncation budget per character, in characters." },
-  "planner-cb-header": { what: "Header line prepended to the character bible block." },
-  "planner-pr-hand-fix": { what: "Add hand-quality prompt augmentation on keyframes." },
-  "planner-pr-adetailer-kf": { what: "Production-level master switch for the ADetailer keyframe pass. The common 'adetailer face fix' control also drives this." },
-  "planner-pr-min-refs": { what: "Minimum cast reference images required per slot." },
-  "planner-pr-max-refs": { what: "Cap on cast reference images used per slot." },
-  "planner-pr-bible-target": { what: "Reference-image count targeted for good character-bible quality." },
-  "planner-pr-lora-threshold": { what: "Shot count above which LoRA training is recommended." },
-  "planner-tl-production-mode": { what: "movie makes fewer, longer, chained scenes with crossfades; clips makes independent short clips." },
-  "planner-tl-always-style-ref": { what: "Force a style reference image on every render." },
-  "planner-tl-assemble-crossfade": { what: "Enable crossfades during final assembly. false uses hard cuts." },
-  "planner-tl-auto-render-clips": { what: "Automatically render the Wan motion clips after keyframes. off stops after the stills." },
-  "planner-tl-auto-bootstrap": { what: "Auto-generate a start image for shots or slots that lack one." },
-
-  // --- adetailer hand/face fix ---
-  "planner-ad-enabled": { what: "Master enable for the ADetailer inpaint sub-block (the detected hand/face refinement pass)." },
-  "planner-ad-fix-hands": { what: "Detect and inpaint hands during the ADetailer pass." },
-  "planner-ad-fix-face": { what: "Detect and inpaint faces during the ADetailer pass." },
-  "planner-ad-max-regions": { what: "Cap on how many detected regions get inpainted per keyframe." },
-  "planner-ad-bbox-pad": { what: "Padding added around each detected box before inpainting, as a fraction of the box size." },
-  "planner-ad-inpaint-strength": { what: "Inpaint denoise strength. Lower preserves more of the original pixels." },
-  "planner-ad-hand-confidence": { what: "Minimum mediapipe confidence to treat a detection as a hand." },
-  "planner-ad-face-confidence": { what: "Minimum confidence to treat a detection as a face." },
-  "planner-ad-extra-steps": { what: "Extra inpaint steps per region for higher refinement quality." },
-
-  // --- encoding + image profile ---
-  "planner-ql-assemble-crf": { what: "x264 CRF for the final MP4 encode. Lower is higher quality and a bigger file (the scale runs 0 to 51)." },
-  "planner-ql-assemble-preset": { what: "x264 encode preset. Slower presets compress better for the same quality." },
-  "planner-im-default-profile": { what: "Default SDXL style profile used when a scene's style category is 'None'." },
+  // keyframe (render_overrides.keyframe)
+  "planner-ld-keyframe-model-id": { what: "SDXL base that renders each keyframe (the still Wan animates), so it sets the whole look. Blank = tier default." },
+  "planner-seed": { what: "Fixed RNG seed; the same seed + settings reproduces a render. Blank = fresh random." },
+  "planner-keyframe-sdxl-size": { what: "Keyframe render size as WxH, e.g. 1216x832. Blank = tier default." },
+  "planner-ld-keyframe-guidance-scale": { what: "Keyframe CFG (0-30); needs >1 for negative prompts to bite. Higher = more literal." },
+  "planner-ld-keyframe-steps": { what: "Keyframe denoise steps (1-128). More = cleaner, slower." },
+  "planner-face-lock-mode": { what: "How a face is pinned: ip_adapter (default), instantid (stronger, single-character), or both." },
+  "planner-fl-ip-scale": { what: "IP-Adapter identity strength (0-1). Higher = more on-model; too high looks pasted-on." },
+  "planner-fl-iid-cn-scale": { what: "InstantID face-ControlNet strength (0-1.5): how tightly structure follows the portrait." },
+  "planner-fl-iid-ip-scale": { what: "InstantID face image-prompt strength (0-1.5): how strongly the face resembles the portrait." },
+  // keyframe.multi_char (2+ characters in one frame)
+  "planner-mc-engine": { what: "Regional engine (one SDXL pass, per-region masks) vs composite_legacy (older panels + grabcut). Regional is the default." },
+  "planner-mc-pose": { what: "OpenPose conditioning that draws one body per skeleton so 2+ characters sit apart instead of merging." },
+  "planner-mc-lora-scale": { what: "Per-character LoRA strength in a shared frame (0-2); ~0.3 keeps identities from bleeding." },
+  "planner-mc-ip-scale": { what: "Per-character IP-Adapter strength in a shared frame (0-1); ~0.7 routes identities cleanly." },
+  "planner-mc-max-slots": { what: "Max characters composited into one keyframe (1-4); more is harder to keep distinct." },
+  "planner-mc-cn-scale": { what: "How firmly bodies follow the pose skeleton (0-1.5); ~0.55 places them without overriding the action." },
+  // i2v (render_overrides.i2v)
+  "planner-wd-i2v-model-id": { what: "Wan image-to-video model that animates each keyframe. Blank = tier default." },
+  "planner-wan-num-frames": { what: "Frames per Wan shot (1-256). More = longer clip, slower." },
+  "planner-wan-inference-steps": { what: "Wan denoise steps per shot (1-64). More = smoother motion, slower." },
+  "planner-wan-guidance-scale": { what: "Wan CFG (0-30). Low = freer motion, high = more literal to the prompt." },
+  "planner-fps": { what: "Wan output frame rate (1-120)." },
+  "planner-wd-flow-shift": { what: "Wan flow-matching shift (0-20); tunes motion timing and smoothness." },
+  // lora (render_overrides.lora; fresh Stage 1 training only)
+  "planner-lora-rank": { what: "Character LoRA rank (1-128). Higher captures more detail, bigger file, risks overfit." },
+  "planner-lora-steps": { what: "Character LoRA training steps (1-5000). More = better likeness, diminishing past ~1000." },
+  "planner-lora-lr": { what: "Character LoRA learning rate. Higher learns faster but can overfit." },
+  "planner-lora-resolution": { what: "LoRA training image resolution (512-1536). Higher = finer detail, slower." },
 };
 
 let _fieldHelpPop = null;
@@ -707,18 +577,12 @@ function collectRenderStageState() {
     // Each field stores its raw input string; the restorer writes
     // them back verbatim, and the submit-time merge re-reads them.
     seedText: readVal("#planner-seed"),
-    adetailer: readVal("#planner-adetailer"),
-    loraScaleText: readVal("#planner-lora-scale"),
-    consistency: readVal("#planner-consistency"),
     // v0.135.0: persist the promoted keyframe SDXL base (art-style picker)
     // alongside the other common per-render controls.
     keyframeBase: readVal("#planner-ld-keyframe-model-id"),
     // v0.59.0: persist the named knobs migrated from the legacy "Make"
     // panel. Same raw-string round-trip as the structured fields above;
     // empty string == "use bundle default" and never lands on the wire.
-    seedMode: readVal("#planner-seed-mode"),
-    multiCharacterMode: readVal("#planner-multi-character"),
-    identityLock: readVal("#planner-identity-lock"),
     faceLockMode: readVal("#planner-face-lock-mode"),
     // v0.44.0: persist the render start timestamp so an elapsed +
     // ETA computation survives a page refresh. null means "no in-
@@ -976,14 +840,7 @@ function restoreRenderStagePanel(saved) {
   // can see what was carried across the reload.
   const restored = [
     ["#planner-seed", saved.seedText],
-    ["#planner-adetailer", saved.adetailer],
-    ["#planner-lora-scale", saved.loraScaleText],
-    ["#planner-consistency", saved.consistency],
     ["#planner-ld-keyframe-model-id", saved.keyframeBase],
-    // v0.59.0
-    ["#planner-seed-mode", saved.seedMode],
-    ["#planner-multi-character", saved.multiCharacterMode],
-    ["#planner-identity-lock", saved.identityLock],
     ["#planner-face-lock-mode", saved.faceLockMode],
   ];
   let anyRestored = false;
@@ -1088,635 +945,6 @@ function buildCastLoraSubmit() {
     out[slot] = id;
   }
   return out;
-}
-
-// v0.79.0: lora_train_extras / loras / quality / image_models builders.
-function buildLoraTrainExtras() {
-  const $sel = (s) => $(s);
-  const out = {};
-  const en = ($sel("#planner-lte-enabled") || {}).value;
-  if (en === "true") out.enabled = true;
-  else if (en === "false") out.enabled = false;
-  const mn = parseFloat(($sel("#planner-lte-min-images") || {}).value || "");
-  if (Number.isInteger(mn) && mn >= 1 && mn <= 64) out.min_images = mn;
-  const mx = parseFloat(($sel("#planner-lte-max-images") || {}).value || "");
-  if (Number.isInteger(mx) && mx >= 1 && mx <= 256) out.max_images = mx;
-  const tpl = (($sel("#planner-lte-trigger-template") || {}).value || "").trim();
-  if (tpl && tpl.length <= 64) out.trigger_template = tpl;
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-function buildLorasOverrides() {
-  const $sel = (s) => $(s);
-  const out = {};
-  const ds = parseFloat(($sel("#planner-lo-default-scale") || {}).value || "");
-  if (Number.isFinite(ds) && ds >= 0 && ds <= 2) out.default_scale = ds;
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-const _FFMPEG_PRESETS_SET = new Set([
-  "ultrafast", "superfast", "veryfast", "faster", "fast",
-  "medium", "slow", "slower", "veryslow",
-]);
-
-function buildQualityOverrides() {
-  const $sel = (s) => $(s);
-  const out = {};
-  const crf = parseFloat(($sel("#planner-ql-assemble-crf") || {}).value || "");
-  if (Number.isInteger(crf) && crf >= 0 && crf <= 51) out.assemble_crf = crf;
-  const preset = (($sel("#planner-ql-assemble-preset") || {}).value || "").trim();
-  if (preset && _FFMPEG_PRESETS_SET.has(preset)) out.assemble_preset = preset;
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-function buildImageModelsOverrides() {
-  const $sel = (s) => $(s);
-  const out = {};
-  const p = (($sel("#planner-im-default-profile") || {}).value || "").trim();
-  if (p && p.length <= 64) out.default_profile = p;
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-// v0.78.0: character_bible / production / top-level switches builders.
-function buildCharacterBibleOverrides() {
-  const $sel = (s) => $(s);
-  const out = {};
-  const en = ($sel("#planner-cb-enabled") || {}).value;
-  if (en === "true") out.enabled = true;
-  else if (en === "false") out.enabled = false;
-  const mc = parseFloat(($sel("#planner-cb-max-chars") || {}).value || "");
-  if (Number.isInteger(mc) && mc >= 1 && mc <= 2000) out.max_chars_per_character = mc;
-  const h = (($sel("#planner-cb-header") || {}).value || "").trim();
-  if (h && h.length <= 256) out.header = h;
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-function buildProductionOverrides() {
-  const $sel = (s) => $(s);
-  const out = {};
-  const hf = ($sel("#planner-pr-hand-fix") || {}).value;
-  if (hf === "true") out.hand_fix_keyframes = true;
-  else if (hf === "false") out.hand_fix_keyframes = false;
-  const ad = ($sel("#planner-pr-adetailer-kf") || {}).value;
-  if (ad === "true") out.adetailer_keyframes = true;
-  else if (ad === "false") out.adetailer_keyframes = false;
-  const mn = parseFloat(($sel("#planner-pr-min-refs") || {}).value || "");
-  if (Number.isInteger(mn) && mn >= 0 && mn <= 32) out.min_character_refs = mn;
-  const mx = parseFloat(($sel("#planner-pr-max-refs") || {}).value || "");
-  if (Number.isInteger(mx) && mx >= 1 && mx <= 64) out.max_character_refs = mx;
-  const br = parseFloat(($sel("#planner-pr-bible-target") || {}).value || "");
-  if (Number.isInteger(br) && br >= 0 && br <= 32) out.bible_reference_target = br;
-  const lt = parseFloat(($sel("#planner-pr-lora-threshold") || {}).value || "");
-  if (Number.isInteger(lt) && lt >= 0 && lt <= 500) out.lora_shot_threshold = lt;
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-function buildTopLevelSwitches() {
-  const $sel = (s) => $(s);
-  const out = {};
-  const pm = ($sel("#planner-tl-production-mode") || {}).value;
-  if (pm === "movie" || pm === "clips") out.production_mode = pm;
-  const ausr = ($sel("#planner-tl-always-style-ref") || {}).value;
-  if (ausr === "true") out.always_use_style_reference = true;
-  else if (ausr === "false") out.always_use_style_reference = false;
-  const acf = ($sel("#planner-tl-assemble-crossfade") || {}).value;
-  if (acf === "true") out.assemble_use_crossfade = true;
-  else if (acf === "false") out.assemble_use_crossfade = false;
-  const arc = ($sel("#planner-tl-auto-render-clips") || {}).value;
-  if (arc === "true") out.auto_render_clips = true;
-  else if (arc === "false") out.auto_render_clips = false;
-  const ab = ($sel("#planner-tl-auto-bootstrap") || {}).value;
-  if (ab === "true") out.auto_bootstrap_start_image = true;
-  else if (ab === "false") out.auto_bootstrap_start_image = false;
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-// v0.77.0: scene-length scalar overrides from the advanced disclosure.
-function buildSceneLengthOverrides() {
-  const $sel = (s) => $(s);
-  const out = {};
-  const tss = parseFloat(($sel("#planner-sl-target-scene-seconds") || {}).value || "");
-  if (Number.isFinite(tss) && tss >= 0.5 && tss <= 60) out.target_scene_seconds = tss;
-  const minss = parseFloat(($sel("#planner-sl-min-scene-seconds") || {}).value || "");
-  if (Number.isFinite(minss) && minss >= 0.5 && minss <= 60) out.min_scene_seconds = minss;
-  const maxss = parseFloat(($sel("#planner-sl-max-scene-seconds") || {}).value || "");
-  if (Number.isFinite(maxss) && maxss >= 0.5 && maxss <= 60) out.max_scene_seconds = maxss;
-  const mvs = parseFloat(($sel("#planner-sl-max-video-seconds") || {}).value || "");
-  if (Number.isInteger(mvs) && mvs >= 1 && mvs <= 7200) out.max_video_seconds = mvs;
-  const msc = parseFloat(($sel("#planner-sl-max-scenes") || {}).value || "");
-  if (Number.isInteger(msc) && msc >= 1 && msc <= 500) out.max_scenes = msc;
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-// v0.77.0: movie block overrides from the advanced disclosure.
-function buildMovieOverrides() {
-  const $sel = (s) => $(s);
-  const out = {};
-  const dcs = parseFloat(($sel("#planner-mv-default-clip-seconds") || {}).value || "");
-  if (Number.isFinite(dcs) && dcs >= 0.5 && dcs <= 60) out.default_clip_seconds = dcs;
-  const mcs = parseFloat(($sel("#planner-mv-min-clip-seconds") || {}).value || "");
-  if (Number.isFinite(mcs) && mcs >= 0.5 && mcs <= 60) out.min_clip_seconds = mcs;
-  const dfs = parseFloat(($sel("#planner-mv-default-force-shots") || {}).value || "");
-  if (Number.isInteger(dfs) && dfs >= 0 && dfs <= 500) out.default_force_shots = dfs;
-  const ddm = parseFloat(($sel("#planner-mv-default-duration-minutes") || {}).value || "");
-  if (Number.isInteger(ddm) && ddm >= 0 && ddm <= 120) out.default_duration_minutes = ddm;
-  const cfs = parseFloat(($sel("#planner-mv-crossfade-seconds") || {}).value || "");
-  if (Number.isFinite(cfs) && cfs >= 0 && cfs <= 5) out.crossfade_seconds = cfs;
-  // v0.125.0: the movie-block chain_scenes control was de-duplicated away;
-  // the surviving canonical chain-scenes control (#planner-vc-chain-scenes,
-  // also feeding video_consistency.chain_scenes) now drives movie.chain_scenes
-  // too, so one toggle still sets both blocks.
-  const cs = ($sel("#planner-vc-chain-scenes") || {}).value;
-  if (cs === "true") out.chain_scenes = true;
-  else if (cs === "false") out.chain_scenes = false;
-  const wnf = parseFloat(($sel("#planner-mv-wan-num-frames") || {}).value || "");
-  if (Number.isInteger(wnf) && wnf >= 1 && wnf <= 256) out.wan_num_frames = wnf;
-  const wis = parseFloat(($sel("#planner-mv-wan-inference-steps") || {}).value || "");
-  if (Number.isInteger(wis) && wis >= 1 && wis <= 64) out.wan_inference_steps = wis;
-  const wf = parseFloat(($sel("#planner-mv-wan-fps") || {}).value || "");
-  if (Number.isInteger(wf) && wf >= 1 && wf <= 120) out.wan_fps = wf;
-  const ms = (($sel("#planner-mv-motion-suffix") || {}).value || "").trim();
-  if (ms && ms.length <= 512) out.motion_suffix = ms;
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-// v0.76.0: local_diffusion overrides from the advanced disclosure.
-function buildLocalDiffusionOverrides() {
-  const $sel = (s) => $(s);
-  const out = {};
-  const resRe = /^\d{2,5}x\d{2,5}$/;
-  const mid = (($sel("#planner-ld-model-id") || {}).value || "").trim();
-  if (mid && mid.length <= 256) out.model_id = mid;
-  const res = (($sel("#planner-ld-resolution") || {}).value || "").trim();
-  if (res && resRe.test(res)) out.resolution = res;
-  const pres = (($sel("#planner-ld-portrait-resolution") || {}).value || "").trim();
-  if (pres && resRe.test(pres)) out.portrait_resolution = pres;
-  const st = parseFloat(($sel("#planner-ld-steps") || {}).value || "");
-  if (Number.isInteger(st) && st >= 1 && st <= 64) out.steps = st;
-  const gs = parseFloat(($sel("#planner-ld-guidance-scale") || {}).value || "");
-  if (Number.isFinite(gs) && gs >= 0 && gs <= 30) out.guidance_scale = gs;
-  const dn = parseFloat(($sel("#planner-ld-denoising-strength") || {}).value || "");
-  if (Number.isFinite(dn) && dn >= 0 && dn <= 1) out.denoising_strength = dn;
-  const dev = ($sel("#planner-ld-device") || {}).value;
-  if (dev === "gpu" || dev === "cpu") out.device = dev;
-  const dt = ($sel("#planner-ld-dtype") || {}).value;
-  if (dt === "float16" || dt === "float32" || dt === "bfloat16") out.dtype = dt;
-  const seq = ($sel("#planner-ld-seq-cpu-offload") || {}).value;
-  if (seq === "true") out.sequential_cpu_offload = true;
-  else if (seq === "false") out.sequential_cpu_offload = false;
-  const kfmid = (($sel("#planner-ld-keyframe-model-id") || {}).value || "").trim();
-  if (kfmid && kfmid.length <= 256) out.keyframe_model_id = kfmid;
-  const kfgs = parseFloat(($sel("#planner-ld-keyframe-guidance-scale") || {}).value || "");
-  if (Number.isFinite(kfgs) && kfgs >= 0 && kfgs <= 30) out.keyframe_guidance_scale = kfgs;
-  const kfst = parseFloat(($sel("#planner-ld-keyframe-steps") || {}).value || "");
-  if (Number.isInteger(kfst) && kfst >= 1 && kfst <= 128) out.keyframe_steps = kfst;
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-// v0.76.0: generation overrides from the advanced disclosure.
-function buildGenerationOverrides() {
-  const $sel = (s) => $(s);
-  const out = {};
-  const sm = ($sel("#planner-gen-seed-mode") || {}).value;
-  if (sm === "random" || sm === "locked" || sm === "sequential") out.seed_mode = sm;
-  const seed = parseFloat(($sel("#planner-gen-seed") || {}).value || "");
-  if (Number.isInteger(seed) && seed >= 0) out.seed = seed;
-  const step = parseFloat(($sel("#planner-gen-seed-per-shot-step") || {}).value || "");
-  if (Number.isInteger(step) && step >= 1 && step <= 1000) out.seed_per_shot_step = step;
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-// v0.75.0: adetailer overrides from the advanced disclosure.
-function buildAdetailerOverrides() {
-  const $sel = (s) => $(s);
-  const out = {};
-  const en = ($sel("#planner-ad-enabled") || {}).value;
-  if (en === "true") out.enabled = true;
-  else if (en === "false") out.enabled = false;
-  const fh = ($sel("#planner-ad-fix-hands") || {}).value;
-  if (fh === "true") out.fix_hands = true;
-  else if (fh === "false") out.fix_hands = false;
-  const ff = ($sel("#planner-ad-fix-face") || {}).value;
-  if (ff === "true") out.fix_face = true;
-  else if (ff === "false") out.fix_face = false;
-  const mr = parseFloat(($sel("#planner-ad-max-regions") || {}).value || "");
-  if (Number.isInteger(mr) && mr >= 1 && mr <= 8) out.max_regions = mr;
-  const bp = parseFloat(($sel("#planner-ad-bbox-pad") || {}).value || "");
-  if (Number.isFinite(bp) && bp >= 0 && bp <= 1) out.bbox_pad = bp;
-  const is = parseFloat(($sel("#planner-ad-inpaint-strength") || {}).value || "");
-  if (Number.isFinite(is) && is >= 0 && is <= 1) out.inpaint_strength = is;
-  const hc = parseFloat(($sel("#planner-ad-hand-confidence") || {}).value || "");
-  if (Number.isFinite(hc) && hc >= 0 && hc <= 1) out.hand_confidence = hc;
-  // v0.86.0: face detector confidence floor + extra inpaint steps.
-  const fc = parseFloat(($sel("#planner-ad-face-confidence") || {}).value || "");
-  if (Number.isFinite(fc) && fc >= 0 && fc <= 1) out.face_confidence = fc;
-  const es = parseFloat(($sel("#planner-ad-extra-steps") || {}).value || "");
-  if (Number.isInteger(es) && es >= 0 && es <= 16) out.extra_steps = es;
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-// v0.75.0: wan_diffusion block overrides from the advanced disclosure.
-function buildWanDiffusionOverrides() {
-  const $sel = (s) => $(s);
-  const out = {};
-  const t2v = (($sel("#planner-wd-t2v-model-id") || {}).value || "").trim();
-  if (t2v && t2v.length <= 256) out.t2v_model_id = t2v;
-  const i2v = (($sel("#planner-wd-i2v-model-id") || {}).value || "").trim();
-  if (i2v && i2v.length <= 256) out.i2v_model_id = i2v;
-  const uiv = ($sel("#planner-wd-use-i2v") || {}).value;
-  if (uiv === "true") out.use_i2v_when_start_image = true;
-  else if (uiv === "false") out.use_i2v_when_start_image = false;
-  const nf = parseFloat(($sel("#planner-wd-num-frames") || {}).value || "");
-  if (Number.isInteger(nf) && nf >= 1 && nf <= 256) out.num_frames = nf;
-  const mf = parseFloat(($sel("#planner-wd-max-frames") || {}).value || "");
-  if (Number.isInteger(mf) && mf >= 1 && mf <= 256) out.max_frames = mf;
-  const fps = parseFloat(($sel("#planner-wd-fps") || {}).value || "");
-  if (Number.isInteger(fps) && fps >= 1 && fps <= 120) out.fps = fps;
-  const isteps = parseFloat(($sel("#planner-wd-inference-steps") || {}).value || "");
-  if (Number.isInteger(isteps) && isteps >= 1 && isteps <= 64) out.num_inference_steps = isteps;
-  const gs = parseFloat(($sel("#planner-wd-guidance-scale") || {}).value || "");
-  if (Number.isFinite(gs) && gs >= 0 && gs <= 30) out.guidance_scale = gs;
-  const fs = parseFloat(($sel("#planner-wd-flow-shift") || {}).value || "");
-  if (Number.isFinite(fs) && fs >= 0 && fs <= 30) out.flow_shift = fs;
-  const co = ($sel("#planner-wd-cpu-offload") || {}).value;
-  if (co === "true") out.cpu_offload = true;
-  else if (co === "false") out.cpu_offload = false;
-  const sps = parseFloat(($sel("#planner-wd-seconds-per-shot") || {}).value || "");
-  if (Number.isFinite(sps) && sps >= 0.5 && sps <= 60) out.seconds_per_shot = sps;
-  // v0.86.0: override the vivijure-pinned WAN_DEFAULT_NEGATIVE prompt.
-  const np = (($sel("#planner-wd-negative-prompt") || {}).value || "").trim();
-  if (np && np.length <= 1024) out.wan_negative_prompt = np;
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-// v0.74.0: face_lock + instantid builder. The instantid sub-block is
-// only attached when the user set at least one of its fields.
-function buildFaceLockOverrides() {
-  const $sel = (s) => $(s);
-  const out = {};
-  const mode = ($sel("#planner-fl-mode") || {}).value;
-  if (mode === "img2img" || mode === "ip_adapter" || mode === "instantid" || mode === "both") {
-    out.mode = mode;
-  }
-  const ips = parseFloat(($sel("#planner-fl-ip-scale") || {}).value || "");
-  if (Number.isFinite(ips) && ips >= 0 && ips <= 2) out.ip_adapter_scale = ips;
-  // v0.86.0: top-level IP-Adapter repo/subfolder/weight string overrides.
-  const ipr = (($sel("#planner-fl-ip-repo") || {}).value || "").trim();
-  if (ipr) out.ip_adapter_repo = ipr;
-  const ipsf = (($sel("#planner-fl-ip-subfolder") || {}).value || "").trim();
-  if (ipsf) out.ip_adapter_subfolder = ipsf;
-  const ipw = (($sel("#planner-fl-ip-weight") || {}).value || "").trim();
-  if (ipw) out.ip_adapter_weight = ipw;
-  const inst = {};
-  const en = ($sel("#planner-fl-iid-enabled") || {}).value;
-  if (en === "true") inst.enabled = true;
-  else if (en === "false") inst.enabled = false;
-  const cn = parseFloat(($sel("#planner-fl-iid-cn-scale") || {}).value || "");
-  if (Number.isFinite(cn) && cn >= 0 && cn <= 2) inst.controlnet_scale = cn;
-  const ii = parseFloat(($sel("#planner-fl-iid-ip-scale") || {}).value || "");
-  if (Number.isFinite(ii) && ii >= 0 && ii <= 2) inst.ip_adapter_scale = ii;
-  // v0.86.0: instantid model/adapter string overrides.
-  const ibm = (($sel("#planner-fl-iid-base-model") || {}).value || "").trim();
-  if (ibm) inst.base_model_id = ibm;
-  const icm = (($sel("#planner-fl-iid-cn-model") || {}).value || "").trim();
-  if (icm) inst.controlnet_model_id = icm;
-  const iar = (($sel("#planner-fl-iid-adapter-repo") || {}).value || "").trim();
-  if (iar) inst.adapter_repo = iar;
-  const iaw = (($sel("#planner-fl-iid-adapter-weight") || {}).value || "").trim();
-  if (iaw) inst.adapter_weight = iaw;
-  const ian = (($sel("#planner-fl-iid-antelope-root") || {}).value || "").trim();
-  if (ian) inst.antelope_root = ian;
-  if (Object.keys(inst).length > 0) out.instantid = inst;
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-// v0.86.0: prompt_templates overrides. The shape is a mix of flat
-// strings, a list (framing_hints), and a map (act_mood), so the UI is
-// a single JSON textarea. Malformed JSON is dropped silently (the
-// route + pod re-validate structure on receipt).
-function buildPromptTemplatesOverrides() {
-  const raw = (($("#planner-pt-json") || {}).value || "").trim();
-  if (!raw) return undefined;
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    return undefined;
-  }
-  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-    return parsed;
-  }
-  return undefined;
-}
-
-// v0.86.0: single source of truth for the advanced override blocks.
-// Returns a plain object of camelCase keys, each set only when its
-// builder produced a truthy value. Both the render-submit body and the
-// finalize body Object.assign this in so they never drift again. The
-// regional-engine injection happens here too, against the local object,
-// so the merged result is byte-identical to the old inline collection.
-function collectOverrideBlocks() {
-  const b = {};
-  // v0.68.0: collect any LoRA training hyperparam overrides the user set
-  // in the advanced block. Pure numeric coercion; empty / non-numeric
-  // inputs are dropped so the pod's config.yaml defaults win.
-  const loraTrainOverrides = buildLoraTrainOverrides();
-  if (loraTrainOverrides) b.loraTrainOverrides = loraTrainOverrides;
-  // v0.69.0: multi_character composite overrides.
-  const mcOverrides = buildMultiCharacterOverrides();
-  if (mcOverrides) b.multiCharacterOverrides = mcOverrides;
-  // v0.70.0: lora_quality_gate overrides.
-  const qgOverrides = buildQualityGateOverrides();
-  if (qgOverrides) b.qualityGateOverrides = qgOverrides;
-  // v0.72.0: consistency + video_consistency overrides.
-  const consOverrides = buildConsistencyOverrides();
-  if (consOverrides) b.consistencyOverrides = consOverrides;
-  const vconsOverrides = buildVideoConsistencyOverrides();
-  if (vconsOverrides) b.videoConsistencyOverrides = vconsOverrides;
-  // v0.73.0: continuity / image_prompting / character_generation overrides.
-  const contOverrides = buildContinuityOverrides();
-  if (contOverrides) b.continuityOverrides = contOverrides;
-  const ipOverrides = buildImagePromptingOverrides();
-  if (ipOverrides) b.imagePromptingOverrides = ipOverrides;
-  // v0.83.0: regional path needs an empty negative_extra + disabled
-  // anatomy_guard so SDXL doesn't see "duplicate person, multiple
-  // people, multiple heads, split image, panels, collage" - the
-  // config.yaml default image_prompting.negative_extra contains
-  // anti-multi-subject phrases that actively suppress the second
-  // identity on a path whose entire purpose is rendering multiple
-  // people in one frame. v18 smoke against 0.4.49 reproduced the
-  // collapse with the v15 baseline payload and zero overrides;
-  // vivijure-serverless 0.4.46 wired negative_for_style into the
-  // regional path with no thought for the multi-subject case.
-  //
-  // Worker handles the fix per the immutable-image directive
-  // (project-immutable-image-config-from-worker memory + the hard-
-  // rule feedback-no-config-changes-on-image memory): we inject the
-  // values the regional path needs to behave like v15. User can
-  // type into the image-prompting advanced block to override either
-  // injected value back to something else.
-  if (b.multiCharacterOverrides
-      && b.multiCharacterOverrides.engine === "regional") {
-    const ip = b.imagePromptingOverrides || {};
-    if (ip.negative_extra === undefined) ip.negative_extra = "";
-    if (ip.anatomy_guard === undefined) ip.anatomy_guard = false;
-    b.imagePromptingOverrides = ip;
-  }
-  const cgOverrides = buildCharacterGenerationOverrides();
-  if (cgOverrides) b.characterGenerationOverrides = cgOverrides;
-  // v0.74.0: face_lock + instantid.
-  const flOverrides = buildFaceLockOverrides();
-  if (flOverrides) b.faceLockOverrides = flOverrides;
-  // v0.75.0: adetailer + wan_diffusion overrides.
-  const adOverrides = buildAdetailerOverrides();
-  if (adOverrides) b.adetailerOverrides = adOverrides;
-  const wdOverrides = buildWanDiffusionOverrides();
-  if (wdOverrides) b.wanDiffusionOverrides = wdOverrides;
-  // v0.86.0: prompt_templates overrides (raw JSON).
-  const ptOverrides = buildPromptTemplatesOverrides();
-  if (ptOverrides) b.promptTemplatesOverrides = ptOverrides;
-  // v0.76.0: local_diffusion + generation overrides.
-  const ldOverrides = buildLocalDiffusionOverrides();
-  if (ldOverrides) b.localDiffusionOverrides = ldOverrides;
-  const genOverrides = buildGenerationOverrides();
-  if (genOverrides) b.generationOverrides = genOverrides;
-  // v0.77.0: scene-length + movie overrides.
-  const slOverrides = buildSceneLengthOverrides();
-  if (slOverrides) b.sceneLengthOverrides = slOverrides;
-  const mvOverrides = buildMovieOverrides();
-  if (mvOverrides) b.movieOverrides = mvOverrides;
-  // v0.78.0: character_bible + production + top-level switches.
-  const cbOverrides = buildCharacterBibleOverrides();
-  if (cbOverrides) b.characterBibleOverrides = cbOverrides;
-  const prOverrides = buildProductionOverrides();
-  if (prOverrides) b.productionOverrides = prOverrides;
-  const tlOverrides = buildTopLevelSwitches();
-  if (tlOverrides) b.topLevelSwitches = tlOverrides;
-  // v0.79.0: lora train extras + loras + quality + image_models.
-  const lteOverrides = buildLoraTrainExtras();
-  if (lteOverrides) b.loraTrainExtras = lteOverrides;
-  const loOverrides = buildLorasOverrides();
-  if (loOverrides) b.lorasOverrides = loOverrides;
-  const qlOverrides = buildQualityOverrides();
-  if (qlOverrides) b.qualityOverrides = qlOverrides;
-  const imOverrides = buildImageModelsOverrides();
-  if (imOverrides) b.imageModelsOverrides = imOverrides;
-  return b;
-}
-
-// v0.73.0: continuity / image_prompting / character_generation builders.
-function buildContinuityOverrides() {
-  const $sel = (s) => $(s);
-  const out = {};
-  const en = ($sel("#planner-ct-enabled") || {}).value;
-  if (en === "true") out.enabled = true;
-  else if (en === "false") out.enabled = false;
-  const lf = ($sel("#planner-ct-use-last-frame") || {}).value;
-  if (lf === "true") out.use_last_frame = true;
-  else if (lf === "false") out.use_last_frame = false;
-  const ma = parseFloat(($sel("#planner-ct-max-anchors") || {}).value || "");
-  if (Number.isInteger(ma) && ma >= 1 && ma <= 32) out.max_anchor_frames = ma;
-  const cd = parseFloat(($sel("#planner-ct-chain-denoising") || {}).value || "");
-  if (Number.isFinite(cd) && cd >= 0 && cd <= 1) out.chain_denoising = cd;
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-function buildImagePromptingOverrides() {
-  const $sel = (s) => $(s);
-  const out = {};
-  const ag = ($sel("#planner-ip-anatomy-guard") || {}).value;
-  if (ag === "true") out.anatomy_guard = true;
-  else if (ag === "false") out.anatomy_guard = false;
-  const nm = ($sel("#planner-ip-negative-mode") || {}).value;
-  if (nm === "focused" || nm === "full") out.negative_mode = nm;
-  const pe = (($sel("#planner-ip-positive-extra") || {}).value || "").trim();
-  if (pe && pe.length <= 512) out.positive_extra = pe;
-  const ne = (($sel("#planner-ip-negative-extra") || {}).value || "").trim();
-  if (ne && ne.length <= 512) out.negative_extra = ne;
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-function buildCharacterGenerationOverrides() {
-  const $sel = (s) => $(s);
-  const out = {};
-  const rd = parseFloat(($sel("#planner-cg-ref-denoising") || {}).value || "");
-  if (Number.isFinite(rd) && rd >= 0 && rd <= 1) out.reference_denoising = rd;
-  const ps = (($sel("#planner-cg-ref-suffix") || {}).value || "").trim();
-  if (ps && ps.length <= 512) out.reference_prompt_suffix = ps;
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-// v0.72.0: consistency block overrides from the advanced disclosure.
-// Same drop-on-empty / off-the-wire-when-empty pattern.
-function buildConsistencyOverrides() {
-  const readStr = (sel) => {
-    const el = $(sel);
-    return el ? (el.value || "").trim() : "";
-  };
-  const readNum = (sel) => {
-    const raw = readStr(sel);
-    if (!raw) return undefined;
-    const n = Number(raw);
-    return Number.isFinite(n) ? n : undefined;
-  };
-  const out = {};
-  const strict = readStr("#planner-cons-strict");
-  if (strict === "true") out.default_strict = true;
-  else if (strict === "false") out.default_strict = false;
-  const cd = readNum("#planner-cons-chain-denoising");
-  if (cd !== undefined && cd >= 0 && cd <= 1) out.chain_denoising = cd;
-  const kfs = readStr("#planner-cons-kf-suffix");
-  if (kfs && kfs.length <= 512) out.keyframe_suffix = kfs;
-  const ms = readStr("#planner-cons-motion-suffix");
-  if (ms && ms.length <= 512) out.motion_suffix = ms;
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-// v0.72.0: video_consistency block overrides.
-function buildVideoConsistencyOverrides() {
-  const readStr = (sel) => {
-    const el = $(sel);
-    return el ? (el.value || "").trim() : "";
-  };
-  const readNum = (sel) => {
-    const raw = readStr(sel);
-    if (!raw) return undefined;
-    const n = Number(raw);
-    return Number.isFinite(n) ? n : undefined;
-  };
-  const out = {};
-  const cs = readStr("#planner-vc-chain-scenes");
-  if (cs === "true") out.chain_scenes = true;
-  else if (cs === "false") out.chain_scenes = false;
-  const rk = readStr("#planner-vc-regen-kf");
-  if (rk === "true") out.regenerate_keyframe_each_shot = true;
-  else if (rk === "false") out.regenerate_keyframe_each_shot = false;
-  const msm = readStr("#planner-vc-motion-suffix-movie");
-  if (msm === "true") out.motion_suffix_movie = true;
-  else if (msm === "false") out.motion_suffix_movie = false;
-  const ips = readNum("#planner-vc-ip-scale");
-  if (ips !== undefined && ips >= 0 && ips <= 2) out.ip_adapter_scale = ips;
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-// v0.70.0: read the seven quality-gate inputs in the advanced block.
-// Same drop-on-empty pattern as the other override builders.
-function buildQualityGateOverrides() {
-  const readStr = (sel) => {
-    const el = $(sel);
-    return el ? (el.value || "").trim() : "";
-  };
-  const readNum = (sel) => {
-    const raw = readStr(sel);
-    if (!raw) return undefined;
-    const n = Number(raw);
-    return Number.isFinite(n) ? n : undefined;
-  };
-  const out = {};
-  const en = readStr("#planner-qg-enabled");
-  if (en === "true") out.enabled = true;
-  else if (en === "false") out.enabled = false;
-  const pc = readNum("#planner-qg-probe-count");
-  if (pc !== undefined && pc >= 1 && pc <= 16) out.probe_count = Math.round(pc);
-  const mn = readNum("#planner-qg-min-ssim");
-  if (mn !== undefined && mn >= 0 && mn <= 1) out.min_ssim = mn;
-  const ps = readNum("#planner-qg-pass-ssim");
-  if (ps !== undefined && ps >= 0 && ps <= 1) out.pass_ssim = ps;
-  const ls = readNum("#planner-qg-lora-scale");
-  if (ls !== undefined && ls >= 0 && ls <= 2) out.probe_lora_scale = ls;
-  const bs = readNum("#planner-qg-base-seed");
-  if (bs !== undefined && bs >= 0) out.base_seed = Math.round(bs);
-  const aw = readStr("#planner-qg-allow-warn");
-  if (aw === "true") out.allow_warn = true;
-  else if (aw === "false") out.allow_warn = false;
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-// v0.69.0: read the five multi-character inputs in the advanced block.
-// Same drop-on-empty pattern as buildLoraTrainOverrides: returns
-// undefined when nothing was overridden so the caller skips the key.
-function buildMultiCharacterOverrides() {
-  const readStr = (sel) => {
-    const el = $(sel);
-    return el ? (el.value || "").trim() : "";
-  };
-  const readNum = (sel) => {
-    const raw = readStr(sel);
-    if (!raw) return undefined;
-    const n = Number(raw);
-    return Number.isFinite(n) ? n : undefined;
-  };
-  const out = {};
-  const mode = readStr("#planner-mc-mode");
-  if (mode === "auto" || mode === "always" || mode === "off") out.mode = mode;
-  const layout = readStr("#planner-mc-layout");
-  if (layout === "layer" || layout === "side_by_side") out.layout = layout;
-  const maxSlots = readNum("#planner-mc-max-slots");
-  if (maxSlots !== undefined && maxSlots >= 1 && maxSlots <= 4) out.max_slots = Math.round(maxSlots);
-  const feather = readNum("#planner-mc-feather");
-  if (feather !== undefined && feather >= 0 && feather <= 256) out.feather_px = Math.round(feather);
-  const auto = readStr("#planner-mc-auto");
-  if (auto === "true") out.auto_when_multi_slot = true;
-  else if (auto === "false") out.auto_when_multi_slot = false;
-  // v0.81.0: Phase R regional engine knobs. The defaults are pre-
-  // filled in the UI (engine=regional, lora=0.3, ip=0.7 = v15
-  // settings); user can clear a field to fall back to the pod's
-  // compiled default for that key. Keeps the docker image immutable
-  // per the immutable-image directive.
-  const engine = readStr("#planner-mc-engine");
-  if (engine === "regional" || engine === "composite_legacy") out.engine = engine;
-  const loraScale = readNum("#planner-mc-lora-scale");
-  if (loraScale !== undefined && loraScale >= 0 && loraScale <= 2) out.lora_scale_per_slot = loraScale;
-  const ipScale = readNum("#planner-mc-ip-scale");
-  if (ipScale !== undefined && ipScale >= 0 && ipScale <= 2) out.ip_adapter_scale_per_slot = ipScale;
-  // v0.137.5: OpenPose ControlNet pose conditioning + its contract-driven
-  // geometry (vivijure-serverless 0.4.87 / 0.4.89). Only ship the geometry
-  // when pose is actually ON, so single-character and non-pose renders keep a
-  // minimal body. The pre-filled values are the confirmed ghost-cape fix; the
-  // pod ignores them unless pose_conditioning is true. Image stays immutable.
-  const pose = readStr("#planner-mc-pose");
-  if (pose === "true") {
-    out.pose_conditioning = true;
-    const cnScale = readNum("#planner-mc-cn-scale");
-    if (cnScale !== undefined && cnScale >= 0 && cnScale <= 2) out.controlnet_conditioning_scale = cnScale;
-    const inset = readNum("#planner-mc-pose-inset");
-    if (inset !== undefined && inset >= 0 && inset <= 0.25) out.pose_inset_frac = inset;
-    const gap = readNum("#planner-mc-pose-gap");
-    if (gap !== undefined && gap >= 0 && gap <= 0.15) out.pose_gap_frac = gap;
-    const figw = readNum("#planner-mc-pose-figw");
-    if (figw !== undefined && figw >= 0.3 && figw <= 1) out.pose_fig_width_frac = figw;
-    const poseNeg = readStr("#planner-mc-pose-neg");
-    if (poseNeg) out.pose_negative = poseNeg.slice(0, 400);
-  } else if (pose === "false") {
-    out.pose_conditioning = false;
-  }
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-// v0.68.0: read the four LoRA-training inputs in the advanced block and
-// shape them into the wire object the Worker expects. Empty/non-numeric
-// fields are dropped so the pod's config.yaml defaults apply. Returns
-// undefined when nothing was overridden (caller skips the key entirely
-// to keep the submit body minimal).
-function buildLoraTrainOverrides() {
-  const readNum = (sel) => {
-    const el = $(sel);
-    if (!el) return undefined;
-    const raw = (el.value || "").trim();
-    if (!raw) return undefined;
-    const n = Number(raw);
-    return Number.isFinite(n) && n > 0 ? n : undefined;
-  };
-  const out = {};
-  const steps = readNum("#planner-lora-steps");
-  if (steps !== undefined) out.steps = Math.round(steps);
-  const lr = readNum("#planner-lora-lr");
-  if (lr !== undefined) out.learning_rate = lr;
-  const rank = readNum("#planner-lora-rank");
-  if (rank !== undefined) out.rank = Math.round(rank);
-  const res = readNum("#planner-lora-resolution");
-  if (res !== undefined) out.resolution = Math.round(res);
-  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function bindSlotToCast(slot, castId) {
@@ -2126,13 +1354,6 @@ function applyProjectPrefs(prefs) {
   setVal("#planner-quality-tier", prefs.qualityTier);
   setCheck("#planner-keyframes-only", prefs.keyframesOnly);
   setVal("#planner-seed", prefs.seed);
-  setVal("#planner-adetailer", prefs.adetailer);
-  setVal("#planner-lora-scale", prefs.loraScale);
-  setVal("#planner-consistency", prefs.consistency);
-  // v0.59.0
-  setVal("#planner-seed-mode", prefs.seedMode);
-  setVal("#planner-multi-character", prefs.multiCharacterMode);
-  setVal("#planner-identity-lock", prefs.identityLock);
   setVal("#planner-face-lock-mode", prefs.faceLockMode);
   if (typeof prefs.renderOverridesText === "string") {
     setVal("#planner-render-overrides", prefs.renderOverridesText);
@@ -2157,13 +1378,6 @@ function gatherProjectPrefs() {
     qualityTier: readVal("#planner-quality-tier"),
     keyframesOnly: readCheck("#planner-keyframes-only"),
     seed: readVal("#planner-seed"),
-    adetailer: readVal("#planner-adetailer"),
-    loraScale: readVal("#planner-lora-scale"),
-    consistency: readVal("#planner-consistency"),
-    // v0.59.0
-    seedMode: readVal("#planner-seed-mode"),
-    multiCharacterMode: readVal("#planner-multi-character"),
-    identityLock: readVal("#planner-identity-lock"),
     faceLockMode: readVal("#planner-face-lock-mode"),
     renderOverridesText: readVal("#planner-render-overrides"),
   };
@@ -4208,23 +3422,36 @@ async function submitRender() {
   let renderOverrides;
   try {
     renderOverrides = buildRenderOverrides({
+      // keyframe
       seedText: readVal("#planner-seed"),
-      adetailer: readVal("#planner-adetailer"),
-      loraScaleText: readVal("#planner-lora-scale"),
-      consistency: readVal("#planner-consistency"),
-      seedMode: readVal("#planner-seed-mode"),
-      multiCharacterMode: readVal("#planner-multi-character"),
-      identityLock: readVal("#planner-identity-lock"),
-      faceLockMode: readVal("#planner-face-lock-mode"),
-      // v0.71.0: render-output + Wan inference knobs.
       keyframeSdxlSize: readVal("#planner-keyframe-sdxl-size"),
+      keyframeModelId: readVal("#planner-ld-keyframe-model-id"),
+      keyframeGuidanceText: readVal("#planner-ld-keyframe-guidance-scale"),
+      keyframeStepsText: readVal("#planner-ld-keyframe-steps"),
+      identityMethod: readVal("#planner-face-lock-mode"),
+      ipScaleText: readVal("#planner-fl-ip-scale"),
+      iidCnScaleText: readVal("#planner-fl-iid-cn-scale"),
+      iidIpScaleText: readVal("#planner-fl-iid-ip-scale"),
+      // keyframe.multi_char
+      mcEngine: readVal("#planner-mc-engine"),
+      mcPose: readVal("#planner-mc-pose"),
+      mcLoraScaleText: readVal("#planner-mc-lora-scale"),
+      mcIpScaleText: readVal("#planner-mc-ip-scale"),
+      mcMaxSlotsText: readVal("#planner-mc-max-slots"),
+      mcCnScaleText: readVal("#planner-mc-cn-scale"),
+      // i2v
+      i2vModelId: readVal("#planner-wd-i2v-model-id"),
+      numFramesText: readVal("#planner-wan-num-frames"),
+      i2vStepsText: readVal("#planner-wan-inference-steps"),
+      i2vGuidanceText: readVal("#planner-wan-guidance-scale"),
       fpsText: readVal("#planner-fps"),
-      crossfadeSecondsText: readVal("#planner-crossfade-seconds"),
-      outputWidthText: readVal("#planner-output-width"),
-      outputHeightText: readVal("#planner-output-height"),
-      wanNumFramesText: readVal("#planner-wan-num-frames"),
-      wanInferenceStepsText: readVal("#planner-wan-inference-steps"),
-      wanGuidanceScaleText: readVal("#planner-wan-guidance-scale"),
+      flowShiftText: readVal("#planner-wd-flow-shift"),
+      // lora
+      loraRankText: readVal("#planner-lora-rank"),
+      loraStepsText: readVal("#planner-lora-steps"),
+      loraLrText: readVal("#planner-lora-lr"),
+      loraResolutionText: readVal("#planner-lora-resolution"),
+      // power-user escape hatch (raw namespaced JSON)
       textareaText: readVal("#planner-render-overrides"),
     });
   } catch (err) {
@@ -4286,11 +3513,6 @@ async function submitRender() {
   // bound cast ids and the server gates readiness against fresh D1 state.
   const castLoraSubmit = buildCastLoraSubmit();
   if (Object.keys(castLoraSubmit).length > 0) reqBody.castLoras = castLoraSubmit;
-  // v0.86.0: all advanced override blocks are collected by a single
-  // shared helper so the render-submit and finalize paths stay in
-  // lockstep (the drift between them is exactly what left finalize
-  // dropping these blocks before this release).
-  Object.assign(reqBody, collectOverrideBlocks());
 
   let resp = null;
   let data = null;
@@ -6361,150 +5583,131 @@ function pollRegenJob(regenKey) {
     });
 }
 
-// v0.43.0: merge the structured render-settings inputs + the raw JSON
-// textarea into one render_overrides object. Empty / "default" inputs
-// are omitted (so the bundle's own defaults win), explicit values are
-// included, and the textarea wins on any key collision. Pure for
-// testability; throws Error on malformed JSON so the caller can keep
-// its mid-flow status / focus contract.
-//
-// Field name semantics match the GPU side (vivijure-serverless):
-//   seed: integer
-//   adetailer_keyframes: boolean
-//   lora_scale: float in [0, 1.5]
-//   consistency_mode: 'off' | 'standard' | 'strict'
-function buildRenderOverrides({
-  seedText,
-  adetailer,
-  loraScaleText,
-  consistency,
-  seedMode,
-  multiCharacterMode,
-  identityLock,
-  faceLockMode,
-  // v0.71.0: first-class render-output / Wan inference knobs. Pre-
-  // 0.71.0 these were power-user-only via the raw JSON textarea or
-  // (for KEYFRAME_SDXL_SIZE) not configurable from the worker at all.
-  // vivijure-serverless 0.4.27+ honors them on the wire.
-  keyframeSdxlSize,
-  fpsText,
-  crossfadeSecondsText,
-  outputWidthText,
-  outputHeightText,
-  wanNumFramesText,
-  wanInferenceStepsText,
-  wanGuidanceScaleText,
-  textareaText,
-}) {
+// Build the namespaced render_overrides { keyframe, i2v, lora } the clean-room
+// backend reads (config.py RenderConfig.from_request) from the render-step
+// controls. Every key traces to a config.py field; controls without a home were
+// removed in the v0.158.0 namespaced-overrides rework. The raw-JSON textarea is
+// the power-user escape hatch -- it must itself be namespaced and deep-merges per
+// section (textarea wins). Throws on a malformed size / textarea so the caller
+// keeps its mid-flow status + focus contract.
+function buildRenderOverrides(inp) {
+  inp = inp || {};
+  const num = (t) => {
+    const x = (t || "").trim();
+    if (!x) return undefined;
+    const n = Number(x);
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const intIn = (t, lo, hi) => {
+    const n = num(t);
+    return n !== undefined && Number.isInteger(n) && n >= lo && n <= hi ? n : undefined;
+  };
+  const floatIn = (t, lo, hi) => {
+    const n = num(t);
+    return n !== undefined && n >= lo && n <= hi ? n : undefined;
+  };
+  const str = (t, max) => {
+    const x = (t || "").trim();
+    return x && x.length <= max ? x : undefined;
+  };
+
+  // --- keyframe (SDXL keyframe stage) ---
+  const keyframe = {};
+  const seed = intIn(inp.seedText, 0, 2 ** 31 - 1);
+  if (seed !== undefined) keyframe.seed = seed;
+  if (typeof inp.keyframeSdxlSize === "string" && inp.keyframeSdxlSize.trim().length > 0) {
+    const m = inp.keyframeSdxlSize.trim().toLowerCase().match(/^(\d+)\s*x\s*(\d+)$/);
+    if (!m) throw new Error("keyframe size must be 'WxH' (e.g. 1216x832)");
+    keyframe.resolution = m[1] + "x" + m[2];
+  }
+  const kfModel = str(inp.keyframeModelId, 256);
+  if (kfModel) keyframe.base_model = kfModel;
+  const kfg = floatIn(inp.keyframeGuidanceText, 0, 30);
+  if (kfg !== undefined) keyframe.guidance_scale = kfg;
+  const kfs = intIn(inp.keyframeStepsText, 1, 128);
+  if (kfs !== undefined) keyframe.steps = kfs;
+  if (inp.identityMethod === "ip_adapter" || inp.identityMethod === "instantid" || inp.identityMethod === "both") {
+    keyframe.identity_method = inp.identityMethod;
+  }
+  const ips = floatIn(inp.ipScaleText, 0, 1);
+  if (ips !== undefined) keyframe.ip_adapter_scale = ips;
+  const iidCn = floatIn(inp.iidCnScaleText, 0, 1.5);
+  if (iidCn !== undefined) keyframe.instantid_controlnet_scale = iidCn;
+  const iidIp = floatIn(inp.iidIpScaleText, 0, 1.5);
+  if (iidIp !== undefined) keyframe.instantid_ip_adapter_scale = iidIp;
+
+  // keyframe.multi_char (regional multi-character anti-bleed)
+  const mc = {};
+  if (inp.mcEngine === "regional") mc.regional = true;
+  else if (inp.mcEngine === "composite_legacy") mc.regional = false;
+  if (inp.mcPose === "true") mc.pose_conditioning = true;
+  else if (inp.mcPose === "false") mc.pose_conditioning = false;
+  const mcLs = floatIn(inp.mcLoraScaleText, 0, 2);
+  if (mcLs !== undefined) mc.lora_scale_per_slot = mcLs;
+  const mcIp = floatIn(inp.mcIpScaleText, 0, 1);
+  if (mcIp !== undefined) mc.ip_adapter_scale_per_slot = mcIp;
+  const mcMax = intIn(inp.mcMaxSlotsText, 1, 4);
+  if (mcMax !== undefined) mc.max_slots = mcMax;
+  const mcCn = floatIn(inp.mcCnScaleText, 0, 1.5);
+  if (mcCn !== undefined) mc.controlnet_pose_scale = mcCn;
+  if (Object.keys(mc).length > 0) keyframe.multi_char = mc;
+
+  // --- i2v (Wan image-to-video) ---
+  const i2v = {};
+  const i2vModel = str(inp.i2vModelId, 256);
+  if (i2vModel) i2v.model = i2vModel;
+  const nf = intIn(inp.numFramesText, 1, 256);
+  if (nf !== undefined) i2v.num_frames = nf;
+  const ist = intIn(inp.i2vStepsText, 1, 64);
+  if (ist !== undefined) i2v.steps = ist;
+  const ig = floatIn(inp.i2vGuidanceText, 0, 30);
+  if (ig !== undefined) i2v.guidance_scale = ig;
+  const fps = intIn(inp.fpsText, 1, 120);
+  if (fps !== undefined) i2v.fps = fps;
+  const fsh = floatIn(inp.flowShiftText, 0, 20);
+  if (fsh !== undefined) i2v.flow_shift = fsh;
+
+  // --- lora (character LoRA training) ---
+  const lora = {};
+  const lr = intIn(inp.loraRankText, 1, 128);
+  if (lr !== undefined) lora.rank = lr;
+  const lms = intIn(inp.loraStepsText, 1, 5000);
+  if (lms !== undefined) lora.max_steps = lms;
+  const llr = floatIn(inp.loraLrText, 1e-6, 1e-2);
+  if (llr !== undefined) lora.learning_rate = llr;
+  const lres = intIn(inp.loraResolutionText, 512, 1536);
+  if (lres !== undefined) lora.resolution = lres;
+
   const out = {};
+  if (Object.keys(keyframe).length > 0) out.keyframe = keyframe;
+  if (Object.keys(i2v).length > 0) out.i2v = i2v;
+  if (Object.keys(lora).length > 0) out.lora = lora;
 
-  if (typeof seedText === "string" && seedText.trim().length > 0) {
-    const n = Number(seedText.trim());
-    if (!Number.isFinite(n) || !Number.isInteger(n)) {
-      throw new Error("seed must be an integer");
-    }
-    out.seed = n;
-  }
-
-  if (adetailer === "on") out.adetailer_keyframes = true;
-  else if (adetailer === "off") out.adetailer_keyframes = false;
-
-  if (typeof loraScaleText === "string" && loraScaleText.trim().length > 0) {
-    const n = Number(loraScaleText.trim());
-    if (!Number.isFinite(n) || n < 0 || n > 1.5) {
-      throw new Error("lora scale must be a number between 0.0 and 1.5");
-    }
-    out.lora_scale = n;
-  }
-
-  if (consistency === "off" || consistency === "standard" || consistency === "strict") {
-    out.consistency_mode = consistency;
-  }
-
-  // v0.59.0: named knobs migrated from the legacy "Make" panel. Empty
-  // string == "use bundle default" so the key is omitted; explicit
-  // values land directly on render_overrides keys the GPU side already
-  // consumes (studio_service.py:1080-1092).
-  if (seedMode === "locked" || seedMode === "sequential" || seedMode === "random") {
-    out.seed_mode = seedMode;
-  }
-
-  if (multiCharacterMode === "auto" || multiCharacterMode === "always" || multiCharacterMode === "off") {
-    out.multi_character_mode = multiCharacterMode;
-  }
-
-  if (identityLock === "on") out.identity_lock = true;
-  else if (identityLock === "off") out.identity_lock = false;
-
-  if (
-    faceLockMode === "img2img"
-    || faceLockMode === "ip_adapter"
-    || faceLockMode === "instantid"
-    || faceLockMode === "both"
-  ) {
-    out.face_lock_mode = faceLockMode;
-  }
-
-  // v0.71.0: SDXL keyframe gen resolution. Accepts "WxH" string; the
-  // pod parses both this and a tuple/array shape. Bypass-validated
-  // for the W/H pair so a typo doesn't ship.
-  if (typeof keyframeSdxlSize === "string" && keyframeSdxlSize.trim().length > 0) {
-    const m = keyframeSdxlSize.trim().toLowerCase().match(/^(\d+)\s*x\s*(\d+)$/);
-    if (!m) {
-      throw new Error("keyframe SDXL size must be 'WxH' (e.g. 1216x832)");
-    }
-    out.keyframe_sdxl_size = `${m[1]}x${m[2]}`;
-  }
-
-  // v0.71.0: numeric render-output / Wan inference knobs. Each empty/
-  // unset stays off the wire so the pod's config.yaml + module
-  // defaults win. Ranges are conservative (not the pod's hard maxes)
-  // since the UI should warn before submitting an impossible value.
-  function parsePositiveInt(text, label, min, max) {
-    const t = (text || "").trim();
-    if (!t) return undefined;
-    const n = Number(t);
-    if (!Number.isInteger(n) || n < min || n > max) {
-      throw new Error(`${label} must be an integer between ${min} and ${max}`);
-    }
-    return n;
-  }
-  function parsePositiveFloat(text, label, min, max) {
-    const t = (text || "").trim();
-    if (!t) return undefined;
-    const n = Number(t);
-    if (!Number.isFinite(n) || n < min || n > max) {
-      throw new Error(`${label} must be a number between ${min} and ${max}`);
-    }
-    return n;
-  }
-  const fps = parsePositiveInt(fpsText, "fps", 1, 120);
-  if (fps !== undefined) out.fps = fps;
-  const cross = parsePositiveFloat(crossfadeSecondsText, "crossfade seconds", 0, 5);
-  if (cross !== undefined) out.crossfade_seconds = cross;
-  const ow = parsePositiveInt(outputWidthText, "output width", 64, 7680);
-  if (ow !== undefined) out.output_width = ow;
-  const oh = parsePositiveInt(outputHeightText, "output height", 64, 7680);
-  if (oh !== undefined) out.output_height = oh;
-  const wnf = parsePositiveInt(wanNumFramesText, "wan num_frames", 1, 256);
-  if (wnf !== undefined) out.wan_num_frames = wnf;
-  const wis = parsePositiveInt(wanInferenceStepsText, "wan inference_steps", 1, 64);
-  if (wis !== undefined) out.wan_inference_steps = wis;
-  const wgs = parsePositiveFloat(wanGuidanceScaleText, "wan guidance_scale", 0, 30);
-  if (wgs !== undefined) out.wan_guidance_scale = wgs;
-
-  if (typeof textareaText === "string" && textareaText.trim().length > 0) {
+  // Power-user escape hatch: raw namespaced JSON, restricted to the in-spec
+  // sections + routing flags and deep-merged per section (textarea wins). A
+  // stray flat key the user types is dropped here, so the planner never emits
+  // anything outside the { keyframe, i2v, lora } + flags contract.
+  if (typeof inp.textareaText === "string" && inp.textareaText.trim().length > 0) {
     let parsed;
     try {
-      parsed = JSON.parse(textareaText.trim());
+      parsed = JSON.parse(inp.textareaText.trim());
     } catch (err) {
       throw new Error("raw JSON textarea is invalid: " + err.message);
     }
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new Error('raw JSON textarea must be a JSON object, e.g. {"key": value}');
+      throw new Error('raw JSON textarea must be a JSON object, e.g. {"keyframe": {"seed": 7}}');
     }
-    // Textarea wins on conflict (explicit power-user override).
-    Object.assign(out, parsed);
+    for (const k of ["keyframe", "i2v", "lora"]) {
+      const v = parsed[k];
+      if (v && typeof v === "object" && !Array.isArray(v)) {
+        out[k] = (out[k] && typeof out[k] === "object" && !Array.isArray(out[k]))
+          ? Object.assign({}, out[k], v)
+          : v;
+      }
+    }
+    for (const k of ["keyframes_only", "finish_offloaded"]) {
+      if (typeof parsed[k] === "boolean") out[k] = parsed[k];
+    }
   }
 
   return out;
@@ -6642,12 +5845,8 @@ async function finalizeRender(row, btnEl) {
     if (Object.keys(finalizeCastLoras).length > 0) {
       finalizeBody.castLoras = finalizeCastLoras;
     }
-    // v0.86.0: forward every advanced override block on finalize too.
-    // Wan I2V + assembly (which finalize runs) reads wan_diffusion,
-    // face_lock, adetailer, prompt_templates, etc; before this they were
-    // only sent on the render-submit body, so a finalize ran with pod
-    // defaults. The finalize route already reads all these camelCase keys.
-    Object.assign(finalizeBody, collectOverrideBlocks());
+    // Finalize reuses the render_overrides persisted on the originating row
+    // (the backend reads row.render_overrides); no per-finalize override body.
     const hasBody = Object.keys(finalizeBody).length > 0;
     resp = await fetch(
       "/api/storyboard/renders/" + encodeURIComponent(row.id) + "/finalize",
@@ -7501,12 +6700,6 @@ document.addEventListener("DOMContentLoaded", () => {
   // change on selects).
   const seedEl = $("#planner-seed");
   if (seedEl) seedEl.addEventListener("input", persistSoon);
-  const adetailerEl = $("#planner-adetailer");
-  if (adetailerEl) adetailerEl.addEventListener("change", persistSoon);
-  const loraScaleEl = $("#planner-lora-scale");
-  if (loraScaleEl) loraScaleEl.addEventListener("input", persistSoon);
-  const consistencyEl = $("#planner-consistency");
-  if (consistencyEl) consistencyEl.addEventListener("change", persistSoon);
   // v0.43.0: randomize-seed button. Fills the seed input with a fresh
   // 32-bit unsigned int and triggers persistSoon so the value survives
   // a reload before the next render submission.

@@ -412,1061 +412,114 @@
             <button id="planner-seed-randomize" type="button" class="planner-overrides-secondary" title="randomize seed" aria-label="randomize seed">&#127922;</button>
           </div>
         </label>
-        <label class="planner-field">
-          <span>lora scale (character identity strength; typical 0.6 to 1.0)</span>
-          <input id="planner-lora-scale" type="number" step="0.05" min="0" max="1.5" placeholder="0.85 (GPU default)" />
-        </label>
-        <label class="planner-field">
-          <span>consistency mode</span>
-          <select id="planner-consistency">
-            <option value="">(use bundle default)</option>
-            <option value="off">off</option>
-            <option value="standard">standard</option>
-            <option value="strict">strict (locked seed + identity lock + anatomy guards)</option>
-          </select>
-        </label>
       </div>
       <details class="planner-overrides-details">
         <summary class="planner-overrides-summary">advanced settings (optional)</summary>
+        <p class="planner-overrides-hint">
+          These map 1:1 to the render backend's namespaced render_overrides
+          contract (keyframe / i2v / lora). Empty fields use the quality-tier
+          baseline. The expert raw-JSON block below sends the shape directly.
+        </p>
         <details class="planner-overrides-domain">
-          <summary class="planner-overrides-summary">identity & face</summary>
+          <summary class="planner-overrides-summary">keyframe (SDXL)</summary>
           <div class="planner-overrides-fields">
-            <label class="planner-field">
-              <span>multi-character composite</span>
-              <select id="planner-multi-character">
-                <option value="">(use bundle default)</option>
-                <option value="auto">auto (composite when 2+ slots in shot)</option>
-                <option value="always">always (composite every multi-slot shot)</option>
-                <option value="off">off (single gen even for multi-slot shots)</option>
-              </select>
-            </label>
-            <label class="planner-field">
-              <span>identity lock (keyframes)</span>
-              <select id="planner-identity-lock">
-                <option value="">(use bundle default)</option>
-                <option value="on">on</option>
-                <option value="off">off</option>
-              </select>
-            </label>
-            <label class="planner-field">
-              <span>face lock mode</span>
+            <label class="planner-field"><span>keyframe size "WxH"</span>
+              <input id="planner-keyframe-sdxl-size" type="text" placeholder="1024x1024" /></label>
+            <label class="planner-field"><span>guidance scale (0-30)</span>
+              <input id="planner-ld-keyframe-guidance-scale" type="number" step="0.5" placeholder="tier default" /></label>
+            <label class="planner-field"><span>steps (1-128)</span>
+              <input id="planner-ld-keyframe-steps" type="number" min="1" step="1" placeholder="tier default" /></label>
+            <label class="planner-field"><span>identity method</span>
               <select id="planner-face-lock-mode">
-                <option value="">(use bundle default)</option>
-                <option value="img2img">img2img (lightest, lowest VRAM)</option>
+                <option value="">tier default</option>
                 <option value="ip_adapter">ip_adapter</option>
                 <option value="instantid">instantid</option>
-                <option value="both">both (img2img + ip_adapter, heaviest)</option>
-              </select>
-            </label>
+                <option value="both">both</option>
+              </select></label>
+            <label class="planner-field"><span>IP-Adapter scale (0-1)</span>
+              <input id="planner-fl-ip-scale" type="number" step="0.05" placeholder="0.65" /></label>
+            <label class="planner-field"><span>InstantID controlnet scale (0-1.5)</span>
+              <input id="planner-fl-iid-cn-scale" type="number" step="0.05" placeholder="0.8" /></label>
+            <label class="planner-field"><span>InstantID IP-Adapter scale (0-1.5)</span>
+              <input id="planner-fl-iid-ip-scale" type="number" step="0.05" placeholder="0.8" /></label>
           </div>
-          <!-- v0.74.0: face_lock + instantid overrides (vivijure-serverless
-               0.4.30+). Useful for tuning identity-lock strength when the
-               per-cast LoRA isn't dominant enough on its own. -->
           <details class="planner-overrides-raw-details">
-            <summary class="planner-overrides-summary">face lock + InstantID (advanced)</summary>
+            <summary class="planner-overrides-summary">multi-character (regional; 2+ characters in one frame)</summary>
             <div class="planner-overrides-fields">
-              <label class="planner-field">
-                <span>face lock mode</span>
-                <select id="planner-fl-mode">
-                  <option value="">(use pod default: img2img)</option>
-                  <option value="img2img">img2img (lightest)</option>
-                  <option value="ip_adapter">ip_adapter</option>
-                  <option value="instantid">instantid (strongest)</option>
-                  <option value="both">both</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>IP-Adapter scale (pod default 0.65)</span>
-                <input id="planner-fl-ip-scale" type="number" min="0" max="2" step="0.05" placeholder="0.65" />
-              </label>
-              <label class="planner-field">
-                <span>IP-Adapter repo (pod default)</span>
-                <input id="planner-fl-ip-repo" type="text" maxlength="256" placeholder="h94/IP-Adapter" />
-              </label>
-              <label class="planner-field">
-                <span>IP-Adapter subfolder (pod default)</span>
-                <input id="planner-fl-ip-subfolder" type="text" maxlength="256" placeholder="sdxl_models" />
-              </label>
-              <label class="planner-field">
-                <span>IP-Adapter weight file (pod default)</span>
-                <input id="planner-fl-ip-weight" type="text" maxlength="256" placeholder="ip-adapter_sdxl.bin" />
-              </label>
-              <label class="planner-field">
-                <span>InstantID enabled</span>
-                <select id="planner-fl-iid-enabled">
-                  <option value="">(use pod default: false)</option>
-                  <option value="true">true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>InstantID controlnet scale (pod default 0.8)</span>
-                <input id="planner-fl-iid-cn-scale" type="number" min="0" max="2" step="0.05" placeholder="0.8" />
-              </label>
-              <label class="planner-field">
-                <span>InstantID IP-Adapter scale (pod default 0.8)</span>
-                <input id="planner-fl-iid-ip-scale" type="number" min="0" max="2" step="0.05" placeholder="0.8" />
-              </label>
-              <label class="planner-field">
-                <span>InstantID base model id (pod default)</span>
-                <input id="planner-fl-iid-base-model" type="text" maxlength="256" placeholder="stabilityai/stable-diffusion-xl-base-1.0" />
-              </label>
-              <label class="planner-field">
-                <span>InstantID controlnet model id (pod default)</span>
-                <input id="planner-fl-iid-cn-model" type="text" maxlength="256" placeholder="InstantX/InstantID" />
-              </label>
-              <label class="planner-field">
-                <span>InstantID adapter repo (pod default)</span>
-                <input id="planner-fl-iid-adapter-repo" type="text" maxlength="256" placeholder="InstantX/InstantID" />
-              </label>
-              <label class="planner-field">
-                <span>InstantID adapter weight file (pod default)</span>
-                <input id="planner-fl-iid-adapter-weight" type="text" maxlength="256" placeholder="ip-adapter.bin" />
-              </label>
-              <label class="planner-field">
-                <span>InstantID antelope root (pod default)</span>
-                <input id="planner-fl-iid-antelope-root" type="text" maxlength="256" placeholder="/workspace/models/antelopev2" />
-              </label>
-            </div>
-            <p class="planner-overrides-hint">
-              forwarded as <code>face_lock_overrides</code> (with a nested
-              <code>instantid</code> sub-block on the wire). controls the
-              face-lock pipeline that runs alongside the per-slot LoRA.
-              bumping <code>ip_adapter_scale</code> toward 1.0 is the
-              quickest way to push identity strength when a LoRA is weak.
-            </p>
-          </details>
-          <!-- v0.69.0: multi_character composite overrides. Vivijure-serverless
-               0.4.23+ accepts these on the job payload and merges them over
-               the pod's production.multi_character config block. Empty fields
-               = use pod defaults. -->
-          <details class="planner-overrides-raw-details">
-            <summary class="planner-overrides-summary">multi-character composite (advanced)</summary>
-            <div class="planner-overrides-fields">
-              <label class="planner-field">
-                <span>mode</span>
-                <select id="planner-mc-mode">
-                  <option value="">(use pod default: auto)</option>
-                  <option value="auto">auto (composite when scene has 2+ slots)</option>
-                  <option value="always">always (composite any multi-slot scene)</option>
-                  <option value="off">off (skip composite entirely)</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>layout</span>
-                <select id="planner-mc-layout">
-                  <option value="">(use pod default: layer)</option>
-                  <option value="layer">layer (feathered alpha overlay)</option>
-                  <option value="side_by_side">side_by_side (horizontal tile)</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>max slots (pod default 2)</span>
-                <input id="planner-mc-max-slots" type="number" min="1" max="4" step="1" placeholder="2" />
-              </label>
-              <label class="planner-field">
-                <span>feather px (pod default 48)</span>
-                <input id="planner-mc-feather" type="number" min="0" max="256" step="4" placeholder="48" />
-              </label>
-              <label class="planner-field">
-                <span>auto when multi-slot</span>
-                <select id="planner-mc-auto">
-                  <option value="">(use pod default: true)</option>
-                  <option value="true">true (auto-composite at 2+ slots)</option>
-                  <option value="false">false (require mode=always)</option>
-                </select>
-              </label>
-              <!-- v0.81.0: Phase R regional engine knobs. vivijure-
-                   serverless 0.4.42+ ships the regional IP-Adapter path
-                   as the default multi-character engine. The default
-                   values in these inputs (engine=regional, lora=0.3,
-                   ip=0.7) are the v15 known-good settings. They are
-                   pre-filled (not placeholder) so the wire payload
-                   carries them unless the user clears the field; this
-                   keeps the docker image immutable per the
-                   immutable-image directive (changing what production
-                   should use never requires a pod rebuild). -->
-              <label class="planner-field">
-                <span>engine</span>
+              <label class="planner-field"><span>regional engine</span>
                 <select id="planner-mc-engine">
-                  <option value="regional" selected>regional (single SDXL pass, per-region IP-Adapter masks)</option>
-                  <option value="composite_legacy">composite_legacy (per-slot panels + grabcut + tile)</option>
-                  <option value="">(send nothing; use pod default)</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>regional LoRA scale per slot (v15 win: 0.3)</span>
-                <input id="planner-mc-lora-scale" type="number" min="0" max="2" step="0.05" value="0.3" />
-              </label>
-              <label class="planner-field">
-                <span>regional IP-Adapter scale per slot (v15 win: 0.7)</span>
-                <input id="planner-mc-ip-scale" type="number" min="0" max="2" step="0.05" value="0.7" />
-              </label>
-              <!-- v0.137.5: OpenPose ControlNet pose conditioning (vivijure-
-                   serverless 0.4.87 feature; 0.4.89 made the geometry contract-
-                   driven). For 2+ cast slots, conditions the keyframe on a per-
-                   slot pose skeleton so the bodies are DRAWN apart, not just
-                   their identities routed. The geometry inputs are the confirmed
-                   ghost-cape fix (pull the figures toward center so the empty
-                   band between them isn't hallucinated into a stray cape); pre-
-                   filled with the known-good values, all carried on the contract
-                   so the image stays immutable. Pose is off by default (opt-in;
-                   needs the openpose controlnet primed on the volume). -->
-              <label class="planner-field">
-                <span>pose conditioning (2+ slots: draw bodies apart)</span>
+                  <option value="">tier default</option>
+                  <option value="regional">regional (on)</option>
+                  <option value="composite_legacy">off (composite legacy)</option>
+                </select></label>
+              <label class="planner-field"><span>pose conditioning</span>
                 <select id="planner-mc-pose">
-                  <option value="" selected>off (use pod default)</option>
-                  <option value="true">on (OpenPose ControlNet body placement)</option>
-                  <option value="false">off (explicit)</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>pose: ControlNet scale (firmness; default 0.55)</span>
-                <input id="planner-mc-cn-scale" type="number" min="0" max="2" step="0.05" placeholder="0.55" />
-              </label>
-              <label class="planner-field">
-                <span>pose: figure inset toward center (ghost-cape fix: 0.12)</span>
-                <input id="planner-mc-pose-inset" type="number" min="0" max="0.25" step="0.01" value="0.12" />
-              </label>
-              <label class="planner-field">
-                <span>pose: inter-figure gap fraction (0.035)</span>
-                <input id="planner-mc-pose-gap" type="number" min="0" max="0.15" step="0.005" value="0.035" />
-              </label>
-              <label class="planner-field">
-                <span>pose: figure width fraction (0.95)</span>
-                <input id="planner-mc-pose-figw" type="number" min="0.3" max="1" step="0.05" value="0.95" />
-              </label>
-              <label class="planner-field">
-                <span>pose: extra negative (gap hallucination guard)</span>
-                <input id="planner-mc-pose-neg" type="text" value="floating cloth, disembodied cape, extra cape, third figure, stray fabric" />
-              </label>
+                  <option value="">tier default</option>
+                  <option value="true">on</option>
+                  <option value="false">off</option>
+                </select></label>
+              <label class="planner-field"><span>LoRA scale per slot (0-2)</span>
+                <input id="planner-mc-lora-scale" type="number" step="0.05" placeholder="0.3" /></label>
+              <label class="planner-field"><span>IP-Adapter scale per slot (0-1)</span>
+                <input id="planner-mc-ip-scale" type="number" step="0.05" placeholder="0.7" /></label>
+              <label class="planner-field"><span>max slots (1-4)</span>
+                <input id="planner-mc-max-slots" type="number" min="1" max="4" step="1" placeholder="2" /></label>
+              <label class="planner-field"><span>controlnet pose scale (0-1.5)</span>
+                <input id="planner-mc-cn-scale" type="number" step="0.05" placeholder="0.55" /></label>
             </div>
-            <p class="planner-overrides-hint">
-              forwarded as <code>multi_character_overrides</code>. controls how
-              SDXL keyframes for scenes with 2+ cast slots get rendered. the
-              regional engine (default) does a single SDXL pass with per-region
-              IP-Adapter masks; lora=0.3 and ip=0.7 are the v15-confirmed
-              identity-routing settings. composite_legacy is the pre-Phase-R
-              panel + grabcut + tile path, kept as an escape hatch. turn on
-              <strong>pose conditioning</strong> for shots with 2+ slots to draw
-              the characters apart (one body per pose skeleton); the pose
-              geometry fields below it are pre-filled with the confirmed
-              ghost-cape fix. leave a field blank to use the pod's compiled
-              default for that key instead.
-            </p>
           </details>
         </details>
         <details class="planner-overrides-domain">
-          <summary class="planner-overrides-summary">video & motion (Wan)</summary>
-          <!-- v0.71.0: render-output + Wan inference knobs that vivijure-
-               serverless 0.4.27+ accepts as flat render_overrides keys. -->
-          <details class="planner-overrides-raw-details">
-            <summary class="planner-overrides-summary">render output + Wan (advanced)</summary>
-            <div class="planner-overrides-fields">
-              <label class="planner-field">
-                <span>keyframe SDXL size (pod default 1216x832)</span>
-                <input id="planner-keyframe-sdxl-size" type="text" placeholder="1216x832" pattern="\d+x\d+" />
-              </label>
-              <label class="planner-field">
-                <span>output width (pod default 1920)</span>
-                <input id="planner-output-width" type="number" min="64" max="7680" step="8" placeholder="1920" />
-              </label>
-              <label class="planner-field">
-                <span>output height (pod default 1080)</span>
-                <input id="planner-output-height" type="number" min="64" max="7680" step="8" placeholder="1080" />
-              </label>
-              <label class="planner-field">
-                <span>fps (pod default 24)</span>
-                <input id="planner-fps" type="number" min="1" max="120" step="1" placeholder="24" />
-              </label>
-              <label class="planner-field">
-                <span>crossfade seconds (pod default 0.45)</span>
-                <input id="planner-crossfade-seconds" type="number" min="0" max="5" step="0.05" placeholder="0.45" />
-              </label>
-              <label class="planner-field">
-                <span>Wan num_frames (pod default 33-97 by tier)</span>
-                <input id="planner-wan-num-frames" type="number" min="1" max="256" step="1" placeholder="33" />
-              </label>
-              <label class="planner-field">
-                <span>Wan inference_steps (pod default 8-22 by tier)</span>
-                <input id="planner-wan-inference-steps" type="number" min="1" max="64" step="1" placeholder="22" />
-              </label>
-              <label class="planner-field">
-                <span>Wan guidance_scale (pod default 3.5-4.5 by tier)</span>
-                <input id="planner-wan-guidance-scale" type="number" min="0" max="30" step="0.1" placeholder="4.5" />
-              </label>
-            </div>
-            <p class="planner-overrides-hint">
-              written into <code>render_overrides</code> on the wire. lower
-              <code>wan_inference_steps</code> trades quality for speed;
-              <code>wan_guidance_scale</code> controls prompt adherence (low
-              = creative, high = literal). <code>keyframe_sdxl_size</code> is
-              the SDXL bucket SDXL renders the still in - 1216x832 is the
-              v0.4.7 multi-subject coherence fix.
-            </p>
-          </details>
-          <!-- v0.75.0: wan_diffusion block (vivijure-serverless 0.4.31+).
-               The Wan I2V/T2V model + inference knobs. Distinct from the
-               flat wan_inference_steps render_overrides keys above, which
-               are tier-derived per shot; these override the base config. -->
-          <details class="planner-overrides-raw-details">
-            <summary class="planner-overrides-summary">Wan diffusion model + inference (advanced)</summary>
-            <div class="planner-overrides-fields">
-              <!-- v0.133.1: were free-text inputs with stale "Wan 2.1" placeholders;
-                   0.4.81 baked the Wan 2.2 A14B set. Now pickers of the primed Wan
-                   bases. Values flow to wan_diffusion_overrides.{t2v,i2v}_model_id;
-                   empty = pod default. -->
-              <label class="planner-field">
-                <span>T2V model (text-to-video; used when a shot has no start image)</span>
-                <select id="planner-wd-t2v-model-id">
-                  <option value="">auto / pod default (Wan 2.2 T2V A14B)</option>
-                  <option value="Wan-AI/Wan2.2-T2V-A14B-Diffusers">Wan 2.2 T2V A14B</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>I2V model (image-to-video; animates the SDXL keyframe)</span>
-                <select id="planner-wd-i2v-model-id">
-                  <option value="">auto / pod default (Wan 2.2 I2V A14B)</option>
-                  <option value="Wan-AI/Wan2.2-I2V-A14B-Diffusers">Wan 2.2 I2V A14B</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>use I2V when start image present</span>
-                <select id="planner-wd-use-i2v">
-                  <option value="">(use pod default: true)</option>
-                  <option value="true">true</option>
-                  <option value="false">false (force T2V)</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>num_frames (pod default 33)</span>
-                <input id="planner-wd-num-frames" type="number" min="1" max="256" step="1" placeholder="33" />
-              </label>
-              <label class="planner-field">
-                <span>max_frames (pod default 121)</span>
-                <input id="planner-wd-max-frames" type="number" min="1" max="256" step="1" placeholder="121" />
-              </label>
-              <label class="planner-field">
-                <span>Wan fps (pod default 16)</span>
-                <input id="planner-wd-fps" type="number" min="1" max="120" step="1" placeholder="16" />
-              </label>
-              <label class="planner-field">
-                <span>inference_steps (pod default 16)</span>
-                <input id="planner-wd-inference-steps" type="number" min="1" max="64" step="1" placeholder="16" />
-              </label>
-              <label class="planner-field">
-                <span>guidance_scale (pod default 5.0)</span>
-                <input id="planner-wd-guidance-scale" type="number" min="0" max="30" step="0.1" placeholder="5.0" />
-              </label>
-              <label class="planner-field">
-                <span>flow_shift (pod default 5.0)</span>
-                <input id="planner-wd-flow-shift" type="number" min="0" max="30" step="0.1" placeholder="5.0" />
-              </label>
-              <label class="planner-field">
-                <span>CPU offload</span>
-                <select id="planner-wd-cpu-offload">
-                  <option value="">(use pod default: true)</option>
-                  <option value="true">true (lower VRAM, slower)</option>
-                  <option value="false">false (faster, more VRAM)</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>seconds per shot (pod default 5.0)</span>
-                <input id="planner-wd-seconds-per-shot" type="number" min="0.5" max="60" step="0.1" placeholder="5.0" />
-              </label>
-              <label class="planner-field">
-                <span>Wan negative prompt (pod default WAN_DEFAULT_NEGATIVE)</span>
-                <textarea id="planner-wd-negative-prompt" rows="2" maxlength="1024" placeholder="duplicate, multi-subject, deformed, ..." spellcheck="false"></textarea>
-              </label>
-            </div>
-            <p class="planner-overrides-hint">
-              forwarded as <code>wan_diffusion_overrides</code>. these
-              override the base <code>wan_diffusion</code> block in
-              <code>config.yaml</code>. the flat <code>wan_inference_steps</code>
-              / <code>wan_num_frames</code> render_overrides above still
-              win when both are set since they apply after the quality
-              tier's per-shot adjustment.
-            </p>
-          </details>
-        </details>
-        <details class="planner-overrides-domain">
-          <summary class="planner-overrides-summary">image & SDXL</summary>
+          <summary class="planner-overrides-summary">i2v (Wan video)</summary>
           <div class="planner-overrides-fields">
-            <label class="planner-field">
-              <span>adetailer face fix on keyframes</span>
-              <select id="planner-adetailer">
-                <option value="">(use bundle default)</option>
-                <option value="on">on</option>
-                <option value="off">off</option>
-              </select>
-            </label>
-            <label class="planner-field">
-              <span>seed mode</span>
-              <select id="planner-seed-mode">
-                <option value="">(use bundle default)</option>
-                <option value="locked">locked (same seed every shot)</option>
-                <option value="sequential">sequential (seed + shot index)</option>
-                <option value="random">random (fresh per shot)</option>
-              </select>
-            </label>
+            <label class="planner-field"><span>i2v model</span>
+              <input id="planner-wd-i2v-model-id" type="text" placeholder="tier default" /></label>
+            <label class="planner-field"><span>num frames (1-256)</span>
+              <input id="planner-wan-num-frames" type="number" min="1" step="1" placeholder="tier default" /></label>
+            <label class="planner-field"><span>steps (1-64)</span>
+              <input id="planner-wan-inference-steps" type="number" min="1" step="1" placeholder="tier default" /></label>
+            <label class="planner-field"><span>guidance scale (0-30)</span>
+              <input id="planner-wan-guidance-scale" type="number" step="0.5" placeholder="tier default" /></label>
+            <label class="planner-field"><span>fps (1-120)</span>
+              <input id="planner-fps" type="number" min="1" step="1" placeholder="tier default" /></label>
+            <label class="planner-field"><span>flow shift (0-20)</span>
+              <input id="planner-wd-flow-shift" type="number" step="0.5" placeholder="tier default" /></label>
           </div>
-          <!-- v0.76.0: local_diffusion + generation overrides (vivijure-
-               serverless 0.4.32+). The SDXL base + keyframe-SDXL knobs
-               that pre-0.4.32 were baked into the image. -->
-          <details class="planner-overrides-raw-details">
-            <summary class="planner-overrides-summary">SDXL base + keyframe + seeds (advanced)</summary>
-            <div class="planner-overrides-fields">
-              <label class="planner-field">
-                <span>SDXL base (img2img / portrait path, NOT the keyframe)</span>
-                <!-- v0.133.1: was free text; now a picker of the primed SDXL bases.
-                     Unlike the keyframe base, turbo IS valid here (the img2img path
-                     doesn't need CFG). Value -> local_diffusion_overrides.model_id;
-                     empty = pod default (sdxl-turbo). -->
-                <select id="planner-ld-model-id">
-                  <option value="">auto / pod default (SDXL Turbo)</option>
-                  <option value="stabilityai/sdxl-turbo">SDXL Turbo (fast img2img)</option>
-                  <option value="cagliostrolab/animagine-xl-4.0">anime (Animagine XL 4.0)</option>
-                  <option value="SG161222/RealVisXL_V5.0">photoreal (RealVisXL V5.0)</option>
-                  <option value="stabilityai/stable-diffusion-xl-base-1.0">neutral (SDXL base 1.0)</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>SDXL base resolution (pod default 1920x1080)</span>
-                <input id="planner-ld-resolution" type="text" pattern="\d+x\d+" placeholder="1920x1080" />
-              </label>
-              <label class="planner-field">
-                <span>portrait resolution (pod default 1080x1920)</span>
-                <input id="planner-ld-portrait-resolution" type="text" pattern="\d+x\d+" placeholder="1080x1920" />
-              </label>
-              <label class="planner-field">
-                <span>SDXL base steps (pod default 6 turbo)</span>
-                <input id="planner-ld-steps" type="number" min="1" max="64" step="1" placeholder="6" />
-              </label>
-              <label class="planner-field">
-                <span>SDXL base CFG (pod default 0.0 turbo)</span>
-                <input id="planner-ld-guidance-scale" type="number" min="0" max="30" step="0.1" placeholder="0.0" />
-              </label>
-              <label class="planner-field">
-                <span>img2img denoise (pod default 0.46)</span>
-                <input id="planner-ld-denoising-strength" type="number" min="0" max="1" step="0.01" placeholder="0.46" />
-              </label>
-              <label class="planner-field">
-                <span>device</span>
-                <select id="planner-ld-device">
-                  <option value="">(use pod default: gpu)</option>
-                  <option value="gpu">gpu</option>
-                  <option value="cpu">cpu</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>dtype</span>
-                <select id="planner-ld-dtype">
-                  <option value="">(use pod default: float16)</option>
-                  <option value="float16">float16</option>
-                  <option value="bfloat16">bfloat16</option>
-                  <option value="float32">float32</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>sequential CPU offload</span>
-                <select id="planner-ld-seq-cpu-offload">
-                  <option value="">(use pod default: false)</option>
-                  <option value="true">true (lower VRAM while Wan runs)</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <!-- v0.135.0: the keyframe SDXL base picker moved UP to the common
-                   overrides row (it's the primary art-style lever). The img2img
-                   SDXL base above stays here in advanced. -->
-              <label class="planner-field">
-                <span>keyframe CFG (pod default 6.0)</span>
-                <input id="planner-ld-keyframe-guidance-scale" type="number" min="0" max="30" step="0.1" placeholder="6.0" />
-              </label>
-              <label class="planner-field">
-                <span>keyframe steps (pod default 28)</span>
-                <input id="planner-ld-keyframe-steps" type="number" min="1" max="128" step="1" placeholder="28" />
-              </label>
-              <label class="planner-field">
-                <span>seed_per_shot_step (sequential only; pod default 1)</span>
-                <input id="planner-gen-seed-per-shot-step" type="number" min="1" max="1000" step="1" placeholder="1" />
-              </label>
-            </div>
-            <p class="planner-overrides-hint">
-              forwarded as <code>local_diffusion_overrides</code> +
-              <code>generation_overrides</code>. SDXL base controls govern
-              the img2img path used for portraits / chained scenes;
-              keyframe controls govern the CFG-capable SDXL base used for
-              the per-shot keyframe (turbo refused at the keyframe stage).
-              seed_mode here is the block-level value;
-              <code>seed_mode</code> in render_overrides above wins on
-              key conflict.
-            </p>
-          </details>
-          <!-- v0.75.0: production.adetailer sub-block (vivijure-serverless
-               0.4.31+). Controls the hand/face inpaint refinement pass
-               that runs after the SDXL keyframe; turning off can save
-               noticeable time per scene at the cost of artifacts. -->
-          <details class="planner-overrides-raw-details">
-            <summary class="planner-overrides-summary">adetailer hand/face fix (advanced)</summary>
-            <div class="planner-overrides-fields">
-              <label class="planner-field">
-                <span>adetailer enabled</span>
-                <select id="planner-ad-enabled">
-                  <option value="">(use pod default: true)</option>
-                  <option value="true">true</option>
-                  <option value="false">false (skip the inpaint pass)</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>fix hands</span>
-                <select id="planner-ad-fix-hands">
-                  <option value="">(use pod default: true)</option>
-                  <option value="true">true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>fix face</span>
-                <select id="planner-ad-fix-face">
-                  <option value="">(use pod default: true)</option>
-                  <option value="true">true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>max regions (pod default 3)</span>
-                <input id="planner-ad-max-regions" type="number" min="1" max="8" step="1" placeholder="3" />
-              </label>
-              <label class="planner-field">
-                <span>bbox padding (pod default 0.15)</span>
-                <input id="planner-ad-bbox-pad" type="number" min="0" max="1" step="0.01" placeholder="0.15" />
-              </label>
-              <label class="planner-field">
-                <span>inpaint strength (pod default 0.4)</span>
-                <input id="planner-ad-inpaint-strength" type="number" min="0" max="1" step="0.01" placeholder="0.4" />
-              </label>
-              <label class="planner-field">
-                <span>hand confidence floor (pod default 0.35)</span>
-                <input id="planner-ad-hand-confidence" type="number" min="0" max="1" step="0.01" placeholder="0.35" />
-              </label>
-              <label class="planner-field">
-                <span>face confidence floor (pod default 0.5)</span>
-                <input id="planner-ad-face-confidence" type="number" min="0" max="1" step="0.01" placeholder="0.5" />
-              </label>
-              <label class="planner-field">
-                <span>extra inpaint steps per region (pod default 2)</span>
-                <input id="planner-ad-extra-steps" type="number" min="0" max="16" step="1" placeholder="2" />
-              </label>
-            </div>
-            <p class="planner-overrides-hint">
-              forwarded as <code>adetailer_overrides</code>. controls the
-              post-SDXL inpaint pass on detected hand / face regions.
-              disabling entirely is the fastest win when iterating on
-              composition; lower <code>inpaint_strength</code> preserves
-              more of the original pixels.
-            </p>
-          </details>
         </details>
         <details class="planner-overrides-domain">
-          <summary class="planner-overrides-summary">LoRA & training</summary>
-          <!-- v0.68.0: LoRA training hyperparam overrides. Routes through to
-               vivijure-serverless 0.4.19+'s run_training_subprocess. Each
-               field empty = use the pod's config.yaml default. Tucked
-               behind its own disclosure so it does not crowd the common
-               render-tuning controls above. -->
-          <details class="planner-overrides-raw-details">
-            <summary class="planner-overrides-summary">LoRA training (advanced)</summary>
-            <div class="planner-overrides-fields">
-              <label class="planner-field">
-                <span>steps (pod default 600)</span>
-                <input id="planner-lora-steps" type="number" min="50" step="50" placeholder="600" />
-              </label>
-              <label class="planner-field">
-                <span>learning rate (pod default 0.0001)</span>
-                <input id="planner-lora-lr" type="number" step="0.00001" placeholder="0.0001" />
-              </label>
-              <label class="planner-field">
-                <span>rank (pod default 16)</span>
-                <input id="planner-lora-rank" type="number" min="4" step="1" placeholder="16" />
-              </label>
-              <label class="planner-field">
-                <span>resolution (pod default 768)</span>
-                <input id="planner-lora-resolution" type="number" min="512" step="64" placeholder="768" />
-              </label>
-            </div>
-            <p class="planner-overrides-hint">
-              forwarded as <code>lora_train_overrides</code> on the render submit.
-              applies to fresh Stage 1 LoRA training during the render only; pre-
-              trained cast LoRAs (via /cast) are reused as-is and ignore these.
-            </p>
-          </details>
-          <!-- v0.70.0: lora_quality_gate overrides. Vivijure-serverless
-               0.4.25+ accepts these on the job payload and merges them over
-               the pod's loras.quality_gate config block. -->
-          <details class="planner-overrides-raw-details">
-            <summary class="planner-overrides-summary">LoRA quality gate (advanced)</summary>
-            <div class="planner-overrides-fields">
-              <label class="planner-field">
-                <span>enabled</span>
-                <select id="planner-qg-enabled">
-                  <option value="">(use pod default: true)</option>
-                  <option value="true">true</option>
-                  <option value="false">false (skip gate)</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>probe count (pod default 2)</span>
-                <input id="planner-qg-probe-count" type="number" min="1" max="16" step="1" placeholder="2" />
-              </label>
-              <label class="planner-field">
-                <span>min SSIM (pod default 0.28)</span>
-                <input id="planner-qg-min-ssim" type="number" min="0" max="1" step="0.01" placeholder="0.28" />
-              </label>
-              <label class="planner-field">
-                <span>pass SSIM (pod default 0.38)</span>
-                <input id="planner-qg-pass-ssim" type="number" min="0" max="1" step="0.01" placeholder="0.38" />
-              </label>
-              <label class="planner-field">
-                <span>probe LoRA scale (pod default 0.75)</span>
-                <input id="planner-qg-lora-scale" type="number" min="0" max="2" step="0.05" placeholder="0.75" />
-              </label>
-              <label class="planner-field">
-                <span>base seed (pod default 424242)</span>
-                <input id="planner-qg-base-seed" type="number" min="0" step="1" placeholder="424242" />
-              </label>
-              <label class="planner-field">
-                <span>allow warn (don't fail on weak LoRA)</span>
-                <select id="planner-qg-allow-warn">
-                  <option value="">(use pod default: true)</option>
-                  <option value="true">true</option>
-                  <option value="false">false (verdict=fail blocks render)</option>
-                </select>
-              </label>
-            </div>
-            <p class="planner-overrides-hint">
-              forwarded as <code>quality_gate_overrides</code>. controls the
-              post-training similarity probe that scores each LoRA against the
-              cast portrait. leave fields blank to use the pod's
-              <code>config.yaml</code> defaults.
-            </p>
-          </details>
-          <!-- v0.79.0: LoRA training extras + loras registry + quality
-               (ffmpeg) + image_models default profile
-               (vivijure-serverless 0.4.37+). -->
-          <details class="planner-overrides-raw-details">
-            <summary class="planner-overrides-summary">LoRA training extras + encoding + image profile (advanced)</summary>
-            <div class="planner-overrides-fields">
-              <label class="planner-field">
-                <span>LoRA training master switch</span>
-                <select id="planner-lte-enabled">
-                  <option value="">(use pod default)</option>
-                  <option value="true">true</option>
-                  <option value="false">false (skip training entirely)</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>min training images (pod default 8)</span>
-                <input id="planner-lte-min-images" type="number" min="1" max="64" step="1" placeholder="8" />
-              </label>
-              <label class="planner-field">
-                <span>max training images (pod default 30)</span>
-                <input id="planner-lte-max-images" type="number" min="1" max="256" step="1" placeholder="30" />
-              </label>
-              <label class="planner-field">
-                <span>trigger template (pod default "chr_{name}")</span>
-                <input id="planner-lte-trigger-template" type="text" maxlength="64" placeholder="chr_{name}" />
-              </label>
-              <label class="planner-field">
-                <span>LoRA default scale fallback (pod default 0.75)</span>
-                <input id="planner-lo-default-scale" type="number" min="0" max="2" step="0.05" placeholder="0.75" />
-              </label>
-              <label class="planner-field">
-                <span>ffmpeg CRF (pod default 18)</span>
-                <input id="planner-ql-assemble-crf" type="number" min="0" max="51" step="1" placeholder="18" />
-              </label>
-              <label class="planner-field">
-                <span>ffmpeg preset (pod default medium)</span>
-                <select id="planner-ql-assemble-preset">
-                  <option value="">(use pod default: medium)</option>
-                  <option value="ultrafast">ultrafast</option>
-                  <option value="superfast">superfast</option>
-                  <option value="veryfast">veryfast</option>
-                  <option value="faster">faster</option>
-                  <option value="fast">fast</option>
-                  <option value="medium">medium</option>
-                  <option value="slow">slow</option>
-                  <option value="slower">slower</option>
-                  <option value="veryslow">veryslow</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>image profile (pod default anime_sdxl)</span>
-                <input id="planner-im-default-profile" type="text" maxlength="64" placeholder="anime_sdxl" />
-              </label>
-            </div>
-            <p class="planner-overrides-hint">
-              forwarded as <code>lora_train_extras</code> +
-              <code>loras_overrides</code> + <code>quality_overrides</code>
-              + <code>image_models_overrides</code>. training extras cover
-              the loras.training keys not on the per-call path
-              (enabled / min+max images / trigger_template). encoding knobs
-              govern ffmpeg's silent-MP4 assembly. image profile picks
-              the SDXL profile when style_category="None".
-            </p>
-          </details>
-        </details>
-        <details class="planner-overrides-domain">
-          <summary class="planner-overrides-summary">continuity & timing</summary>
-          <!-- v0.72.0: consistency + video_consistency block overrides that
-               vivijure-serverless 0.4.28+ accepts. These configure module-
-               level defaults, not the per-render preferences which v0.59.0's
-               first-class controls above already cover. -->
-          <details class="planner-overrides-raw-details">
-            <summary class="planner-overrides-summary">consistency + chaining (advanced)</summary>
-            <div class="planner-overrides-fields">
-              <label class="planner-field">
-                <span>strict mode default</span>
-                <select id="planner-cons-strict">
-                  <option value="">(use pod default: true)</option>
-                  <option value="true">true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>chain denoising (pod default 0.24)</span>
-                <input id="planner-cons-chain-denoising" type="number" min="0" max="1" step="0.01" placeholder="0.24" />
-              </label>
-              <label class="planner-field">
-                <span>keyframe suffix (free text)</span>
-                <input id="planner-cons-kf-suffix" type="text" maxlength="512" placeholder="same face and costume, single clear subject" />
-              </label>
-              <label class="planner-field">
-                <span>motion suffix (free text)</span>
-                <input id="planner-cons-motion-suffix" type="text" maxlength="512" placeholder="subtle natural motion, preserve face and outfit..." />
-              </label>
-              <label class="planner-field">
-                <span>chain scenes</span>
-                <select id="planner-vc-chain-scenes">
-                  <option value="">(use pod default: true)</option>
-                  <option value="true">true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>regenerate keyframe each shot</span>
-                <select id="planner-vc-regen-kf">
-                  <option value="">(use pod default: true)</option>
-                  <option value="true">true</option>
-                  <option value="false">false (reuse prior shot's last frame)</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>movie-mode motion suffix</span>
-                <select id="planner-vc-motion-suffix-movie">
-                  <option value="">(use pod default: true)</option>
-                  <option value="true">true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>IP-Adapter scale (pod default 0.62)</span>
-                <input id="planner-vc-ip-scale" type="number" min="0" max="2" step="0.01" placeholder="0.62" />
-              </label>
-            </div>
-            <p class="planner-overrides-hint">
-              forwarded as <code>consistency_overrides</code> +
-              <code>video_consistency_overrides</code>. these set the pod's
-              module-level defaults that affect chain logic, IP-Adapter
-              cross-shot identity, and the motion-prompt suffix. leave
-              fields blank to use the pod's <code>config.yaml</code>
-              defaults.
-            </p>
-          </details>
-          <!-- v0.73.0: continuity + image_prompting + character_generation
-               block overrides (vivijure-serverless 0.4.29+). -->
-          <details class="planner-overrides-raw-details">
-            <summary class="planner-overrides-summary">continuity + prompting (advanced)</summary>
-            <div class="planner-overrides-fields">
-              <label class="planner-field">
-                <span>continuity enabled</span>
-                <select id="planner-ct-enabled">
-                  <option value="">(use pod default: true)</option>
-                  <option value="true">true</option>
-                  <option value="false">false (no chain-init)</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>use last frame</span>
-                <select id="planner-ct-use-last-frame">
-                  <option value="">(use pod default: true)</option>
-                  <option value="true">true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>max anchor frames (pod default 6)</span>
-                <input id="planner-ct-max-anchors" type="number" min="1" max="32" step="1" placeholder="6" />
-              </label>
-              <label class="planner-field">
-                <span>continuity chain denoising (pod default 0.28)</span>
-                <input id="planner-ct-chain-denoising" type="number" min="0" max="1" step="0.01" placeholder="0.28" />
-              </label>
-              <label class="planner-field">
-                <span>anatomy guard</span>
-                <select id="planner-ip-anatomy-guard">
-                  <option value="">(use pod default: true)</option>
-                  <option value="true">true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>negative mode</span>
-                <select id="planner-ip-negative-mode">
-                  <option value="">(use pod default: focused)</option>
-                  <option value="focused">focused (shorter neg, often sharper)</option>
-                  <option value="full">full (long community neg list)</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>positive extra (free text)</span>
-                <input id="planner-ip-positive-extra" type="text" maxlength="512" placeholder="anatomically correct, coherent anatomy..." />
-              </label>
-              <label class="planner-field">
-                <span>negative extra (free text)</span>
-                <input id="planner-ip-negative-extra" type="text" maxlength="512" placeholder="bad hands, extra fingers..." />
-              </label>
-              <label class="planner-field">
-                <span>portrait reference denoising (pod default 0.36)</span>
-                <input id="planner-cg-ref-denoising" type="number" min="0" max="1" step="0.01" placeholder="0.36" />
-              </label>
-              <label class="planner-field">
-                <span>portrait reference prompt suffix</span>
-                <input id="planner-cg-ref-suffix" type="text" maxlength="512" placeholder="match reference image likeness, face, hair, outfit..." />
-              </label>
-            </div>
-            <p class="planner-overrides-hint">
-              forwarded as <code>continuity_overrides</code> +
-              <code>image_prompting_overrides</code> +
-              <code>character_generation_overrides</code>. controls scene
-              chaining, the always-appended prompt suffixes that SDXL gets
-              for anatomy + identity coherence, and the img2img knobs the
-              portrait gen path uses.
-            </p>
-          </details>
-          <!-- v0.77.0: top-level scene-length scalars + movie block
-               (vivijure-serverless 0.4.34+). These govern how long the
-               pipeline thinks each scene should be and the movie-mode
-               chain defaults. -->
-          <details class="planner-overrides-raw-details">
-            <summary class="planner-overrides-summary">scene length + movie (advanced)</summary>
-            <div class="planner-overrides-fields">
-              <label class="planner-field">
-                <span>target scene seconds (pod default 8.0)</span>
-                <input id="planner-sl-target-scene-seconds" type="number" min="0.5" max="60" step="0.1" placeholder="8.0" />
-              </label>
-              <label class="planner-field">
-                <span>min scene seconds (pod default 6.0)</span>
-                <input id="planner-sl-min-scene-seconds" type="number" min="0.5" max="60" step="0.1" placeholder="6.0" />
-              </label>
-              <label class="planner-field">
-                <span>max scene seconds (pod default 10.0)</span>
-                <input id="planner-sl-max-scene-seconds" type="number" min="0.5" max="60" step="0.1" placeholder="10.0" />
-              </label>
-              <label class="planner-field">
-                <span>max video seconds (pod default 900)</span>
-                <input id="planner-sl-max-video-seconds" type="number" min="1" max="7200" step="1" placeholder="900" />
-              </label>
-              <label class="planner-field">
-                <span>max scenes (pod default 100)</span>
-                <input id="planner-sl-max-scenes" type="number" min="1" max="500" step="1" placeholder="100" />
-              </label>
-              <label class="planner-field">
-                <span>movie default clip seconds (pod default 8.0)</span>
-                <input id="planner-mv-default-clip-seconds" type="number" min="0.5" max="60" step="0.1" placeholder="8.0" />
-              </label>
-              <label class="planner-field">
-                <span>movie min clip seconds (pod default 6.0)</span>
-                <input id="planner-mv-min-clip-seconds" type="number" min="0.5" max="60" step="0.1" placeholder="6.0" />
-              </label>
-              <label class="planner-field">
-                <span>force exact N shots (pod default 0 = off)</span>
-                <input id="planner-mv-default-force-shots" type="number" min="0" max="500" step="1" placeholder="0" />
-              </label>
-              <label class="planner-field">
-                <span>movie default duration minutes (pod default 2)</span>
-                <input id="planner-mv-default-duration-minutes" type="number" min="0" max="120" step="1" placeholder="2" />
-              </label>
-              <label class="planner-field">
-                <span>movie crossfade seconds (pod default 0.45)</span>
-                <input id="planner-mv-crossfade-seconds" type="number" min="0" max="5" step="0.05" placeholder="0.45" />
-              </label>
-              <label class="planner-field">
-                <span>movie Wan num_frames (pod default 97)</span>
-                <input id="planner-mv-wan-num-frames" type="number" min="1" max="256" step="1" placeholder="97" />
-              </label>
-              <label class="planner-field">
-                <span>movie Wan inference_steps (pod default 22)</span>
-                <input id="planner-mv-wan-inference-steps" type="number" min="1" max="64" step="1" placeholder="22" />
-              </label>
-              <label class="planner-field">
-                <span>movie Wan fps (pod default 16)</span>
-                <input id="planner-mv-wan-fps" type="number" min="1" max="120" step="1" placeholder="16" />
-              </label>
-              <label class="planner-field">
-                <span>motion suffix (free text)</span>
-                <input id="planner-mv-motion-suffix" type="text" maxlength="512" placeholder="smooth cinematic camera motion, natural movement..." />
-              </label>
-            </div>
-            <p class="planner-overrides-hint">
-              forwarded as <code>scene_length_overrides</code> +
-              <code>movie_overrides</code>. scene-length caps gate the
-              planner's clip-duration math. movie block governs
-              production_mode=movie chain defaults; the flat
-              <code>wan_num_frames</code> / <code>wan_inference_steps</code>
-              <code>render_overrides</code> keys above still win when both
-              are set.
-            </p>
-          </details>
-        </details>
-        <details class="planner-overrides-domain">
-          <summary class="planner-overrides-summary">pipeline & production</summary>
-          <!-- v0.78.0: character_bible + production sub-keys + top-level
-               switches (vivijure-serverless 0.4.35+). -->
-          <details class="planner-overrides-raw-details">
-            <summary class="planner-overrides-summary">cast bible + production gates + top-level switches (advanced)</summary>
-            <div class="planner-overrides-fields">
-              <label class="planner-field">
-                <span>cast bible enabled</span>
-                <select id="planner-cb-enabled">
-                  <option value="">(use pod default: true)</option>
-                  <option value="true">true</option>
-                  <option value="false">false (skip bible injection)</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>cast bible max chars/character (pod default 220)</span>
-                <input id="planner-cb-max-chars" type="number" min="1" max="2000" step="1" placeholder="220" />
-              </label>
-              <label class="planner-field">
-                <span>cast bible header (free text)</span>
-                <input id="planner-cb-header" type="text" maxlength="256" placeholder="CHARACTER BIBLE - same face, hair, outfit in every shot" />
-              </label>
-              <label class="planner-field">
-                <span>hand fix keyframes</span>
-                <select id="planner-pr-hand-fix">
-                  <option value="">(use pod default: true)</option>
-                  <option value="true">true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>adetailer on keyframes (master switch)</span>
-                <select id="planner-pr-adetailer-kf">
-                  <option value="">(use pod default: true)</option>
-                  <option value="true">true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>min character refs (pod default 3)</span>
-                <input id="planner-pr-min-refs" type="number" min="0" max="32" step="1" placeholder="3" />
-              </label>
-              <label class="planner-field">
-                <span>max character refs (pod default 12)</span>
-                <input id="planner-pr-max-refs" type="number" min="1" max="64" step="1" placeholder="12" />
-              </label>
-              <label class="planner-field">
-                <span>bible reference target (pod default 8)</span>
-                <input id="planner-pr-bible-target" type="number" min="0" max="32" step="1" placeholder="8" />
-              </label>
-              <label class="planner-field">
-                <span>LoRA shot threshold (pod default 30)</span>
-                <input id="planner-pr-lora-threshold" type="number" min="0" max="500" step="1" placeholder="30" />
-              </label>
-              <label class="planner-field">
-                <span>production mode</span>
-                <select id="planner-tl-production-mode">
-                  <option value="">(use pod default: movie)</option>
-                  <option value="movie">movie (chained narrative)</option>
-                  <option value="clips">clips (independent scenes)</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>always use style reference</span>
-                <select id="planner-tl-always-style-ref">
-                  <option value="">(use pod default: false)</option>
-                  <option value="true">true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>assemble with crossfade</span>
-                <select id="planner-tl-assemble-crossfade">
-                  <option value="">(use pod default: true)</option>
-                  <option value="true">true</option>
-                  <option value="false">false (hard cuts)</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>auto-render clips</span>
-                <select id="planner-tl-auto-render-clips">
-                  <option value="">(use pod default: true)</option>
-                  <option value="true">true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-              <label class="planner-field">
-                <span>auto-bootstrap start image</span>
-                <select id="planner-tl-auto-bootstrap">
-                  <option value="">(use pod default: true)</option>
-                  <option value="true">true</option>
-                  <option value="false">false</option>
-                </select>
-              </label>
-            </div>
-            <p class="planner-overrides-hint">
-              forwarded as <code>character_bible_overrides</code> +
-              <code>production_overrides</code> +
-              <code>top_level_switches</code>. cast bible knobs govern the
-              condensed appearance block prepended to every shot;
-              production gates control hand/face fixes + reference count
-              requirements + LoRA training threshold; top-level switches
-              flip overall pipeline behavior.
-            </p>
-          </details>
+          <summary class="planner-overrides-summary">lora (character training)</summary>
+          <div class="planner-overrides-fields">
+            <label class="planner-field"><span>rank (1-128)</span>
+              <input id="planner-lora-rank" type="number" min="1" step="1" placeholder="tier default" /></label>
+            <label class="planner-field"><span>max steps (1-5000)</span>
+              <input id="planner-lora-steps" type="number" min="1" step="50" placeholder="tier default" /></label>
+            <label class="planner-field"><span>learning rate</span>
+              <input id="planner-lora-lr" type="number" step="0.00001" placeholder="tier default" /></label>
+            <label class="planner-field"><span>resolution (512-1536)</span>
+              <input id="planner-lora-resolution" type="number" min="512" step="64" placeholder="tier default" /></label>
+          </div>
+          <p class="planner-overrides-hint">
+            fresh Stage 1 LoRA training only; pre-trained cast LoRAs (via /cast)
+            are reused as-is and ignore these.
+          </p>
         </details>
       </details>
 
-      <!-- v0.123.0: expert escape hatches. Two raw-JSON textareas pulled out
-           of "advanced settings" so the structured knobs aren't buried under
-           free-form JSON. prompt_templates_overrides + the catch-all
-           render_overrides JSON (the latter still wins on key conflict). -->
+      <!-- Expert escape hatch: the raw namespaced render_overrides JSON, pulled
+           out of "advanced settings" so the structured knobs aren't buried under
+           free-form JSON. Restricted to { keyframe, i2v, lora } + routing flags;
+           wins over the structured fields above on a key conflict. -->
       <details class="planner-overrides-details planner-overrides-expert">
         <summary class="planner-overrides-summary">expert: raw JSON</summary>
         <div class="planner-overrides-expert-block">
-          <span class="planner-overrides-expert-label">prompt templates (JSON)</span>
-          <textarea id="planner-pt-json" rows="8" placeholder='{"anatomy_positive_base": "masterpiece, ...", "framing_hints": ["wide shot", "close-up"], "act_mood": {"Climax": "tense, high stakes"}}' spellcheck="false"></textarea>
+          <span class="planner-overrides-expert-label">raw render_overrides JSON (wins on conflict)</span>
+          <textarea id="planner-render-overrides" rows="4" placeholder='{"keyframe": {"steps": 30, "guidance_scale": 6.5}, "i2v": {"steps": 40, "negative_prompt": "blurry"}}' spellcheck="false"></textarea>
           <p class="planner-overrides-hint">
-            optional JSON object of the <code>prompt_templates</code> shape:
-            <code>anatomy_positive_base / _human / _anime</code>,
-            <code>anatomy_negative_global / _focused / _portrait / _anime</code>,
-            <code>portrait_positive</code>, <code>hand_positive</code>,
-            <code>hand_negative</code>, <code>framing_hints</code> (array of
-            strings cycled per shot), <code>act_mood</code> (act-name to phrase
-            map). forwarded as <code>prompt_templates_overrides</code>. malformed
-            JSON is ignored. leave empty for the pod defaults.
-          </p>
-        </div>
-        <div class="planner-overrides-expert-block">
-          <span class="planner-overrides-expert-label">raw JSON overrides (wins on conflict)</span>
-          <textarea id="planner-render-overrides" rows="3" placeholder='{"wan_inference_steps": 12, "wan_num_frames": 33}' spellcheck="false"></textarea>
-          <p class="planner-overrides-hint">
-            optional JSON object merged into the render payload sent to the GPU
-            worker. fields here override the bundle's storyboard / config
-            defaults for this render only AND win over the structured fields
-            above on any key conflict. common keys not exposed above:
-            <code>wan_inference_steps</code> (int), <code>wan_num_frames</code> (int),
-            <code>style_prefix</code> (string). leave empty for no extra overrides.
+            optional JSON in the backend's namespaced shape:
+            <code>{ "keyframe": {…}, "i2v": {…}, "lora": {…} }</code> plus the routing
+            flags <code>keyframes_only</code> / <code>finish_offloaded</code>. anything
+            outside those sections is dropped. wins over the structured fields above
+            on a key conflict. leave empty for the tier defaults.
           </p>
         </div>
       </details>

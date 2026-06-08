@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.156.3
+
+Restore the `standard` quality tier (v0.156.1 removed it in error). The removal was on the
+belief that the pod's `for_tier` only branches draft vs final -- it does not. Both
+`KeyframeConfig.for_tier` and `I2VConfig.for_tier` in the backend `config.py` branch all
+THREE tiers, and standard is a genuinely distinct middle: 8-step distilled keyframes + a
+20-step EasyCache i2v pass (vs draft's 4-step Lightning and final's 30-step keyframe +
+40-step MixCache). Dropping it hid a real capability and collapsed any `standard` request
+to `final`.
+
+`coerceQualityTier` now passes `standard` through (was: coerce to `final`); the `qualityTier`
+unions, the planner picker, the validation messages, and the render-api doc are widened back
+to draft|standard|final. (Caught by the contract-completeness audit reading the `for_tier`
+bodies, not the `KeyframeConfig` docstring whose one-line summary omits standard.)
+
+### Code
+
+- `src/runpod-submit.ts` - `coerceQualityTier` returns standard unchanged; unions -> draft|standard|final.
+- `src/index.ts` - unions + validation messages -> draft|standard|final.
+- `public/planner.html` - restore the standard `<option>` (8-step keyframes + 20-step EasyCache i2v).
+- `docs/render-api.md` - qualityTier row + per-tier descriptions restored.
+- `tests/coerce-quality-tier.test.ts` - standard passes through (was: coerces to final).
+- `package.json` - 0.156.2 -> 0.156.3.
+- typecheck clean; full suite 610 green.
+
 ## v0.156.2
 
 Off-GPU finish now actually fires for an offloaded render. The control plane's

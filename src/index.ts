@@ -1646,7 +1646,7 @@ async function handleStoryboardBundle(request: Request, env: Env): Promise<Respo
 //
 // Submit a render job to the vivijure-serverless RunPod endpoint and poll
 // its status. The submit route accepts the bundleKey returned by
-// /api/storyboard/bundle plus an optional qualityTier ("draft" | "final";
+// /api/storyboard/bundle plus an optional qualityTier ("draft" | "standard" | "final";
 // default "final") and optional renderOverrides (passed through
 // to rp_handler.py's `render_overrides` payload field for tuning per-shot
 // settings). Returns the RunPod-issued jobId; the UI polls
@@ -2106,7 +2106,7 @@ async function handleAdoptRender(request: Request, env: Env): Promise<Response> 
   }
   if (body.qualityTier !== undefined && coerceQualityTier(body.qualityTier) === undefined) {
     return json(
-      { error: "qualityTier must be 'draft' | 'final' if provided" },
+      { error: "qualityTier must be 'draft' | 'standard' | 'final' if provided" },
       { status: 400 },
     );
   }
@@ -2179,7 +2179,7 @@ async function handleRenderSubmit(request: Request, env: Env): Promise<Response>
   }
   if (body.qualityTier !== undefined && coerceQualityTier(body.qualityTier) === undefined) {
     return json(
-      { error: "qualityTier must be 'draft' | 'final' if provided" },
+      { error: "qualityTier must be 'draft' | 'standard' | 'final' if provided" },
       { status: 400 },
     );
   }
@@ -4177,7 +4177,7 @@ async function handleFinalizeSubmit(
   const result = await submitFinalizeJob(env, {
     project: row.project,
     bundleKey: row.bundle_key,
-    qualityTier: row.quality_tier as "draft" | "final" | undefined,
+    qualityTier: row.quality_tier as "draft" | "standard" | "final" | undefined,
     renderOverrides: row.render_overrides ?? undefined,
     userEmail,
     processShotIds: row.locked_shots && row.locked_shots.length > 0
@@ -8943,7 +8943,7 @@ export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
               const res = await submitFinalizeJob(this.env, {
                 project,
                 bundleKey: gpuBundleKey,
-                qualityTier: qualityTier as "draft" | "final" | undefined,
+                qualityTier: qualityTier as "draft" | "standard" | "final" | undefined,
                 userEmail,
                 processShotIds: gpuShots.map((s) => s.shot_id),
                 // pod SkyPhusion/vivijure-serverless#17: emit per-shot clips, no on-GPU assembly.

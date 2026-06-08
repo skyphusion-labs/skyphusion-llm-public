@@ -43,7 +43,7 @@ already exist in R2 (the planner writes it at bundle time, under
 |---|---|---|
 | `bundleKey` | string (required) | R2 key of the project bundle, e.g. `bundles/my_project.tar.gz` |
 | `project` | string | display label; derived from `bundleKey` if omitted |
-| `qualityTier` | `"draft" \| "final"` | default `final` (and `keyframesOnly: true` for the fast keyframe-only preview) |
+| `qualityTier` | `"draft" \| "standard" \| "final"` | default `final`. draft = 4-step distilled; standard = 8-step keyframe + 20-step EasyCache i2v (the middle); final = 30-step keyframe + 40-step MixCache i2v. (`keyframesOnly: true` for the fast keyframe-only preview.) |
 | `keyframesOnly` | boolean | SDXL keyframes only, skip Wan I2V + assembly (fast preview) |
 | `renderOverrides` | object | freeform pod render overrides, e.g. `{ "seed": 202 }` |
 | `audioKey` | string | R2 key of an audio bed to mux; a MiniMax `out/<uuid>.mp3` is cross-bucket-copied for you |

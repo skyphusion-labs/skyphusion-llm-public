@@ -17,15 +17,17 @@
 
 import type { Env } from "./env";
 
-// Quality tier normalizer (v0.156.1). The tiers are keyframe (a separate
-// keyframesOnly flag), draft (4-step distilled), and final (full-step high-cfg);
-// there is no real "standard" tier (the pod's for_tier only branches draft vs
-// final). "standard" was a vestigial label, removed here; it coerces to "final"
-// for back-compat so old History rows / clients never 400. Anything else is
-// undefined (an invalid tier the caller should be told about).
-export function coerceQualityTier(t: unknown): "draft" | "final" | undefined {
+// Quality tier normalizer / validator (v0.156.3). The render tiers are keyframe (a
+// separate keyframesOnly flag) plus three real generation tiers the pod's `for_tier`
+// genuinely distinguishes: draft (4-step distilled), standard (8-step keyframe + 20-step
+// EasyCache i2v, the middle), and final (30-step keyframe + 40-step MixCache i2v). v0.156.1
+// wrongly dropped standard on the belief for_tier only branched draft/final; it does not
+// (config.py KeyframeConfig.for_tier and I2VConfig.for_tier each branch all three), so
+// standard is restored here. Returns undefined for an invalid tier the caller should hear about.
+export function coerceQualityTier(t: unknown): "draft" | "standard" | "final" | undefined {
   if (t === "draft") return "draft";
-  if (t === "final" || t === "standard") return "final";
+  if (t === "standard") return "standard";
+  if (t === "final") return "final";
   return undefined;
 }
 
@@ -34,7 +36,7 @@ export interface RenderSubmitArgs {
   // Project slug; if omitted, derived from bundleKey by stripping prefix.
   project?: string;
   bundleKey: string;
-  qualityTier?: "draft" | "final";
+  qualityTier?: "draft" | "standard" | "final";
   renderOverrides?: Record<string, unknown>;
   // v0.39.0: stamped on every R2 upload the GPU side produces (MP4,
   // state.tar.gz, keyframes) as x-amz-meta-user_email, so the existing
@@ -528,7 +530,7 @@ export interface ConsistencyOverrides {
   face_lock_mode?: "img2img" | "ip_adapter" | "instantid" | "both";
   // Hard-pin the consistency profile to a specific quality tier
   // ("draft"|"final"). Pod default "final".
-  quality_tier?: "draft" | "final";
+  quality_tier?: "draft" | "standard" | "final";
   // Denoise strength when chaining a previous shot's last frame into the
   // next shot's keyframe gen. Lower = more carryover of the prior shot.
   // 0..1; pod default 0.24.
@@ -654,7 +656,7 @@ export interface MultiCharacterOverrides {
 export interface RenderJobInput {
   project: string;
   bundle_key: string;
-  quality_tier: "draft" | "final";
+  quality_tier: "draft" | "standard" | "final";
   render_overrides?: Record<string, unknown>;
   user_email?: string;
   audio_key?: string;
@@ -731,7 +733,7 @@ export interface RegenShotJobInput {
 export interface FinalizeArgs {
   project: string;
   bundleKey: string;
-  qualityTier?: "draft" | "final";
+  qualityTier?: "draft" | "standard" | "final";
   renderOverrides?: Record<string, unknown>;
   userEmail?: string;
   // v0.45.0: optional shot_id list to restrict the I2V pass + final
@@ -786,7 +788,7 @@ export interface FinalizeJobInput {
   action: "finalize";
   project: string;
   bundle_key: string;
-  quality_tier: "draft" | "final";
+  quality_tier: "draft" | "standard" | "final";
   render_overrides?: Record<string, unknown>;
   user_email?: string;
   process_shot_ids?: string[];

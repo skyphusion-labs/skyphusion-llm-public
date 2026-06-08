@@ -118,6 +118,7 @@ import {
   updateRenderFromView,
 } from "./renders-db";
 import { writeCloudAnimateLog, type CloudAnimateLogShot } from "./render-log";
+import { progressSnapshotKey, type RenderProgressSnapshot } from "./render-progress";
 import { callWorkersAIStream } from "./providers/workers-ai";
 import { callOpenAIStream } from "./providers/openai";
 import { callGemini, callGeminiStream } from "./providers/google";
@@ -602,6 +603,13 @@ export default {
     if (rd) {
       if (request.method === "DELETE") return handleRenderRowDelete(request, env, rd[1]);
       if (request.method === "PATCH") return handleRenderRowPatch(request, env, rd[1]);
+    }
+    // v0.156.0: read a live render's structured progress snapshot back from R2
+    // (the vivijure-backend worker writes it best-effort per job). Lets the
+    // planner show stage / counts / last-event without SSH to the pod.
+    const rprog = url.pathname.match(/^\/api\/storyboard\/renders\/(\d+)\/progress$/);
+    if (rprog && request.method === "GET") {
+      return handleRenderProgress(request, env, rprog[1]);
     }
     // v0.41.0: per-shot SDXL keyframe regeneration. Submits a regen job
     // to RunPod (vivijure-serverless 0.4.3+ dispatches by action), returns
@@ -3106,6 +3114,47 @@ async function handleRenderTagsList(request: Request, env: Env): Promise<Respons
 // referenced artifact). The bundle at row.bundle_key is NEVER deleted:
 // re-renders share it by design, and the user can prune via
 // `wrangler r2 object delete` if they want.
+
+// GET /api/storyboard/renders/<id>/progress -- read the live render's structured
+// progress snapshot back from R2 (the vivijure-backend worker writes it best-effort
+// at renders/<project>/progress/<job_id>.json), so the planner can show stage,
+// counts, and last-event without polling the pod over SSH (v0.156.0). Ownership:
+// the row is fetched scoped to the caller's user_email, same as the other
+// /renders/<id>/ routes. A missing object is "not emitted yet" (pending), not an
+// error -- the snapshot lags the submit by a stage or two, and rows that predate
+// the channel simply never get one (the DB status still tells the client a state).
+async function handleRenderProgress(
+  request: Request,
+  env: Env,
+  idStr: string,
+): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const id = Number(idStr);
+  if (!Number.isInteger(id) || id <= 0) {
+    return json({ error: "invalid id" }, { status: 400 });
+  }
+
+  const row = await getRenderByIdForUser(env, id, userEmail);
+  if (!row) {
+    return json({ error: "render not found" }, { status: 404 });
+  }
+
+  const key = progressSnapshotKey(row.project, row.job_id);
+  let obj: R2ObjectBody | null;
+  try {
+    obj = await env.R2_RENDERS.get(key);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return json({ error: "progress read failed: " + message }, { status: 502 });
+  }
+
+  if (!obj) {
+    return json({ render_id: id, db_status: row.status, pending: true, snapshot: null });
+  }
+
+  const snapshot = await obj.json<RenderProgressSnapshot>();
+  return json({ render_id: id, db_status: row.status, pending: false, snapshot });
+}
 
 async function handleRenderRowDelete(
   request: Request,

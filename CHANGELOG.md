@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.156.0
+
+Live render progress, read from R2 instead of SSH. The planner can now poll a
+render's structured stage snapshot (training step, keyframe / i2v counts, last
+event, error) through the control plane, no pod shell required.
+
+The vivijure-backend worker writes a best-effort progress channel to R2 for every
+render: a per-job snapshot at `renders/<project>/progress/<job_id>.json` (plus an
+NDJSON event log) keyed by project AND job id. This adds the consumer side.
+`GET /api/storyboard/renders/<id>/progress` looks up the render row scoped to the
+caller's `user_email`, builds the snapshot key from its project + job id, and reads
+it back through the existing `R2_RENDERS` (vivijure) binding, so there is no new
+binding and no new secret. A missing object is reported as `pending` (the snapshot
+lags the submit by a stage or two, and rows that predate the channel never get one),
+an R2 read error is a 502, and a present snapshot is returned verbatim alongside the
+DB status.
+
+The key builder (`renderSlug` / `progressSnapshotKey`) mirrors the backend's
+`harness/keys.py _slug` byte for byte and lives in its own module so vitest can cover
+it; a drift there would silently 404 against a key the worker never wrote.
+
+### Code
+
+- `src/render-progress.ts` - new: `renderSlug` (mirror of the backend `_slug`),
+  `progressSnapshotKey` / `progressLogKey`, and the `RenderProgressSnapshot` shape.
+- `src/index.ts` - import the module; new `handleRenderProgress` (ownership-checked
+  row lookup, then R2 snapshot read with pending / 502 / ok handling); route
+  `GET /api/storyboard/renders/<id>/progress`.
+- `tests/render-progress.test.ts` - new: 7 cases pinning `renderSlug` and the key
+  builders to the backend `_slug` behavior.
+- `package.json` - 0.155.0 -> 0.156.0.
+- typecheck clean; `npx vitest run tests/render-progress.test.ts` 7/7 green.
+
 ## v0.155.0
 
 Audio mux no longer re-encodes (or upscales) a finished render. Scoring a hybrid

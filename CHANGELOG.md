@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.159.1
+
+Fix: cast LoRA training appeared broken on the clean-room backend. The job trained
+and uploaded the adapter fine, but the cast page never flipped `lora_status` to
+`ready` -- so the UX looked stuck and a later render retrained from scratch.
+
+Cause: a clean-room <-> control-plane envelope-shape mismatch (same family as the
+render_overrides disconnect). The harvest code read a top-level `output.lora_key`
+(the old vivijure-serverless shape); the clean-room backend returns the key NESTED
+under `output.lora[slot].lora_id`. So the harvest always missed it and marked the
+job "completed but envelope did not include lora_key".
+
+New `extractTrainedLoraKey(output)` reads both shapes (nested first, legacy
+top-level fallback) and is used by both harvest sites -- `handleCastLoraStatus`
+(the cast-page poll) and `refreshTrainingLora` (the self-heal at render-submit) --
+so they can't drift again. No backend change.
+
+### Code
+
+- `src/lora-bundle.ts` - add `extractTrainedLoraKey`.
+- `src/index.ts` - both harvest sites use it (was: top-level `lora_key` only).
+- `tests/lora-bundle.test.ts` - new; pins the nested + legacy shapes.
+- `package.json` - 0.159.0 -> 0.159.1.
+
+
 ## v0.159.0
 
 Item D groundwork: the multi-job GATHER core for distributed (scatter/gather) renders.

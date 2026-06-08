@@ -39,7 +39,7 @@ import {
   addSource as castAddSource, removeSource as castRemoveSource,
   setLoraJob, markLoraReady, markLoraFailed,
 } from "./cast-db";
-import { buildLoraTrainingBundleArgs, deriveLoraDestKey } from "./lora-bundle";
+import { buildLoraTrainingBundleArgs, deriveLoraDestKey, extractTrainedLoraKey } from "./lora-bundle";
 import {
   resolveCastLoraBindings, uniqueCastIds,
   type CastLoraBindings,
@@ -4493,12 +4493,11 @@ async function handleCastLoraStatus(
     return json({ error: poll.error, cast }, { status: 502 });
   }
   const view = poll.view;
-  // On COMPLETED: harvest the lora_key from the envelope and flip the
-  // cast row. The vivijure-serverless 0.4.13 envelope shape is
-  // {project, mode:"lora-only", lora_key, lora_size_bytes, slot, train}.
+  // On COMPLETED: harvest the trained-LoRA key from the envelope and flip the
+  // cast row. extractTrainedLoraKey reads both the clean-room shape
+  // (output.lora[slot].lora_id) and the legacy top-level lora_key.
   if (view.status === "COMPLETED") {
-    const output = view.output as Record<string, unknown> | undefined;
-    const loraKey = output && typeof output.lora_key === "string" ? output.lora_key : null;
+    const loraKey = extractTrainedLoraKey(view.output);
     if (!loraKey) {
       const updated = await markLoraFailed(
         env,
@@ -4539,9 +4538,7 @@ async function refreshTrainingLora(
     if (!poll.ok) return cast;
     const view = poll.view;
     if (view.status === "COMPLETED") {
-      const output = view.output as Record<string, unknown> | undefined;
-      const loraKey =
-        output && typeof output.lora_key === "string" ? output.lora_key : null;
+      const loraKey = extractTrainedLoraKey(view.output);
       if (loraKey) return (await markLoraReady(env, cast.id, userEmail, loraKey)) || cast;
       return (
         (await markLoraFailed(

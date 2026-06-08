@@ -73,3 +73,26 @@ export function buildLoraTrainingBundleArgs(
 export function deriveLoraDestKey(castId: number, timestamp: number): string {
   return `loras/cast-${castId}/${timestamp}.safetensors`;
 }
+
+// The trained-LoRA R2 key from a completed train_lora job envelope. The clean-room
+// backend returns it NESTED under result.lora[slot].lora_id (a cast-training bundle
+// is single-slot, so it's the one entry); the legacy vivijure-serverless envelope
+// used a top-level lora_key. Reads both shapes so the cast page harvests the key
+// either way; returns null only if neither carries one. (Fixes cast LoRA training
+// appearing broken on the clean-room backend: the adapter trained + uploaded, but
+// the old top-level-only read never found the key, so lora_status never flipped.)
+export function extractTrainedLoraKey(output: unknown): string | null {
+  if (!output || typeof output !== "object") return null;
+  const o = output as Record<string, unknown>;
+  if (typeof o.lora_key === "string" && o.lora_key) return o.lora_key;
+  const lora = o.lora;
+  if (lora && typeof lora === "object" && !Array.isArray(lora)) {
+    for (const entry of Object.values(lora as Record<string, unknown>)) {
+      if (entry && typeof entry === "object") {
+        const id = (entry as { lora_id?: unknown }).lora_id;
+        if (typeof id === "string" && id) return id;
+      }
+    }
+  }
+  return null;
+}

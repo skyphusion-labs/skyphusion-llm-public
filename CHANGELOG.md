@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.161.0
+
+Feature: distributed scatter/gather rendering. A storyboard render can now be split across N
+parallel RunPod jobs and gathered into one MP4, dropping wall-clock to ~T/N at the same
+GPU-second cost.
+
+The backend enablers already shipped (`process_shot_ids` subset renders, `pretrained_loras`
+staging, `finish_offloaded` per-shot clips); this is the control-plane conductor that drives
+them. `POST /api/storyboard/render/scatter` resolves the cast LoRAs (which must already be
+trained + ready for a scatter, a shard that retrains would defeat the parallelism and risk
+per-shard identity drift), splits the storyboard into N finish-offloaded shard jobs that reuse
+the pre-trained adapters, and writes a synthetic `scatter-<uuid>` parent renders row plus one
+child row per shard (linked by `parent_id`, with the shard's shots stored on it). Polling the
+parent at `GET /api/storyboard/render/<scatter-uuid>` routes to the gather watcher: it polls
+each shard, checks clip presence across the whole storyboard, and on the last clip assembles
+ONE MP4 via the video-finish container, D1-locked on the parent job (the same idempotency model
+as the single-job offloaded finish). A dead shard with shots still missing fails the parent;
+otherwise it reports per-shot progress.
+
+Also exposes `processShotIds` on the render submit path (the backend `orchestrator.plan()`
+already scopes scenes to `process_shot_ids` for any action; only `finalize` carried it before).
+
+NOT YET VALIDATED against a live multi-job render; the pure conductor logic is unit-tested.
+
+### Code
+- `src/scatter.ts` (new): `splitShots`, `buildShardJobs`, `gatherDecision`, `scatterParentJobId` / `isScatterParentJobId`
+- `tests/scatter.test.ts` (new): 14 tests for the conductor core
+- `src/runpod-submit.ts`: `processShotIds` on `RenderSubmitArgs` / `process_shot_ids` on `RenderJobInput`; `buildSubmitPayload` emits it
+- `src/renders-db.ts`: `getRenderIdByJobId`, `getScatterChildren`
+- `src/index.ts`: `handleScatterSubmit` + `resolveScatterGather`, the `scatter-` poll branch, the `POST /api/storyboard/render/scatter` route, imports
+- `package.json`: 0.160.0 -> 0.161.0
+
+typecheck clean; 608 tests pass.
+
 ## v0.160.0
 
 Feature/fix: the "render keyframes only" checkbox produced a full render with motion

@@ -3084,6 +3084,26 @@ textarea:focus {
   color: var(--error);
   border: 1px solid var(--error);
 }
+/* v0.162.0: scatter/gather distributed render parent badge. Accent color
+   distinguishes it from kf-only (warn) and cloud (version). */
+.planner-history-mode-scatter {
+  background: var(--bg-elev2);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+/* v0.162.0: scatter shard-count row -- sits beneath the scatter checkbox. */
+.planner-scatter-shard-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 0 24px;
+  font-size: 13px;
+  color: var(--fg);
+}
+.planner-scatter-reason {
+  margin: 2px 0 0;
+  font-size: 12px;
+}
 .planner-history-parentlink,
 .planner-history-childlink {
   font-size: 10px;

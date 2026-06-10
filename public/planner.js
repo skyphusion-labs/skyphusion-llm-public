@@ -3406,6 +3406,7 @@ function showRenderStage() {
   $("#planner-render-result").hidden = true;
   stage.scrollIntoView({ behavior: "smooth", block: "start" });
   setRenderStatus("", "");
+  updateScatterGate();
 }
 
 async function submitRender() {
@@ -3584,6 +3585,197 @@ async function submitRender() {
   loadHistory();
   // v0.38.0: persist the new jobId so a tab close resumes the stream
   // on the next reload.
+  savePersistedState();
+}
+
+// v0.162.0: enable/disable the scatter checkbox based on current state.
+// Conditions: >= 2 shots in the storyboard AND castLoras non-empty (the
+// server hard-400s a scatter with no castLoras; shards would diverge
+// without a shared pre-trained LoRA). Shows a short reason when disabled.
+function updateScatterGate() {
+  const checkbox = $("#planner-scatter");
+  const reasonEl = $("#planner-scatter-reason");
+  const shardWrap = $("#planner-scatter-shard-wrap");
+  if (!checkbox) return;
+
+  const scenes =
+    planState.storyboard && Array.isArray(planState.storyboard.scenes)
+      ? planState.storyboard.scenes
+      : [];
+  const castLoras = buildCastLoraSubmit();
+  const hasLoras = Object.keys(castLoras).length > 0;
+
+  let reason = "";
+  if (scenes.length < 2) reason = "needs >= 2 shots";
+  else if (!hasLoras) reason = "every character needs a trained LoRA first";
+
+  checkbox.disabled = !!reason;
+  if (reason) checkbox.checked = false;
+
+  if (reasonEl) {
+    reasonEl.textContent = reason;
+    reasonEl.hidden = !reason;
+  }
+  if (shardWrap) {
+    shardWrap.hidden = !(checkbox.checked && !checkbox.disabled);
+  }
+
+  const shardInput = $("#planner-scatter-shards");
+  if (shardInput && scenes.length >= 2) {
+    shardInput.max = String(scenes.length);
+    const cur = parseInt(shardInput.value, 10);
+    if (!Number.isInteger(cur) || cur < 2) shardInput.value = "2";
+    else if (cur > scenes.length) shardInput.value = String(scenes.length);
+  }
+}
+
+// v0.162.0: POST to /api/storyboard/render/scatter and drive the existing
+// renderState poll loop with the returned scatter-<uuid> jobId. Modeled on
+// submitRender() -- reuses buildRenderOverrides, qualityTier, audioKey,
+// projectId exactly. shotIds are derived via sceneIdAt (the canonical id
+// source that matches the GPU's per-shot clip filenames).
+async function submitScatterRender() {
+  if (!bundleState.bundleKey) {
+    setRenderStatus("no bundleKey; run 'bundle' first", "error");
+    return;
+  }
+  const scenes =
+    planState.storyboard && Array.isArray(planState.storyboard.scenes)
+      ? planState.storyboard.scenes
+      : [];
+  const shotIds = scenes.map((s, i) => sceneIdAt(s, i));
+  if (shotIds.length < 2) {
+    setRenderStatus("scatter requires >= 2 shots", "error");
+    return;
+  }
+  const castLoras = buildCastLoraSubmit();
+  if (Object.keys(castLoras).length === 0) {
+    setRenderStatus(
+      "scatter requires at least one character with a trained LoRA bound",
+      "error",
+    );
+    return;
+  }
+
+  const shardInput = $("#planner-scatter-shards");
+  let shardCount = shardInput ? parseInt(shardInput.value, 10) : 2;
+  if (!Number.isInteger(shardCount) || shardCount < 2) shardCount = 2;
+  if (shardCount > shotIds.length) shardCount = shotIds.length;
+
+  let renderOverrides;
+  try {
+    renderOverrides = buildRenderOverrides({
+      seedText: readVal("#planner-seed"),
+      keyframeSdxlSize: readVal("#planner-keyframe-sdxl-size"),
+      keyframeModelId: readVal("#planner-ld-keyframe-model-id"),
+      keyframeGuidanceText: readVal("#planner-ld-keyframe-guidance-scale"),
+      keyframeStepsText: readVal("#planner-ld-keyframe-steps"),
+      identityMethod: readVal("#planner-face-lock-mode"),
+      ipScaleText: readVal("#planner-fl-ip-scale"),
+      iidCnScaleText: readVal("#planner-fl-iid-cn-scale"),
+      iidIpScaleText: readVal("#planner-fl-iid-ip-scale"),
+      mcEngine: readVal("#planner-mc-engine"),
+      mcPose: readVal("#planner-mc-pose"),
+      mcLoraScaleText: readVal("#planner-mc-lora-scale"),
+      mcIpScaleText: readVal("#planner-mc-ip-scale"),
+      mcMaxSlotsText: readVal("#planner-mc-max-slots"),
+      mcCnScaleText: readVal("#planner-mc-cn-scale"),
+      i2vModelId: readVal("#planner-wd-i2v-model-id"),
+      numFramesText: readVal("#planner-wan-num-frames"),
+      i2vStepsText: readVal("#planner-wan-inference-steps"),
+      i2vGuidanceText: readVal("#planner-wan-guidance-scale"),
+      fpsText: readVal("#planner-fps"),
+      flowShiftText: readVal("#planner-wd-flow-shift"),
+      loraRankText: readVal("#planner-lora-rank"),
+      loraStepsText: readVal("#planner-lora-steps"),
+      loraLrText: readVal("#planner-lora-lr"),
+      loraResolutionText: readVal("#planner-lora-resolution"),
+      textareaText: readVal("#planner-render-overrides"),
+    });
+  } catch (err) {
+    setRenderStatus(err.message, "error");
+    if (/JSON|textarea/i.test(err.message)) {
+      const ta = $("#planner-render-overrides");
+      if (ta) ta.focus();
+    }
+    return;
+  }
+
+  if (renderState.pollTimer) {
+    clearTimeout(renderState.pollTimer);
+    renderState.pollTimer = null;
+  }
+
+  const qualityTier = $("#planner-quality-tier").value;
+  setRenderStatus(
+    "submitting scatter render (" + shardCount + " shards)...",
+    "loading",
+  );
+  $("#planner-render-btn").disabled = true;
+
+  const reqBody = {
+    bundleKey: bundleState.bundleKey,
+    shotIds,
+    shardCount,
+    castLoras,
+  };
+  if (qualityTier) reqBody.qualityTier = qualityTier;
+  if (renderOverrides && Object.keys(renderOverrides).length > 0) {
+    reqBody.renderOverrides = renderOverrides;
+  }
+  if (planState.audioKey) reqBody.audioKey = planState.audioKey;
+  if (planState.activeProjectId) reqBody.projectId = planState.activeProjectId;
+
+  let resp = null;
+  let data = null;
+  try {
+    resp = await fetch("/api/storyboard/render/scatter", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(reqBody),
+    });
+    data = await resp.json();
+  } catch (err) {
+    setRenderStatus("network error: " + err.message, "error");
+    $("#planner-render-btn").disabled = false;
+    return;
+  }
+
+  if (!resp.ok || (data && data.ok === false)) {
+    const errs =
+      (data && data.errors) || [(data && data.error) || "HTTP " + resp.status];
+    setRenderStatus("scatter submit failed: " + errs.join("; "), "error");
+    $("#planner-render-btn").disabled = false;
+    return;
+  }
+
+  if (!data || !data.jobId) {
+    setRenderStatus("scatter submit returned no jobId", "error");
+    $("#planner-render-btn").disabled = false;
+    return;
+  }
+
+  renderState.jobId = data.jobId;
+  renderState.streamFallbackHit = false;
+  renderState.startedAt = null;
+  if (renderState.tickTimer !== null) {
+    clearInterval(renderState.tickTimer);
+    renderState.tickTimer = null;
+  }
+  renderState.currentProject = deriveProjectFromKey(bundleState.bundleKey || "");
+  renderState.currentLabel = null;
+  if (notifyState.permission === "default") {
+    requestNotificationPermission();
+  }
+  $("#planner-render-result").hidden = false;
+  $("#planner-render-job-id").textContent = data.jobId;
+  setJobStatusBadge(data.status || "IN_QUEUE");
+  setRenderStatus(
+    "scatter submitted -- " + shardCount + " shards gathering...",
+    "loading",
+  );
+  startStream();
+  loadHistory();
   savePersistedState();
 }
 
@@ -4544,7 +4736,22 @@ function renderHistoryList(rows, totalRows) {
     else childrenByParent.set(x.parent_id, [x]);
   }
 
+  // v0.162.0: collect scatter-parent numeric ids so shard children are
+  // suppressed from the top-level list. Shards are shown nested (count +
+  // progress) on the parent card instead of as individual cards. Only rows
+  // whose job_id starts with "scatter-" are parents; non-scatter parent/child
+  // rows (keyframes-from / animate) are unaffected.
+  const scatterParentIds = new Set();
+  for (const x of all) {
+    if (typeof x.job_id === "string" && x.job_id.startsWith("scatter-")) {
+      scatterParentIds.add(x.id);
+    }
+  }
+
   for (const r of rows) {
+    if (typeof r.parent_id === "number" && scatterParentIds.has(r.parent_id)) {
+      continue;
+    }
     list.appendChild(buildHistoryRow(r, childrenByParent));
   }
 }
@@ -4865,6 +5072,33 @@ function buildHistoryRow(r, childrenByParent) {
     modeBadge.textContent = "kf only";
     modeBadge.title = "this render produced SDXL keyframes only; no motion / no silent MP4";
     meta.appendChild(modeBadge);
+  }
+
+  // v0.162.0: scatter parent badge + shard progress. Shard children are
+  // suppressed from the top-level list in renderHistoryList; only the parent
+  // card appears. childrenByParent already indexes shards by parent numeric id.
+  if (typeof r.job_id === "string" && r.job_id.startsWith("scatter-")) {
+    const shards = childrenByParent.get(r.id) || [];
+    const nShards = shards.length;
+    const scatterBadge = document.createElement("span");
+    scatterBadge.className = "planner-history-mode planner-history-mode-scatter";
+    scatterBadge.textContent =
+      nShards ? "distributed -- " + nShards + " shards" : "distributed";
+    scatterBadge.title =
+      "scatter/gather distributed render" +
+      (nShards ? " (" + nShards + " parallel shards)" : "");
+    meta.appendChild(scatterBadge);
+
+    if (r.status === "SCATTERING" || r.status === "IN_PROGRESS" || r.status === "IN_QUEUE") {
+      const done = shards.filter((s) => s.status === "COMPLETED").length;
+      if (nShards > 0) {
+        const progBadge = document.createElement("span");
+        progBadge.className = "planner-history-mode planner-history-mode-progress";
+        progBadge.textContent = done + " of " + nShards + " shards complete";
+        progBadge.title = "shard render progress";
+        meta.appendChild(progBadge);
+      }
+    }
   }
 
   // v0.145.2: version badge for a derived animation (GPU finalize or cloud
@@ -6714,7 +6948,24 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#planner-plan").addEventListener("click", plan);
   $("#planner-reprompt").addEventListener("click", repromptWithErrors);
   $("#planner-bundle-btn").addEventListener("click", bundleNow);
-  $("#planner-render-btn").addEventListener("click", submitRender);
+  // v0.162.0: dispatch to submitScatterRender when the scatter checkbox is
+  // checked; fall through to submitRender for all other cases.
+  $("#planner-render-btn").addEventListener("click", () => {
+    const scatter = $("#planner-scatter");
+    if (scatter && scatter.checked && !scatter.disabled) {
+      submitScatterRender();
+    } else {
+      submitRender();
+    }
+  });
+  // Scatter checkbox: toggle the shard-count row visibility + re-gate.
+  const scatterChk = $("#planner-scatter");
+  if (scatterChk) {
+    scatterChk.addEventListener("change", () => {
+      const wrap = $("#planner-scatter-shard-wrap");
+      if (wrap) wrap.hidden = !scatterChk.checked || scatterChk.disabled;
+    });
+  }
   $("#planner-render-cancel").addEventListener("click", cancelRender);
   const dismissBtn = $("#planner-render-dismiss");
   if (dismissBtn) dismissBtn.addEventListener("click", dismissRenderResult);
@@ -6775,4 +7026,8 @@ document.addEventListener("DOMContentLoaded", () => {
       plan();
     }
   });
+
+  // v0.162.0: gate the scatter checkbox on page load (no storyboard yet,
+  // so it starts disabled with a reason).
+  updateScatterGate();
 });

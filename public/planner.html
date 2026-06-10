@@ -382,6 +382,21 @@
         <input id="planner-keyframes-only" type="checkbox" />
         <span>render keyframes only (preview before generating motion)</span>
       </label>
+      <!-- v0.162.0: scatter/gather distributed render. Enabled only when
+           the storyboard has >= 2 shots AND at least one character slot is
+           bound (scatter requires castLoras to be non-empty -- the server
+           hard-400s otherwise). updateScatterGate() enforces this dynamically
+           and shows a short reason when disabled. The shard-count input is
+           hidden until the checkbox is checked. -->
+      <label class="planner-field-check" id="planner-scatter-wrap">
+        <input id="planner-scatter" type="checkbox" />
+        <span>distributed render (scatter/gather)</span>
+      </label>
+      <span id="planner-scatter-reason" class="planner-status planner-scatter-reason" hidden></span>
+      <div class="planner-scatter-shard-row" id="planner-scatter-shard-wrap" hidden>
+        <label class="planner-field-check" for="planner-scatter-shards">shards</label>
+        <input id="planner-scatter-shards" type="number" min="2" value="2" inputmode="numeric" style="width:5em" />
+      </div>
       <!-- v0.123.0: Phase 2 tiering. The five most-touched render knobs
            (quality tier + keyframes-only above; seed / lora scale /
            consistency here) sit in an always-visible common row. Every

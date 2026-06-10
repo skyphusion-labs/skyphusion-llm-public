@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.162.0
+
+Feat: scatter/gather distributed-render UI + history nesting (GH #2).
+
+**Submit UI (Part A):** adds a "distributed render (scatter/gather)" checkbox and a
+shard-count input to the Render step. The checkbox is disabled with a descriptive reason
+when fewer than 2 shots are present or no character slot is bound (scatter requires
+`castLoras` to be non-empty -- the server hard-400s otherwise). The shard-count input is
+hidden until the checkbox is checked and clamped to `[2, shotCount]`. On submit, calls
+`submitScatterRender()` which POSTs to `/api/storyboard/render/scatter` with `shotIds`
+derived via `sceneIdAt` (matching the GPU's per-shot clip filenames), then drives the
+existing `renderState` poll/stream loop against the returned `scatter-<uuid>` jobId.
+
+**History nesting (Part B):** scatter shard children are no longer shown as individual
+top-level cards. `renderHistoryList` builds a `scatterParentIds` set (rows whose `job_id`
+starts with `scatter-`), then skips any child whose `parent_id` is in that set. The
+scatter parent card gains a "distributed -- N shards" badge and, while `SCATTERING`,
+shows "k of N shards complete" progress computed from `childrenByParent`. Non-scatter
+parent/child rows (keyframes-from, animate) are unaffected.
+
+Files: `public/planner.html`, `public/planner.js`, `public/styles.css`.
+
 ## v0.161.1
 
 Fix: the cron notify-sweep phantom-failed live scatter renders. A `scatter-<uuid>` parent is a

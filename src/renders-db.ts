@@ -376,6 +376,16 @@ export async function getRenderForPoll(
   };
 }
 
+// v0.161.1: the owner email for a render row by jobId. The cron sweep needs it
+// to drive a scatter parent's gather (resolveScatterGather is owner-scoped) for
+// a fire-and-forget scatter with no client polling.
+export async function getRenderOwnerEmail(env: Env, jobId: string): Promise<string | null> {
+  const r = await env.DB.prepare(`SELECT user_email FROM renders WHERE job_id = ?`)
+    .bind(jobId)
+    .first<{ user_email?: unknown }>();
+  return r && typeof r.user_email === "string" && r.user_email.length > 0 ? r.user_email : null;
+}
+
 // v0.136.0: fail a render row by jobId (used when RunPod has no record of the
 // job past the grace window). Guarded so it never clobbers a row that already
 // reached a terminal state. Returns true iff a non-terminal row was flipped.
@@ -479,6 +489,10 @@ export async function claimRenderNotify(
 // forget API render still reaches terminal + emails its owner without a client
 // polling. Only non-terminal rows recent enough to still be live on RunPod;
 // keyframe previews excluded (never emailed). Bounded so one tick is cheap.
+// v0.161.1: scatter shard children (parent_id IS NOT NULL) are excluded -- the
+// parent's gather owns their lifecycle + the single notify, so a shard must not
+// be swept (RunPod-polled + emailed) on its own. Scatter PARENTS (parent_id NULL)
+// stay in the sweep; the scheduled handler drives their gather, never RunPod-polls.
 export async function listUnresolvedNotifiableJobs(
   env: Env,
   maxAgeSeconds: number,
@@ -490,6 +504,7 @@ export async function listUnresolvedNotifiableJobs(
        WHERE status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
          AND notified_at IS NULL
          AND COALESCE(mode, 'full') != 'keyframes-only'
+         AND parent_id IS NULL
          AND submitted_at >= ?
        ORDER BY submitted_at ASC
        LIMIT ?`,

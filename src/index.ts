@@ -100,6 +100,7 @@ import {
   getRenderByIdForUser,
   getRenderForPoll,
   getRenderIdByJobId,
+  getRenderOwnerEmail,
   getScatterChildren,
   insertRender,
   listRendersForUser,
@@ -860,6 +861,20 @@ export default {
         }
         for (const jobId of jobs) {
           try {
+            // v0.161.1: a scatter parent is not a RunPod job; drive its gather
+            // here so a fire-and-forget scatter (no client polling) still
+            // refreshes its shards, merges when every clip lands, reaches a
+            // terminal status, and notifies -- all of which resolveScatterGather
+            // already does (and it never RunPod-polls the synthetic parent id).
+            if (isScatterParentJobId(jobId)) {
+              const owner = await getRenderOwnerEmail(env, jobId).catch(() => null);
+              if (owner) {
+                await resolveScatterGather(env, jobId, owner).catch((err) =>
+                  console.error("sweep scatter gather failed:", jobId, err),
+                );
+              }
+              continue;
+            }
             const outcome = await pollRenderResolved(env, jobId);
             if (outcome.kind === "ok") {
               await updateRenderFromView(env, outcome.view).catch((err) =>
@@ -2789,6 +2804,30 @@ async function pollRenderResolved(
       };
     }
     return { kind: "confirming", note: "cloud animation in progress" };
+  }
+
+  // v0.161.1: scatter parents (scatter-<uuid>) are synthetic rows that OWN N
+  // RunPod shard jobs; the parent is not itself a RunPod job. RunPod-polling it
+  // 404s, and the phantom classifier below would then false-fail the whole
+  // gather mid-run -- exactly the cloud-animate bug guarded above. The gather is
+  // driven by resolveScatterGather (the GET poll handler + the cron sweep); here
+  // we only ensure no caller phantom-fails it: serve a terminal row cached, else
+  // report "confirming" so the caller keeps waiting.
+  if (isScatterParentJobId(jobId)) {
+    const row = await getRenderForPoll(env, jobId).catch(() => null);
+    if (!row) {
+      return { kind: "transient", error: "scatter render row not found", httpStatus: 404 };
+    }
+    if (isTerminalStatus(row.status)) {
+      return {
+        kind: "terminalCached",
+        status: row.status,
+        output: row.output,
+        outputKey: row.output_key,
+        error: row.error,
+      };
+    }
+    return { kind: "confirming", note: "scatter gather in progress" };
   }
 
   const result = await pollRenderJob(env, jobId);

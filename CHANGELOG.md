@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.161.1
+
+Fix: the cron notify-sweep phantom-failed live scatter renders. A `scatter-<uuid>` parent is a
+synthetic row that OWNS N RunPod shard jobs; it is not itself a RunPod job. The every-3-min
+notify sweep (`scheduled`) RunPod-polled every non-terminal render row, so it queried RunPod for
+the synthetic parent id, got a 404, and the phantom-job classifier marked the whole gather
+FAILED mid-run, exactly the cloud-animate class of bug fixed in v0.146.1. Caught on the very
+first live multi-job scatter, where the three shards were healthy and IN_PROGRESS on RunPod the
+entire time the parent was being false-failed.
+
+The fix makes the sweep scatter-aware, mirroring the cloud-animate guard:
+- `pollRenderResolved` short-circuits `scatter-` parents (serve a terminal row cached, else
+  "confirming"), so no caller can phantom-fail a gather.
+- the `scheduled` sweep now DRIVES a scatter parent's gather via `resolveScatterGather` instead
+  of RunPod-polling it, so a fire-and-forget scatter (no client polling) still refreshes its
+  shards, merges on the last clip, reaches a terminal status, and notifies once.
+- the sweep query excludes shard children (`parent_id IS NOT NULL`): the parent's gather owns
+  their lifecycle and the single completion notify, so a shard is never swept or emailed alone.
+
+Validated end-to-end against a live multi-job render: a 10-shot / 3-shard draft scatter of the
+neon_halflife board (reusing the trained Vesper/Rhode LoRAs, no retrain) split [4,3,3], ran three
+parallel RunPod jobs, and the gather assembled one MP4.
+
+### Code
+- `src/index.ts`: `pollRenderResolved` `scatter-` guard; `scheduled` sweep drives `resolveScatterGather` for scatter parents (and `continue`s past the RunPod path); `getRenderOwnerEmail` import
+- `src/renders-db.ts`: `getRenderOwnerEmail` (new); `listUnresolvedNotifiableJobs` excludes shard children (`AND parent_id IS NULL`)
+- `package.json`: 0.161.0 -> 0.161.1
+
+typecheck clean; 608 tests pass.
+
 ## v0.161.0
 
 Feature: distributed scatter/gather rendering. A storyboard render can now be split across N

@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.162.2
+
+Fix: a successful plan left the Refine / Audio / Preflight sections hidden (follow-on to v0.162.1).
+
+The v0.162.1 eviction correctly nulled `planState.storyboard` before the fetch, but
+`renderPlanResult` then called `showRefineSection()`, `showAudioSection()`, and
+`showPreflightSection()` -- all three of which gate on `planState.storyboard` -- BEFORE
+`showBundleStage()`, the only place the storyboard was set back to the freshly planned value. So
+after every successful plan those three sections saw a null storyboard and stayed hidden (or showed
+their "plan first" placeholder). The fix assigns `planState.storyboard = data.storyboard` at the top
+of the success branch, before any section-show call; `showBundleStage()` still sets it again to the
+same value, so the early assignment only makes the ordering deterministic. Caught by the full e2e
+regression run on the live site.
+
+### Code
+- `public/planner.js`: set `planState.storyboard` at the top of the `renderPlanResult` success branch, before the `showXxxSection()` calls
+- `package.json`: 0.162.1 -> 0.162.2
+
+typecheck green; unit suite 608/608 green; regression confirmed against the live planner.
+
 ## v0.162.1
 
 Fix: stale localStorage leaks a previous project's storyboard into a new brief (issue #4).

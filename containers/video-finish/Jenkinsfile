@@ -16,7 +16,7 @@
 // under containers/video-finish/ trigger it.
 
 pipeline {
-  agent any
+  agent { label 'build' }
 
   options {
     timeout(time: 20, unit: 'MINUTES')

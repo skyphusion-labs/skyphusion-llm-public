@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.162.1
+
+Fix: stale localStorage leaks a previous project's storyboard into a new brief (issue #4).
+
+Three changes close the regression. First, `plan()` now nulls `planState.storyboard`,
+`planState.originalStoryboard`, and `planState.refineHistory`, hides `#planner-output`, clears
+`#planner-output-state`, and calls `savePersistedState()` synchronously before the fetch fires --
+so the YAML view can never display a prior project's output during the in-flight window. Second,
+`resetBundleStage()` now also clears `bundleState.sceneStartImages`, which was the one field left
+behind when re-planning. Third, the "clear brief" button is promoted to a full session reset
+("new / reset"): it clears the brief, storyboard, audio bed, bundle, render, and the persisted
+snapshot in one shot, giving users an explicit affordance to start clean without resorting to
+console workarounds.
+
+### Code
+- `public/planner.js`: evict stale storyboard in `plan()` before fetch; clear `sceneStartImages` in `resetBundleStage()`; full reset in `#planner-brief-clear` handler
+- `public/planner.html`: rename "clear brief" button to "new / reset", update title
+- `package.json`: 0.162.0 -> 0.162.1
+
+typecheck not applicable (planner.js is vanilla JS); verified with headless-Chrome harness on mindcrime (6/6 pass).
+
 ## v0.162.0
 
 Feat: scatter/gather distributed-render UI + history nesting (GH #2).

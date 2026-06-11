@@ -2620,9 +2620,18 @@ async function plan() {
 
   const characters = collectCast();
 
+  // v0.161.1: evict the prior storyboard from both memory and the persisted
+  // snapshot BEFORE the fetch so the YAML view never shows a previous project
+  // during the in-flight window (brief->YAML stale-state bug, issue #4).
+  planState.storyboard = null;
+  planState.originalStoryboard = null;
+  planState.refineHistory = [];
+  $("#planner-output").hidden = true;
+  $("#planner-output-state").textContent = "";
   // Reset any prior bundle / render state when re-planning.
   resetBundleStage();
   resetRenderStage();
+  savePersistedState();
 
   setStatus("planning, this can take 5 to 30 seconds...", "loading");
   $("#planner-plan").disabled = true;
@@ -3389,6 +3398,9 @@ async function renderFromKeyframes(bundleKey, btn, status) {
 
 function resetBundleStage() {
   bundleState.perSlotUploads = {};
+  // v0.161.1: also clear scene start images so keyframe slots from a prior
+  // plan never leak into a new one.
+  bundleState.sceneStartImages = {};
   bundleState.bundleKey = null;
   bundleState.sizeBytes = 0;
   bundleState.fileCount = 0;
@@ -6827,16 +6839,28 @@ document.addEventListener("DOMContentLoaded", () => {
   if (chatClear) chatClear.addEventListener("click", clearChat);
   const chatScript = $("#planner-chat-script");
   if (chatScript) chatScript.addEventListener("click", scriptMyPlan);
-  // v0.133.3: red "clear brief" button (lives on the cast field header, far
-  // right). Wipes the brief box and persists the empty state.
+  // v0.133.3 / v0.161.1: "new / reset" button -- full session reset. Clears
+  // the brief, storyboard, audio, bundle, render, and persisted snapshot so
+  // the next plan starts with a clean slate and no prior project bleeds in.
   const briefClear = $("#planner-brief-clear");
   if (briefClear) {
     briefClear.addEventListener("click", () => {
       const briefEl = $("#planner-brief");
-      if (!briefEl) return;
-      briefEl.value = "";
-      persistSoon();
-      briefEl.focus();
+      if (briefEl) briefEl.value = "";
+      planState.storyboard = null;
+      planState.originalStoryboard = null;
+      planState.refineHistory = [];
+      planState.audioKey = null;
+      planState.audioMime = null;
+      planState.audioSourceLabel = null;
+      planState.bpm = null;
+      planState.beatsPerShot = null;
+      planState.activeProjectId = null;
+      $("#planner-output").hidden = true;
+      resetBundleStage();
+      resetRenderStage();
+      savePersistedState();
+      if (briefEl) briefEl.focus();
     });
   }
   const chatInput = $("#planner-chat-input");

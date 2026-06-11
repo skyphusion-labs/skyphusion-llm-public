@@ -2712,6 +2712,10 @@ function renderPlanResult(httpStatus, data, model, characters) {
     const sceneCount =
       data.storyboard && data.storyboard.scenes ? data.storyboard.scenes.length : 0;
     setStatus("planned successfully (" + sceneCount + " scenes)", "success");
+    // Set storyboard before any showXxxSection() calls so they see a
+    // non-null storyboard and unhide correctly. showBundleStage() will
+    // also set it (same value); this just ensures the order is safe. (v0.162.2)
+    planState.storyboard = data.storyboard;
     // v0.49.0: snapshot the freshly-planned storyboard so a "discard
     // edits" button can roll back any subsequent scene-editor mutations.
     planState.originalStoryboard = JSON.parse(JSON.stringify(data.storyboard));

@@ -1,6 +1,6 @@
 name: ci (self-hosted)
 
-# Full CI (typecheck + tests) on the self-hosted mindcrime-ci runner.
+# Full CI (typecheck + tests) on the self-hosted dischord runner.
 # The GitHub-hosted typecheck.yml stays as the safe path for untrusted fork PRs.
 on:
   push:
@@ -24,7 +24,7 @@ jobs:
     # untrusted fork PR execute on the box. Run for pushes (trusted) and only for
     # same-repo (non-fork) PRs; fork PRs still get typecheck via the hosted workflow.
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, linux, x64, mindcrime]
+    runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6

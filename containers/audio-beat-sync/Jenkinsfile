@@ -13,7 +13,7 @@
 // config, not expressible in the Jenkinsfile without breaking manual builds.)
 
 pipeline {
-  agent any
+  agent { label 'build' }
 
   options {
     timeout(time: 20, unit: 'MINUTES')

@@ -7,9 +7,9 @@
 # bind-mounts /var/run/docker.sock and runs the agent with the `docker` group, so
 # this image only needs the client, not a daemon.
 #
-# Build + publish on mindcrime-ci (where Docker lives):
-#   docker build -f ci/node-docker.Dockerfile -t ghcr.io/skyphusion/ci-node-docker:latest .
-#   docker push ghcr.io/skyphusion/ci-node-docker:latest   # optional; Jenkins uses the local image if present
+# Build + publish on dischord or the laptop:
+#   docker build -f ci/node-docker.Dockerfile -t ghcr.io/skyphusion-labs/ci-node-docker:latest .
+#   docker push ghcr.io/skyphusion-labs/ci-node-docker:latest   # optional; Jenkins uses the local image if present
 FROM node:26
 
 RUN apt-get update \

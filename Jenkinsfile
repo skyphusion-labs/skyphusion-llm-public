@@ -24,7 +24,7 @@ pipeline {
       // (see ci/node-docker.Dockerfile). The Docker CLI lets the Deploy stage's
       // `wrangler deploy` build the three Cloudflare Container images
       // (containers/{audio-beat-sync,image-prep,video-finish}) before publishing.
-      image 'ghcr.io/skyphusion/ci-node-docker:latest'
+      image 'ghcr.io/skyphusion-labs/ci-node-docker:latest'
       // Bind-mount the host Docker socket and join the `docker` group (gid 988 on
       // mindcrime-ci, per `id jenkins`) so wrangler's container builds reach the
       // host daemon. Still runs as the Jenkins uid (the docker-pipeline default),

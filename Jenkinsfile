@@ -29,7 +29,8 @@ pipeline {
       image 'ghcr.io/skyphusion-labs/ci-node-docker:latest'
       registryUrl 'https://ghcr.io'
       registryCredentialsId 'ghcr-skyphusion'
-      // Bind-mount the host Docker socket so wrangler's container builds reach the
+      // Bind-mount the host Docker socket and join the `docker` group (gid 988 on
+      // mindcrime-ci, per `id jenkins`) so wrangler's container builds reach the
       // host daemon. Still runs as the Jenkins uid (the docker-pipeline default),
       // NOT root: running as root made npm write root-owned files into the
       // workspace that the host jenkins user then could not clean on the next

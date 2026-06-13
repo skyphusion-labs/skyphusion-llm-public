@@ -35,7 +35,7 @@ pipeline {
       // NOT root: running as root made npm write root-owned files into the
       // workspace that the host jenkins user then could not clean on the next
       // checkout. HOME below points npm at a writable workspace dir.
-      args '-v /var/run/docker.sock:/var/run/docker.sock --group-add docker'
+      args '-v /var/run/docker.sock:/var/run/docker.sock --group-add $(stat -c %g /var/run/docker.sock)'
     }
   }
 

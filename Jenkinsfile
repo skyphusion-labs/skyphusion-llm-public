@@ -29,13 +29,12 @@ pipeline {
       image 'ghcr.io/skyphusion-labs/ci-node-docker:latest'
       registryUrl 'https://ghcr.io'
       registryCredentialsId 'ghcr-skyphusion'
-      // Bind-mount the host Docker socket and join the `docker` group (gid 988 on
-      // mindcrime-ci, per `id jenkins`) so wrangler's container builds reach the
-      // host daemon. Still runs as the Jenkins uid (the docker-pipeline default),
-      // NOT root: running as root made npm write root-owned files into the
-      // workspace that the host jenkins user then could not clean on the next
-      // checkout. HOME below points npm at a writable workspace dir.
-      args '-v /var/run/docker.sock:/var/run/docker.sock --group-add $(stat -c %g /var/run/docker.sock)'
+      // Bind-mount the host Docker socket and join the docker group by GID (988
+      // on the fleet hosts) so wrangler's container builds reach the host daemon.
+      // Docker Pipeline tokenizes args directly -- no shell evaluation -- so the
+      // GID must be hardcoded; --group-add by name fails if the container has no
+      // docker group entry in /etc/group. Still runs as the Jenkins uid, NOT root.
+      args '-v /var/run/docker.sock:/var/run/docker.sock --group-add 988'
     }
   }
 

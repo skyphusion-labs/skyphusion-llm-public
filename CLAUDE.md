@@ -28,7 +28,7 @@ Debugging a deployed worker: `npx wrangler tail`. Inspecting a stuck long-runnin
 
 ## Architecture
 
-Everything lives in one Worker `fetch` handler in `src/index.ts` (~3800 LOC). Pure/reusable logic is extracted into modules so `index.ts` is the orchestrator:
+Everything lives in one Worker `fetch` handler in `src/index.ts` (~4300 LOC). Pure/reusable logic is extracted into modules so `index.ts` is the orchestrator:
 
 - `src/models.ts` — **the model catalog**, single source of truth. Each entry's `id` is the routing key; `type` (`chat`|`image`|`tts`|`video`|`stt`|`music`) picks the dispatcher, `provider` (default `workers-ai`) + `byok_alias` pick the code path, `capabilities`/`streaming` drive the UI. Adding an entry here flows automatically to `GET /api/models` and the frontend picker.
 - `src/providers/*.ts` — per-provider dispatch helpers (`callAnthropic`, `callXai`, `callBedrockNova`/`callBedrockPegasus`, `callGemini`, `callWorkersAIStream`, `callOpenAIStream`, `openai-image`). Each transforms the internal `messages` shape into the provider's request format and back. BYOK providers (Anthropic, xAI, Bedrock) call upstream directly; the rest go through `env.AI.run`.
@@ -62,8 +62,6 @@ These exceed the ~30s `ctx.waitUntil` budget, so they use **Cloudflare Workflows
 The same `LONGRUN` binding serves several workflow kinds (`run()` branches on `event.payload.kind`):
 - **`runGen`** (default; `kind` is `"video"`/`"music"`): Unified Billing / BYOK video + music gen.
 - **`runZipImport`** (`kind: "zip_import"`): bulk `.zip` RAG import; one step per inner file gives each `ingestDocument` a fresh subrequest budget. No chats row; the client polls `GET /api/import/:id` (reads the instance `status().output`, ownership-checked via the recorded `user_email`).
-- **`runCloudAnimate`** (`kind: "cloud_animate"`): animate a render's keyframes via a cloud i2v model, one durable step per shot, assembled by the `video-finish` container into a silent `cloud-<uuid>` row. See `docs/animate-api.md`.
-- **`runHybridAnimate`** (`kind: "hybrid_animate"`): GPU+cloud per-shot animation in one film (dual-lane progress, beat-sync trim, continue-on-error). See `docs/i2v-hybrid-backend.md`.
 
 ## Wrangler bindings reference
 
@@ -74,7 +72,6 @@ Declared in `wrangler.example.toml` (the committed template; the real `wrangler.
 | `AI` | `[ai]` | Unified AI binding — Workers AI models directly + Unified Billing partners through AI Gateway. BYOK providers bypass it. |
 | `DB` | `[[d1_databases]]` (`skyphusion-llm`) | Chat metadata, conversations, RAG chunk text, projects. Fill in `database_id` after `wrangler d1 create`. |
 | `R2` | `[[r2_buckets]]` (`skyphusion-llm`) | All binary artifacts (input + generated output). |
-| `R2_RENDERS` | `[[r2_buckets]]` (`vivijure`) | Storyboard/render artifacts (bundles, renders, project-state tarballs) the vivijure-serverless GPU worker reads/writes; the Worker serves them back via `/api/artifact` + `/api/storyboard/*` (v0.39.1). Point it at the same bucket as `R2` if you do not want the split. |
 | `VEC` | `[[vectorize]]` (`skyphusion-llm-vec`) | RAG embeddings, 768-dim (`@cf/baai/bge-base-en-v1.5`), cosine. |
 | `ASSETS` | `[assets]` (`./public`) | Static frontend served via Workers Assets. |
 | `LONGRUN` | `[[workflows]]` (`skyphusion-longrun` / `LongRunWorkflow`) | Durable execution for long-running video/music gen (v0.12.0). |
@@ -120,24 +117,6 @@ All matched in the single `fetch` handler in `src/index.ts` (top-of-file comment
 | GET / PATCH / DELETE | `/api/projects/:id` | Get / update name+desc+system_prompt / delete (docs kept). |
 | POST / DELETE | `/api/projects/:pid/documents/:did` | Attach / detach a document. |
 | POST | `/api/projects/:id/import-discord` | Import a DiscordChatExporter JSON export. |
-
-### Storyboard / Vivijure routes
-
-The Vivijure studio control plane (planner + cast builder) lives in the same `fetch` handler. Full contracts: `docs/render-api.md` (GPU render submit), `docs/animate-api.md` (animate + score), `docs/cast-api.md` (cast/LoRA), `docs/containers.md` (the three CPU containers), plus the design docs `docs/i2v-backend-selector.md` / `docs/i2v-hybrid-backend.md` and the user guide `docs/vivijure-walkthrough.md`.
-
-| Method | Path | Purpose |
-|---|---|---|
-| POST | `/api/storyboard/plan` · `/refine` · `/yaml` · `/markers` · `/preflight` | LLM storyboard planning, YAML re-emit, NLE markers, readiness checks. |
-| GET / POST | `/api/storyboard/projects` (+ `/:id`, `/:id/storyboard`) | Storyboard project CRUD + snapshot save. |
-| POST | `/api/storyboard/audio-upload` · `/character-ref` · `/bundle` | Stage an audio bed / a character ref image / assemble the `.tar.gz` bundle. |
-| POST | `/api/audio/analyze` | Beat-sync (librosa) via the `AUDIO_BEAT_SYNC` container. |
-| POST | `/api/video/finish` | Concat/crossfade/mux via the `VIDEO_FINISH` container. |
-| POST / GET | `/api/storyboard/render` · `/render-from-keyframes` · `/renders` · `/renders/adopt` | Submit a GPU render / render from injected keyframes / list / adopt an external job. |
-| GET / DELETE | `/api/storyboard/render/:jobId` (+ `/stream`) | Poll one render (resolves vs RunPod) / cancel / SSE status stream. |
-| POST / PATCH / DELETE | `/api/storyboard/renders/:id` (+ `/regen-shot`, `/finalize`, `/retry`) | Per-render edit/delete; per-shot keyframe regen; finalize a preview; retry. |
-| POST | `/api/storyboard/renders/:id/animate-cloud` · `/animate-hybrid` | Animate a keyframes-only preview (cloud i2v / GPU+cloud hybrid). Workflow-backed `cloud-<uuid>`. |
-| POST | `/api/storyboard/renders/:id/add-audio` · `/add-narration` | Score a finished render off-GPU (music mux / TTS narration). |
-| GET / POST / PATCH / DELETE | `/api/cast` (+ `/:id`, `/:id/portrait`, `/:id/refs[/:key]`, `/:id/sources[/:key]`, `/:id/train-lora`, `/:id/lora-status`) | Cast CRUD, portrait/refs/sources staging, GPU LoRA training + poll. |
 
 ## Conventions (from CONTRIBUTING.md — enforced)
 

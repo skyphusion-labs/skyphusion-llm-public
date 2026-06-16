@@ -1,0 +1,8 @@
+            - name: TypeScript Checks
+  # You may pin to the exact commit or the version.
+  # uses: owen-6936/ts-checks@e8cbebd864852c71f518e51c6aa7baaeab6322a3
+  uses: owen-6936/ts-checks@v1.0.0
+  with:
+    # The Node.js version to run the checks
+    node-version: # optional, default is 20
+          

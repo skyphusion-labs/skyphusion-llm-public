@@ -23,7 +23,6 @@ import type { ProviderStreamEvent } from "./parsers/types";
 import type { ModelType, Provider, ModelEntry } from "./models";
 import { MODELS } from "./models";
 import type { Env } from "./env";
-import { isRendersKey } from "./r2-routing";
 import { parseDataUrl, base64ToBytes, bytesToBase64, extFromMime } from "./utils";
 import { aiRun, aiLogId } from "./ai-binding";
 import { extractOutput, extractUsage, detectProviderFailure, extractProxiedImageUrl } from "./output-extract";
@@ -204,16 +203,6 @@ async function r2Put(env: Env, prefix: "in" | "out", mime: string, bytes: Uint8A
     customMetadata: { user_email: userEmail },
   });
   return key;
-}
-
-// v0.39.1: which R2 bucket holds a given artifact key. Storyboard /
-// render keys (bundles, renders, projects, staged character refs) live
-// in R2_RENDERS; everything else (chat input + output artifacts, ZIP
-// exports, etc.) stays on R2. The pure prefix matcher lives in
-// src/r2-routing.ts so it can be unit-tested without importing this
-// file (and its cloudflare:workers dependency) under the node pool.
-function pickArtifactBucket(env: Env, key: string): R2Bucket {
-  return isRendersKey(key) ? env.R2_RENDERS : env.R2;
 }
 
 // Streaming variant: pipes a ReadableStream directly into R2 without
@@ -3877,10 +3866,8 @@ async function handleDiscordImport(request: Request, env: Env, projectId: number
 
 async function handleArtifact(request: Request, env: Env, key: string): Promise<Response> {
   const userEmail = getUserEmail(request);
-  // v0.39.1: route storyboard / render keys to env.R2_RENDERS; everything
-  // else (chat input + output artifacts) stays on env.R2. See
-  // pickArtifactBucket / isRendersKey above.
-  const bucket = pickArtifactBucket(env, key);
+  // Artifacts (chat input + output) all live on env.R2.
+  const bucket = env.R2;
   // v0.142.0: forward the request's conditional headers (If-None-Match) to R2.
   // Artifacts at a STABLE key can be overwritten in place (e.g. regen-shot
   // rewrites renders/<project>/<job>/keyframes/<shot>.png), and the old

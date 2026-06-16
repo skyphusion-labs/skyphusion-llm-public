@@ -12,72 +12,18 @@
 // secret runtime paths surface meaningful errors instead of TypeScript
 // telling deployers they need fields they may legitimately not have set.
 
-// v0.137.0: RPC surface exposed by the skyphusion-email Worker's EmailService
-// entrypoint (separate repo: github.com/SkyPhusion/skyphusion-email). Mirrors its
-// EmailRequest; kept minimal and local so this repo doesn't depend on that package.
-export interface EmailServiceBinding {
-  send(req: {
-    to: string | string[];
-    from?: string | { email: string; name?: string };
-    replyTo?: string | { email: string; name?: string };
-    cc?: string | string[];
-    bcc?: string | string[];
-    subject: string;
-    html?: string;
-    text?: string;
-    headers?: Record<string, string>;
-  }): Promise<{ messageId?: string }>;
-}
-
 export interface Env {
   AI: Ai;
   DB: D1Database;
   R2: R2Bucket;
-  // v0.39.1: separate bucket for storyboard / render artifacts (bundles,
-  // silent MP4s, SDXL keyframes, project state tarballs, staged character
-  // refs). The vivijure-serverless GPU worker reads + writes this bucket
-  // via its own R2_BUCKET env var; the Worker uses this binding so chat-
-  // side R2 (`R2`) stays untouched. Point both bindings at the same
-  // bucket in wrangler.toml if you don't want the split.
-  R2_RENDERS: R2Bucket;
-  // v0.107.0: R2 S3-compatible credentials for SigV4 presigning (src/r2-presign.ts).
-  // The container backends have no R2 binding, so the Worker presigns short-lived
-  // GET/PUT URLs against the R2_RENDERS bucket over the public S3 endpoint.
-  // ACCESS_KEY_ID + SECRET_ACCESS_KEY are secrets (R2 API token, Object R+W on the
-  // bucket); ENDPOINT (https://<accountid>.r2.cloudflarestorage.com) and BUCKET are
-  // non-secret [vars]. All optional so presign-free deploys still typecheck.
-  R2_S3_ACCESS_KEY_ID?: string;
-  R2_S3_SECRET_ACCESS_KEY?: string;
-  R2_S3_ENDPOINT?: string;
-  R2_S3_BUCKET?: string;
   VEC: VectorizeIndex;
   ASSETS: Fetcher;
-  // v0.137.0: service binding to the skyphusion-email Worker's EmailService RPC
-  // entrypoint. Sends transactional mail from @skyphusion.org with no API token
-  // or network hop. Optional so deploys without the binding still typecheck;
-  // guard with `if (env.EMAIL)` before calling send().
-  EMAIL?: EmailServiceBinding;
   GATEWAY_ID: string;
   // v0.12.0: Workflow binding for Unified Billing video + music gen. The
   // class is LongRunWorkflow, defined at the bottom of src/index.ts. Each
   // instance invokes env.AI.run (long-running), downloads the artifact,
   // uploads to R2, and finalizes the D1 row across retryable steps.
   LONGRUN: Workflow;
-  // v0.107.0: Cloudflare Container DO for CPU-only audio beat analysis
-  // (librosa). The cast/planner audio flow presigns an R2 GET URL and POSTs
-  // it to the container's /analyze; class is AudioBeatSyncContainer in
-  // src/containers/audio-beat-sync.ts. Replaces the reverted GPU pod action.
-  AUDIO_BEAT_SYNC: DurableObjectNamespace;
-  // v0.107.0: Container DO for CPU rembg background removal on cast portraits
-  // (class ImagePrepContainer in src/containers/image-prep.ts). Worker presigns
-  // R2 GET/PUT and POSTs to /portrait/prep at bundle time; moves rembg off the
-  // GPU pod. See docs/containers.md.
-  IMAGE_PREP: DurableObjectNamespace;
-  // v0.120.0: Container DO for CPU ffmpeg video finishing (class
-  // VideoFinishContainer in src/containers/video-finish.ts). Worker presigns R2
-  // GET (per-shot clips + optional soundtrack) and PUT (final MP4) and POSTs to
-  // /finish; moves clip concat / crossfade / audio mux off the GPU pod.
-  VIDEO_FINISH: DurableObjectNamespace;
   // v0.108.0: per-session Durable Object that wraps a @cf/deepgram/flux
   // conversational STT WebSocket so the final transcript persists to /history
   // on close (a plain Worker has no reliable post-101 hook to write D1). Class
@@ -98,11 +44,4 @@ export interface Env {
   // v0.17.0: Tavily Search API key for the optional web-search retrieval source.
   // Optional: when unset, web search uses Wikipedia only (no key required).
   TAVILY_API_KEY?: string;
-  // v0.32.0: RunPod serverless endpoint credentials for /api/storyboard/render.
-  // RUNPOD_API_KEY is a Bearer token from the RunPod console (User Settings ->
-  // API Keys). RUNPOD_ENDPOINT_ID is the vivijure-serverless endpoint id (the
-  // path segment after /v2/ on a RunPod endpoint URL). Both optional; the
-  // submit / poll routes return 503 with a clear error when either is missing.
-  RUNPOD_API_KEY?: string;
-  RUNPOD_ENDPOINT_ID?: string;
 }

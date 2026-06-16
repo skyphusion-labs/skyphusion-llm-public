@@ -2,15 +2,6 @@ name = "skyphusion-llm"
 main = "src/index.ts"
 compatibility_date = "2026-05-01"
 
-# v0.139.0: cron for the render-done notification sweep. The scheduled() handler
-# resolves recent fire-and-forget renders (API contracts fired with no client
-# polling) so their owners still get the opt-in completion email. Cheap: a no-op
-# tick when nothing is in flight. NOTE: prod injects wrangler.toml from a Jenkins
-# secret, so this block must also be added to that secret for the cron to run in
-# production; the email otherwise still fires on the normal poll path.
-[triggers]
-crons = ["*/3 * * * *"]
-
 # AI binding. The unified binding handles Workers AI models directly and routes
 # third-party Unified Billing models (video and music partners) through the
 # Cloudflare AI Gateway. Anthropic (Unified Billing) and xAI (BYOK) bypass the
@@ -32,19 +23,6 @@ database_id = "PLACEHOLDER_RUN_wrangler_d1_create_THEN_PASTE_HERE"
 binding = "R2"
 bucket_name = "skyphusion-llm"
 
-# v0.39.1: separate bucket for storyboard / render artifacts. The
-# vivijure-serverless GPU worker writes bundles, renders, and project
-# state tarballs to whatever bucket its own R2_BUCKET env var names;
-# this binding lets the Worker read them back through /api/artifact
-# and the /api/storyboard/* routes. Keeps the chat-side artifacts on
-# `R2` untouched. Point both bindings at the same bucket if you do
-# not want the split.
-# Create with:
-#   npx wrangler r2 bucket create vivijure
-[[r2_buckets]]
-binding = "R2_RENDERS"
-bucket_name = "vivijure"
-
 # Vectorize index for RAG document embeddings. 768 dimensions matches
 # @cf/baai/bge-base-en-v1.5; cosine similarity.
 # Create with:
@@ -58,15 +36,6 @@ index_name = "skyphusion-llm-vec"
 directory = "./public"
 binding = "ASSETS"
 
-# v0.137.0: service binding to the skyphusion-email Worker (separate repo +
-# deploy: github.com/SkyPhusion/skyphusion-email). Lets the Worker send
-# transactional mail via env.EMAIL.send(...) with no API token or network hop.
-# entrypoint is the WorkerEntrypoint class exported by skyphusion-email.
-[[services]]
-binding = "EMAIL"
-service = "skyphusion-email"
-entrypoint = "EmailService"
-
 # Cloudflare Workflow for long-running Unified Billing video and music gen
 # (v0.12.0). env.AI.run for these models blocks until completion (30s-3min),
 # which exceeds the ~30s waitUntil budget after an HTTP response. Workflows
@@ -78,44 +47,6 @@ entrypoint = "EmailService"
 name = "skyphusion-longrun"
 binding = "LONGRUN"
 class_name = "LongRunWorkflow"
-
-# v0.107.0: CPU-only librosa audio beat-sync container. The Worker presigns an
-# R2 GET URL and POSTs it to the container's /analyze. Source lives at
-# containers/audio-beat-sync/. Uses new_sqlite_classes per the official CF
-# container template.
-[[durable_objects.bindings]]
-name = "AUDIO_BEAT_SYNC"
-class_name = "AudioBeatSyncContainer"
-
-[[containers]]
-class_name = "AudioBeatSyncContainer"
-image = "./containers/audio-beat-sync/Dockerfile"
-max_instances = 3
-instance_type = "standard-1"
-
-# v0.107.0: CPU rembg background-removal container (cast portraits at bundle time).
-[[durable_objects.bindings]]
-name = "IMAGE_PREP"
-class_name = "ImagePrepContainer"
-
-[[containers]]
-class_name = "ImagePrepContainer"
-image = "./containers/image-prep/Dockerfile"
-max_instances = 5
-instance_type = "standard-1"
-
-# v0.121.0: CPU ffmpeg video-finish container. Worker presigns R2 GET (per-shot
-# clips + optional soundtrack) + PUT (final MP4) and POSTs to /finish; assembles
-# concat / crossfade / audio mux off the GPU pod. Source: containers/video-finish/.
-[[durable_objects.bindings]]
-name = "VIDEO_FINISH"
-class_name = "VideoFinishContainer"
-
-[[containers]]
-class_name = "VideoFinishContainer"
-image = "./containers/video-finish/Dockerfile"
-max_instances = 3
-instance_type = "standard-1"
 
 # v0.108.0: per-session DO wrapping a @cf/deepgram/flux conversational STT
 # WebSocket; persists the final transcript to /history on close. Source:
@@ -139,6 +70,14 @@ new_sqlite_classes = ["SttSession"]
 [[migrations]]
 tag = "v4"
 new_sqlite_classes = ["VideoFinishContainer"]
+
+# Retire the CPU container Durable Objects (audio-beat-sync, image-prep,
+# video-finish) extracted to the vivijure worker -- their bindings,
+# [[containers]] blocks, and worker exports are removed. v1/v2/v4 above stay as
+# the historical create records; this drops the now-unused classes + their storage.
+[[migrations]]
+tag = "v5"
+deleted_classes = ["AudioBeatSyncContainer", "ImagePrepContainer", "VideoFinishContainer"]
 
 # Per-instance observability for the worker (lets you tail logs in the
 # dashboard). Workflows have their own dashboard surface; this enables it
@@ -164,11 +103,3 @@ enabled = true
 #                   NOT use this; it rides Unified Billing.),
 #   TAVILY_API_KEY (optional, v0.17.0; for the web-search retrieval source.
 #                   When unset, web search falls back to Wikipedia only).
-#   R2_S3_ACCESS_KEY_ID + R2_S3_SECRET_ACCESS_KEY (v0.107.0; an R2 API token with
-#                   Object Read+Write on the R2_RENDERS bucket. Used by
-#                   src/r2-presign.ts to mint presigned GET/PUT URLs for the
-#                   container backends. Pair with the [vars] below.)
-#
-# Non-secret [vars] for presigning (add to your wrangler.toml [vars] block):
-#   R2_S3_ENDPOINT = "https://<accountid>.r2.cloudflarestorage.com"
-#   R2_S3_BUCKET   = "<your R2_RENDERS bucket name>"

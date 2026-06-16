@@ -2915,14 +2915,24 @@ async function searchWikipedia(query: string): Promise<RetrievedWebResult[]> {
 }
 
 function stripWikipediaSnippet(html: string): string {
-  return html
-    .replace(/<[^>]+>/g, "")
+  // Strip HTML tags to a fixpoint first, so a reassembled/nested tag (e.g.
+  // "<<script>script>") can't survive a single pass, THEN decode the handful of
+  // entities Wikipedia emits -- decoding &amp; LAST so an encoded entity like
+  // "&amp;lt;" stays literal text instead of being double-unescaped into "<".
+  // Output is plain text for an LLM context block (not an HTML/DOM sink).
+  let prev = "";
+  let s = html;
+  while (s !== prev) {
+    prev = s;
+    s = s.replace(/<[^>]+>/g, "");
+  }
+  return s
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
     .replace(/\s+/g, " ")
     .trim();
 }

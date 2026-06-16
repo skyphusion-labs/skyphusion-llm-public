@@ -79,6 +79,16 @@ new_sqlite_classes = ["VideoFinishContainer"]
 tag = "v5"
 deleted_classes = ["AudioBeatSyncContainer", "ImagePrepContainer", "VideoFinishContainer"]
 
+# Cursor-align to the live worker. The 3 container Durable Objects were deleted
+# out-of-band via the Cloudflare dashboard (not a tagged migration), but the live
+# worker's migration cursor was already at "v6" from an earlier deploy. With this
+# file ending at v5, wrangler could not find v6 and re-applied migrations from v1,
+# hitting code 10074 on the still-live SttSession DO. This EMPTY tag has zero DO
+# operations -- a pure cursor advance so wrangler resumes at v6 and applies nothing
+# (the containers stay gone; SttSession is untouched).
+[[migrations]]
+tag = "v6"
+
 # Per-instance observability for the worker (lets you tail logs in the
 # dashboard). Workflows have their own dashboard surface; this enables it
 # for the rest of the worker too.

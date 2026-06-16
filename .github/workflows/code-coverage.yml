@@ -12,6 +12,8 @@ jobs:
     permissions:
       contents: read
       id-token: write      # Required for GitHub Code Quality features
+      code-quality: write    # Grants the action permission to upload coverage data
+      pull-requests: write   # Allows the coverage engine to append the PR
 
     steps:
       - name: Checkout repository

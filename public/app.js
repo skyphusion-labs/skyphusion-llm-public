@@ -801,32 +801,9 @@ function renderOutputArtifactHTML(oa) {
   if (!oa) return "";
   const url = artifactUrl(oa.key);
   if (oa.type === "image") {
-    // v0.87.0: "send to cast" affordance. The backend endpoints
-    // POST /api/cast/:id/portrait and POST /api/cast/:id/refs already
-    // accept {from_chat_artifact: oa.key} and do a server-side R2 copy
-    // from env.R2 (chat outputs) into env.R2_RENDERS (cast bucket), so
-    // any chat image becomes a one-click cast portrait or training ref
-    // without a download + re-upload round-trip. The toggle button
-    // expands a panel with a cast picker (populated on first open from
-    // /api/cast) and two action buttons.
-    const keyAttr = escapeHtml(oa.key);
     return `
       <img class="output-image" src="${escapeHtml(url)}" alt="generated image">
-      <div class="output-actions">
-        <a href="${escapeHtml(url)}" download>download</a>
-        <button class="cast-send-toggle" type="button" data-artifact-key="${keyAttr}">send to cast</button>
-      </div>
-      <div class="cast-send-panel" hidden data-artifact-key="${keyAttr}">
-        <label class="cast-send-row">
-          <span class="cast-send-label">cast</span>
-          <select class="cast-send-target" disabled></select>
-        </label>
-        <div class="cast-send-actions">
-          <button class="cast-send-portrait" type="button" disabled>set portrait</button>
-          <button class="cast-send-ref" type="button" disabled>add to refs</button>
-        </div>
-        <div class="cast-send-status" role="status" aria-live="polite"></div>
-      </div>`;
+      <div class="output-actions"><a href="${escapeHtml(url)}" download>download</a></div>`;
   } else if (oa.type === "audio") {
     return `
       <audio class="output-audio" controls src="${escapeHtml(url)}"></audio>
@@ -1596,101 +1573,6 @@ newChatBtn.addEventListener("click", () => {
 // the transcript is re-rendered via innerHTML on each turn change, which would
 // detach any directly-bound listeners.
 transcriptEl.addEventListener("click", handleTurnAction);
-transcriptEl.addEventListener("click", handleCastSendAction);
-
-// v0.87.0: send-to-cast affordance for chat image artifacts.
-// loadCastList caches the list per page-load; cache invalidates on a
-// successful POST so the next open re-fetches (mostly to pick up a new
-// portrait if one was made in the cast UI between sends).
-let _castListPromise = null;
-async function loadCastList() {
-  if (_castListPromise) return _castListPromise;
-  _castListPromise = (async () => {
-    const data = await api("/api/cast");
-    return Array.isArray(data && data.cast) ? data.cast : [];
-  })();
-  return _castListPromise;
-}
-
-async function handleCastSendAction(e) {
-  const target = e.target;
-  if (!(target instanceof Element)) return;
-
-  // Toggle: open / close the panel for this artifact.
-  if (target.classList.contains("cast-send-toggle")) {
-    const key = target.getAttribute("data-artifact-key");
-    if (!key) return;
-    const panel = document.querySelector(
-      `.cast-send-panel[data-artifact-key="${CSS.escape(key)}"]`,
-    );
-    if (!panel) return;
-    if (!panel.hidden) { panel.hidden = true; return; }
-    panel.hidden = false;
-    const sel = panel.querySelector(".cast-send-target");
-    const portraitBtn = panel.querySelector(".cast-send-portrait");
-    const refBtn = panel.querySelector(".cast-send-ref");
-    const status = panel.querySelector(".cast-send-status");
-    status.textContent = "";
-    sel.innerHTML = "<option value=''>loading cast...</option>";
-    sel.disabled = true;
-    portraitBtn.disabled = true;
-    refBtn.disabled = true;
-    try {
-      const cast = await loadCastList();
-      if (cast.length === 0) {
-        sel.innerHTML = "<option value=''>no cast yet</option>";
-        status.textContent = "Create a cast member in /cast first.";
-        return;
-      }
-      sel.innerHTML = cast
-        .map((c) => `<option value="${c.id}">${escapeHtml(c.name || c.slug || "#" + c.id)}</option>`)
-        .join("");
-      sel.disabled = false;
-      portraitBtn.disabled = false;
-      refBtn.disabled = false;
-    } catch (err) {
-      sel.innerHTML = "<option value=''>error</option>";
-      status.textContent = "Couldn't load cast: " + (err.message || err);
-    }
-    return;
-  }
-
-  // Action: set as portrait, or add as ref.
-  const isPortrait = target.classList.contains("cast-send-portrait");
-  const isRef = target.classList.contains("cast-send-ref");
-  if (!isPortrait && !isRef) return;
-  const panel = target.closest(".cast-send-panel");
-  if (!panel) return;
-  const key = panel.getAttribute("data-artifact-key");
-  const sel = panel.querySelector(".cast-send-target");
-  const status = panel.querySelector(".cast-send-status");
-  const portraitBtn = panel.querySelector(".cast-send-portrait");
-  const refBtn = panel.querySelector(".cast-send-ref");
-  const castId = sel && sel.value;
-  if (!castId || !key) return;
-  const subRoute = isPortrait ? "portrait" : "refs";
-  const verb = isPortrait ? "Set as portrait" : "Add to refs";
-  status.textContent = verb + "...";
-  portraitBtn.disabled = true;
-  refBtn.disabled = true;
-  try {
-    await api(`/api/cast/${castId}/${subRoute}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ from_chat_artifact: key }),
-    });
-    const castName = sel.options[sel.selectedIndex] && sel.options[sel.selectedIndex].text;
-    status.textContent = isPortrait
-      ? `Set as portrait for ${castName}.`
-      : `Added as training ref for ${castName}.`;
-    _castListPromise = null;
-  } catch (err) {
-    status.textContent = "Error: " + (err.message || err);
-  } finally {
-    portraitBtn.disabled = false;
-    refBtn.disabled = false;
-  }
-}
 
 async function handleTurnAction(e) {
   const btn = e.target.closest(".turn-action");

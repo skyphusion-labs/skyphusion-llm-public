@@ -55,41 +55,38 @@ class_name = "LongRunWorkflow"
 name = "STT_SESSION"
 class_name = "SttSession"
 
+# Migration history (v1-v6): all tags are cursor-advance-only for new deployments.
+#
+# The live skyphusion-llm worker was built up incrementally via direct CF API calls
+# and out-of-band dashboard ops, NOT purely through wrangler migration tags. By the
+# time wrangler.example.toml was introduced as a deploy template, the live worker
+# already had:
+#   - SttSession DO namespace registered with use_sqlite=true (v3 intent applied)
+#   - AudioBeatSyncContainer, ImagePrepContainer, VideoFinishContainer DO namespaces
+#     deleted (v5 intent applied)
+#
+# Wrangler tracks migration cursor server-side. If the cursor is behind v6, trying
+# to apply any of v1-v5 fails: new_sqlite_classes errors on existing instances
+# (code 10074), and deleted_classes errors because those classes are no longer
+# exported in the current script (also 10074). All tags below are therefore
+# cursor-advance-only -- zero DO operations -- so wrangler skips past them cleanly
+# to v6 regardless of where the cursor sits. DO state is correct on the live worker;
+# these tags just bring the cursor in sync. (v0.164.2)
 [[migrations]]
 tag = "v1"
-new_sqlite_classes = ["AudioBeatSyncContainer"]
 
 [[migrations]]
 tag = "v2"
-new_sqlite_classes = ["ImagePrepContainer"]
 
 [[migrations]]
 tag = "v3"
-# SttSession was created as a regular DO before the new_sqlite_classes declaration
-# was added to this file; existing instances cannot have the sqlite migration
-# applied retroactively (CF API code 10074). Cursor-advance only -- SttSession DOs
-# are untouched (they continue using their pre-sqlite storage).
-# (v0.164.1)
 
 [[migrations]]
 tag = "v4"
-new_sqlite_classes = ["VideoFinishContainer"]
 
-# Retire the CPU container Durable Objects (audio-beat-sync, image-prep,
-# video-finish) moved to a separate worker project; their bindings,
-# [[containers]] blocks, and worker exports are removed. v1/v2/v4 above stay as
-# the historical create records; this drops the now-unused classes + their storage.
 [[migrations]]
 tag = "v5"
-deleted_classes = ["AudioBeatSyncContainer", "ImagePrepContainer", "VideoFinishContainer"]
 
-# Cursor-align to the live worker. The 3 container Durable Objects were deleted
-# out-of-band via the Cloudflare dashboard (not a tagged migration), but the live
-# worker's migration cursor was already at "v6" from an earlier deploy. With this
-# file ending at v5, wrangler could not find v6 and re-applied migrations from v1,
-# hitting code 10074 on the still-live SttSession DO. This EMPTY tag has zero DO
-# operations -- a pure cursor advance so wrangler resumes at v6 and applies nothing
-# (the containers stay gone; SttSession is untouched).
 [[migrations]]
 tag = "v6"
 

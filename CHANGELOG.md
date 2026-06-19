@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.164.2
+
+fix(deploy): convert all v1-v5 migration tags to cursor-advance, clear remaining 10074s (v0.164.2)
+
+v0.164.1 fixed v3, but GHA still failed: `Cannot apply delete-class migration to class
+'AudioBeatSyncContainer' which was not exported in the previous version` (code 10074 on v5).
+
+Root cause (confirmed via CF API): the live skyphusion-llm worker was built up through direct
+CF API calls and out-of-band dashboard operations, not purely through wrangler migration tags.
+By the time this template file was introduced, the live worker already had SttSession registered
+with `use_sqlite: true` AND all three container DO namespaces deleted. The migration cursor is
+behind v6, so wrangler attempts to re-apply v1-v5; every attempt fails because the DO state
+those tags describe is already correct on the live worker.
+
+Fix: all six tags (v1-v5 formerly; v6 was already empty) are now cursor-advance-only. Zero DO
+operations on any tag. Wrangler skips past v1-v6, finds nothing to apply, and deploys cleanly.
+The live DO state (SttSession with sqlite, containers gone) is correct and untouched.
+
+### Code
+- `wrangler.example.toml`: v1-v5 all converted to empty cursor-advance tags; block comment
+  explains the history and why all ops are no-ops (v0.164.2)
+- `package.json`: 0.164.1 -> 0.164.2
+
+typecheck green (no source changes); vitest green.
+
 ## v0.164.1
 
 fix(deploy): clear GHA deploy 10074 by converting v3 migration to cursor-advance (v0.164.1)

@@ -12,7 +12,7 @@
 // same way: env.AI.run takes no AbortSignal, so we cancel the reader when the
 // consumer signal fires.
 
-import type { Env } from "../env";
+import type { AiContext } from "../ai-binding";
 import type { ModelEntry } from "../models";
 import type { ProviderStreamEvent } from "../parsers/types";
 import { aiRun } from "../ai-binding";
@@ -20,12 +20,12 @@ import { extractSSEDataPayloads } from "../parsers/sse-framer";
 import { interpretOpenAISSEFrame } from "../parsers/openai-sse";
 
 export async function* callOpenAIStream(
-  env: Env,
+  ctx: AiContext,
   model: ModelEntry,
   messages: Array<unknown>,
   signal: AbortSignal,
 ): AsyncGenerator<ProviderStreamEvent> {
-  const result = await aiRun(env, model.id, { messages, stream: true });
+  const result = await aiRun(ctx, model.id, { messages, stream: true });
 
   if (!(result instanceof ReadableStream)) {
     throw new Error(`OpenAI proxied model did not return a stream (got ${typeof result}). The binding may not honor stream:true for this model; use POST /api/chat instead.`);

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A multimodal AI playground deployed as a **single Cloudflare Worker** (no framework, no build step beyond TypeScript). One web UI behind Cloudflare Access exposes chat (38 models / 6 providers), image / TTS / STT / video / music generation, and RAG over PDF/XLSX. The interesting part is the patterns, not the model count: every modality funnels through `env.AI.run()` (the unified AI binding) wrapped by AI Gateway, with BYOK escape hatches for providers Unified Billing doesn't cover.
+A multimodal AI playground deployed as a **single Cloudflare Worker** (no framework, no build step beyond TypeScript). One web UI behind Cloudflare Access exposes chat (35 models / 5 providers), image / TTS / STT / video / music generation, and RAG over files of any type. The interesting part is the patterns, not the model count: every modality funnels through `env.AI.run()` (the unified AI binding) or gateway provider endpoints with **Cloudflare Unified Billing**. The one deployer BYOK escape hatch is optional `OPENAI_API_KEY` for `gpt-image-1.5` transparent PNGs, because the Unified Billing proxy rejects `background`/`output_format`.
 
 ## Commands
 
@@ -28,11 +28,11 @@ Debugging a deployed worker: `npx wrangler tail`. Inspecting a stuck long-runnin
 
 ## Architecture
 
-Everything lives in one Worker `fetch` handler in `src/index.ts` (~4300 LOC). Pure/reusable logic is extracted into modules so `index.ts` is the orchestrator:
+Everything lives in one Worker `fetch` handler in `src/index.ts`. Pure/reusable logic is extracted into modules so `index.ts` is the orchestrator:
 
-- `src/models.ts` — **the model catalog**, single source of truth. Each entry's `id` is the routing key; `type` (`chat`|`image`|`tts`|`video`|`stt`|`music`) picks the dispatcher, `provider` (default `workers-ai`) + `byok_alias` pick the code path, `capabilities`/`streaming` drive the UI. Adding an entry here flows automatically to `GET /api/models` and the frontend picker.
-- `src/providers/*.ts` — per-provider dispatch helpers (`callAnthropic`, `callXai`, `callBedrockNova`/`callBedrockPegasus`, `callGemini`, `callWorkersAIStream`, `callOpenAIStream`, `openai-image`). Each transforms the internal `messages` shape into the provider's request format and back. BYOK providers (Anthropic, xAI, Bedrock) call upstream directly; the rest go through `env.AI.run`.
-- `src/parsers/*.ts` — streaming adapters, one per wire format (Anthropic native SSE, OpenAI-compatible SSE for xAI/OpenAI, Bedrock `vnd.amazon.eventstream` binary frames, Workers AI SSE, Gemini SSE), all normalized to a common `ProviderStreamEvent` envelope (`parsers/types.ts`). `sse-framer.ts` is the shared line framer. **These are the bulk of the unit tests.**
+- `src/models.ts` — **the model catalog**, single source of truth. Each entry's `id` is the routing key; `type` (`chat`|`image`|`tts`|`video`|`stt`|`music`) picks the dispatcher, `provider` (default `workers-ai`) picks the code path, `capabilities`/`streaming` drive the UI. Adding an entry here flows automatically to `GET /api/models` and the frontend picker.
+- `src/providers/*.ts` — per-provider dispatch helpers (`callAnthropic`, `callXai`, `callGemini`, `callWorkersAIStream`, `callOpenAIStream`, `openai-image`). Anthropic, xAI, and Gemini hit AI Gateway provider endpoints with keyless Unified Billing auth (`cf-aig-authorization`). OpenAI chat and Workers AI use `env.AI.run`. `openai-image.ts` is the sole BYOK path (direct `api.openai.com` when `OPENAI_API_KEY` is set).
+- `src/parsers/*.ts` — streaming adapters, one per wire format (Anthropic native SSE, OpenAI-compatible SSE for xAI/OpenAI, Workers AI SSE, Gemini SSE), all normalized to a common `ProviderStreamEvent` envelope (`parsers/types.ts`). `sse-framer.ts` is the shared line framer. **These are the bulk of the unit tests.**
 - `src/ai-binding.ts` — `aiRun()` wraps `env.AI.run` with the gateway opt; `aiLogId()` reads the AI Gateway log ID after a call.
 - `src/output-extract.ts` — normalizes wildly different provider response shapes into output text/usage; `detectProviderFailure`, `extractProxiedImageUrl`.
 - `src/env.ts` — hand-authored `Env` binding interface (mirror of `wrangler.toml` bindings). `src/types.ts` — the `InputAttachment` discriminated union (request boundary).
@@ -43,7 +43,7 @@ Everything lives in one Worker `fetch` handler in `src/index.ts` (~4300 LOC). Pu
 
 ### Request dispatch
 
-`handleChat` (`src/index.ts:331`) branches on `model.type` to `runChat`/`runImage`/`runTts`/`runVideo`/`runStt`/`runMusic`. `runChat`/`runChatStream` then branch on `model.provider` to the right helper. Streaming requests hit `POST /api/chat/stream` (`handleChatStream`, only for catalog entries flagged `streaming: true`).
+`handleChat` branches on `model.type` to `runChat`/`runImage`/`runTts`/`runVideo`/`runStt`/`runMusic`. `runChat`/`runChatStream` then branch on `model.provider` to the right helper. Streaming requests hit `POST /api/chat/stream` (`handleChatStream`, only for catalog entries flagged `streaming: true`).
 
 ### Storage model
 
@@ -57,10 +57,10 @@ Cloudflare Access gates the whole worker URL. The worker trusts `Cf-Access-Authe
 
 ### Long-running jobs (video/music, 30s–3min)
 
-These exceed the ~30s `ctx.waitUntil` budget, so they use **Cloudflare Workflows**. The `LongRunWorkflow` class (bottom of `src/index.ts`) holds the blocking `env.AI.run` call alive across retryable step boundaries; the workflow instance ID is persisted as `chats.job_id`. The one exception is BYOK xAI video, which uses submit-and-poll (`GET /api/job/:id` triggers a fresh invocation per poll). **Workflows do not run under `wrangler dev --remote`** — deploy to test Unified Billing video/music.
+These exceed the ~30s `ctx.waitUntil` budget, so they use **Cloudflare Workflows**. The `LongRunWorkflow` class (bottom of `src/index.ts`) holds the blocking `env.AI.run` call alive across retryable step boundaries; the workflow instance ID is persisted as `chats.job_id`. **Workflows do not run under `wrangler dev --remote`** — deploy to test Unified Billing video/music.
 
 The same `LONGRUN` binding serves several workflow kinds (`run()` branches on `event.payload.kind`):
-- **`runGen`** (default; `kind` is `"video"`/`"music"`): Unified Billing / BYOK video + music gen.
+- **`runGen`** (default; `kind` is `"video"`/`"music"`): Unified Billing video + music gen.
 - **`runZipImport`** (`kind: "zip_import"`): bulk `.zip` RAG import; one step per inner file gives each `ingestDocument` a fresh subrequest budget. No chats row; the client polls `GET /api/import/:id` (reads the instance `status().output`, ownership-checked via the recorded `user_email`).
 
 ## Wrangler bindings reference
@@ -69,7 +69,7 @@ Declared in `wrangler.example.toml` (the committed template; the real `wrangler.
 
 | Binding | Type | Purpose |
 |---|---|---|
-| `AI` | `[ai]` | Unified AI binding — Workers AI models directly + Unified Billing partners through AI Gateway. BYOK providers bypass it. |
+| `AI` | `[ai]` | Unified AI binding — Workers AI models directly + Unified Billing partners through AI Gateway. |
 | `DB` | `[[d1_databases]]` (`skyphusion-llm`) | Chat metadata, conversations, RAG chunk text, projects. Fill in `database_id` after `wrangler d1 create`. |
 | `R2` | `[[r2_buckets]]` (`skyphusion-llm`) | All binary artifacts (input + generated output). |
 | `VEC` | `[[vectorize]]` (`skyphusion-llm-vec`) | RAG embeddings, 768-dim (`@cf/baai/bge-base-en-v1.5`), cosine. |
@@ -82,15 +82,11 @@ Also: `[observability] enabled = true` (dashboard log tailing). `compatibility_d
 
 | Secret | Required? | Purpose |
 |---|---|---|
-| `GATEWAY_ID` | Yes | AI Gateway slug; every `env.AI.run` call passes it. |
-| `ANTHROPIC_API_KEY` | BYOK | Anthropic chat. |
-| `XAI_API_KEY` | BYOK | xAI chat + Grok Imagine video. |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | BYOK | Bedrock (SigV4 via `aws4fetch`). |
-| `AWS_REGION` | Optional | Defaults `us-east-1` (Nova). |
-| `AWS_REGION_PEGASUS` | Optional | Defaults `us-west-2` (Pegasus only in `us-west-2`/`eu-west-1`). |
-| `OPENAI_API_KEY` | Optional | v0.22.1; **image only** — direct call for `gpt-image-1.5` transparent PNG. Without it, that model falls back to opaque via Unified Billing. OpenAI chat does NOT use it. |
-| `TAVILY_API_KEY` | Optional | v0.17.0; web-search retrieval. Falls back to Wikipedia-only when unset. |
-| `CF_AIG_TOKEN` | Optional | Only if Authenticated Gateway is enabled. |
+| `GATEWAY_ID` | Yes (private install) / No (public demo) | AI Gateway slug passed to every `env.AI.run` call. In public demo mode (v0.164.0+), omit on the worker; users set their own slug via `/api/prefs`. |
+| `CF_AIG_TOKEN` | Yes for paid third-party models (private) / per-user (public demo) | Unified Billing auth for Anthropic, xAI, OpenAI chat, Google, and proxied image/video/music. Bearer token sent as `cf-aig-authorization`. Users can store their own token in D1 `user_prefs`. |
+| `OPENAI_API_KEY` | Optional | v0.22.1; **image only** — direct call for `gpt-image-1.5` transparent PNG. Without it, that model falls back to opaque via Unified Billing. OpenAI chat does NOT use it. **This is the only deployer BYOK secret.** |
+| `TAVILY_API_KEY` | Optional | v0.17.0; Tavily web-search retrieval. Silently skipped when unset. |
+| `BRAVE_API_KEY` | Optional | v0.164.0; Brave Search web-search retrieval. Silently skipped when unset. |
 
 ## Routes reference
 
@@ -100,7 +96,8 @@ All matched in the single `fetch` handler in `src/index.ts` (top-of-file comment
 |---|---|---|
 | GET | `/health` | Liveness probe; no binding access, always 200. |
 | GET | `/health/deep` | Deep check: D1, R2, Vectorize, AI Gateway config (50–200ms). |
-| GET | `/api/models` | List models with `type` + capability flags; returns caller email. |
+| GET | `/api/models` | List models with `type` + capability flags; returns caller email + `gateway` status. |
+| GET / PATCH | `/api/prefs` | Per-user AI Gateway settings (slug + token); v0.164.0 public demo mode. |
 | POST | `/api/chat` | Run a model; dispatches by `model.type`. Persists a row. |
 | POST | `/api/chat/stream` | SSE variant, only for catalog entries flagged `streaming: true`. |
 | GET | `/api/history` | List caller's chats, newest first. |
@@ -122,8 +119,8 @@ All matched in the single `fetch` handler in `src/index.ts` (top-of-file comment
 
 - **No em-dashes (U+2014) or en-dashes (U+2013) anywhere in source.** Use commas, semicolons, or parentheses.
 - **No build step, no framework, no CSS preprocessor.** Vanilla JS/HTML/CSS frontend is deliberate; framework-migration PRs are rejected.
-- **Minimal runtime deps.** Only `aws4fetch` (Bedrock SigV4), `unpdf` (PDF RAG), `xlsx` (spreadsheet RAG). New runtime deps need justification.
-- **Prefer Unified Billing over BYOK** for new providers (no extra deployer key, native AI Gateway, less code). Add BYOK only when Unified Billing doesn't support the provider or its billing model doesn't fit. BYOK catalog rows use `{ provider, byok_alias }` and label `(BYOK)` in the UI.
+- **Minimal runtime deps.** Only `unpdf` (PDF RAG) and `xlsx` (spreadsheet RAG). New runtime deps need justification.
+- **Prefer Unified Billing over BYOK** for new providers (no extra deployer key, native AI Gateway, less code). Add deployer BYOK only when Unified Billing lacks a capability the playground needs. The current example is `OPENAI_API_KEY` for transparent PNG on `gpt-image-1.5`.
 - **`wrangler.toml` is gitignored.** All config/binding changes go in `wrangler.example.toml` (the committed template); document new bindings as a copy-paste TOML block in the CHANGELOG entry so existing deployers can apply them by hand.
 - After adding a binding, mirror it in the hand-authored `Env` interface (`src/env.ts`). Runtime types come from the pinned `@cloudflare/workers-types` devDep + `src/env.ts`; do not generate `worker-configuration.d.ts` (it is unreferenced here and gitignored).
 - Adding a Workers AI model: verify the model ID and response shape against `developers.cloudflare.com/workers-ai/models/`.

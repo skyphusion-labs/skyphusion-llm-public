@@ -145,6 +145,13 @@ For v0.126.0 (render-history folders + tags): `migrate-v0.126.0.sql` adds
 npx wrangler d1 execute skyphusion-llm --remote --file=migrate-v0.126.0.sql
 ```
 
+For v0.164.0 (public demo AI Gateway prefs): `migrate-v0.164.0.sql` adds the
+`user_prefs` table for per-user gateway slug + CF API token storage.
+
+```bash
+npx wrangler d1 execute skyphusion-llm --remote --file=migrate-v0.164.0.sql
+```
+
 **Cast manager + storyboard projects (`migrations/` subdirectory).** Starting at
 v0.46.0 the delta files moved from the repo root (`migrate-vX.Y.Z.sql`) into a
 `migrations/` subdirectory (`migrations/vX.Y.Z-name.sql`); the delta-only convention is

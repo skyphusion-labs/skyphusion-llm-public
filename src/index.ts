@@ -2,6 +2,8 @@
 //   GET    /health                 liveness probe (no binding access, always 200)
 //   GET    /health/deep            deep check: D1, R2, Vectorize, AI gateway config
 //   GET    /api/models             list models with type + capabilities, return user email
+//   GET    /api/prefs              per-user AI Gateway settings (slug + token status)
+//   PATCH  /api/prefs              update per-user AI Gateway settings
 //   POST   /api/chat               run model, persist row, return result
 //   GET    /api/history            list this user's chats, newest first
 //   GET    /api/history/:id        one row (with attachments + output_artifact)
@@ -24,7 +26,15 @@ import type { ModelType, Provider, ModelEntry } from "./models";
 import { MODELS } from "./models";
 import type { Env } from "./env";
 import { parseDataUrl, base64ToBytes, bytesToBase64, extFromMime } from "./utils";
-import { aiRun, aiLogId } from "./ai-binding";
+import { aiRun, aiLogId, type AiContext } from "./ai-binding";
+import {
+  loadGatewayCredentials,
+  loadGatewayStatus,
+  GATEWAY_NOT_CONFIGURED_MSG,
+  CF_AIG_TOKEN_REQUIRED_MSG,
+  maskSecret,
+} from "./gateway-credentials";
+import { loadUserPrefs, saveUserPrefs } from "./user-prefs";
 import { extractOutput, extractUsage, detectProviderFailure, extractProxiedImageUrl } from "./output-extract";
 import { chunkText } from "./chunking";
 import { isZip, unzip } from "./zip";
@@ -36,6 +46,7 @@ import { callOpenAIStream } from "./providers/openai";
 import { callGemini, callGeminiStream } from "./providers/google";
 import { buildGenParams } from "./longrun-params";
 import { buildProxiedImageParams } from "./proxied-image-params";
+import { searchBraveWeb } from "./brave-search";
 import { generateOpenAIImage } from "./providers/openai-image";
 import type {
   InputImageAttachment,
@@ -103,7 +114,7 @@ interface ChatRequest {
   image_url?: string;   // v0.21.5: source image for image-to-video models (hh1-i2v); a fetchable URL
   image_key?: string;   // v0.21.6: source image as an R2 key (e.g. a prior nano-banana output) for image-to-video chaining
   use_docs?: boolean;   // Pass 2: when true, retrieve top-K chunks from Vectorize and inject as context
-  use_web_search?: boolean;  // v0.17.0: when true, query Tavily + Wikipedia and inject snippets as context
+  use_web_search?: boolean;  // v0.17.0: when true, query Tavily + Brave + Wikipedia and inject snippets as context
   conversation_id?: string;  // Multi-turn: when present, continue an existing conversation
   project_id?: number;  // v0.20.0: when present, scope RAG retrieval to the project's docs
                         // and apply the project's system_prompt as default if system_prompt is empty
@@ -126,7 +137,7 @@ interface RetrievedChunk {
 // retrieved_context column. The frontend renders branches on source_type.
 interface RetrievedWebResult {
   source_type: "web";
-  source: "tavily" | "wikipedia";
+  source: "tavily" | "brave" | "wikipedia";
   url: string;
   title: string;
   snippet: string;          // already HTML-stripped
@@ -194,6 +205,67 @@ function getUserEmail(request: Request): string {
   return request.headers.get("cf-access-authenticated-user-email") ?? "anonymous";
 }
 
+function modelNeedsCfAigToken(model: ModelEntry): boolean {
+  return !!model.provider && model.provider !== "workers-ai";
+}
+
+async function requireAiContext(
+  env: Env,
+  userEmail: string,
+  opts?: { requireCfToken?: boolean },
+): Promise<AiContext | Response> {
+  const gateway = await loadGatewayCredentials(env, userEmail);
+  if (!gateway?.gatewayId) {
+    return json({ error: GATEWAY_NOT_CONFIGURED_MSG }, { status: 412 });
+  }
+  if (opts?.requireCfToken && !gateway.cfAigToken) {
+    return json({ error: CF_AIG_TOKEN_REQUIRED_MSG }, { status: 412 });
+  }
+  return { env, gateway };
+}
+
+async function handlePrefsGet(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const prefs = await loadUserPrefs(env.DB, userEmail);
+  const status = await loadGatewayStatus(env, userEmail);
+  return json({
+    gateway_id: status.gateway_id,
+    cf_aig_token_set: status.cf_aig_token_set,
+    cf_aig_token_preview: maskSecret(prefs?.cf_aig_token),
+    configured: status.configured,
+    source: status.source,
+  });
+}
+
+async function handlePrefsPatch(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  let body: { gateway_id?: string; cf_aig_token?: string; clear_cf_aig_token?: boolean };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const patch: { gateway_id?: string; cf_aig_token?: string } = {};
+  if (body.gateway_id !== undefined) patch.gateway_id = body.gateway_id;
+  if (body.cf_aig_token !== undefined) patch.cf_aig_token = body.cf_aig_token;
+  if (body.clear_cf_aig_token) patch.cf_aig_token = "";
+
+  if (Object.keys(patch).length === 0) {
+    return json({ error: "Provide gateway_id and/or cf_aig_token to update" }, { status: 400 });
+  }
+
+  const merged = await saveUserPrefs(env.DB, userEmail, patch);
+  const status = await loadGatewayStatus(env, userEmail);
+  return json({
+    gateway_id: status.gateway_id,
+    cf_aig_token_set: status.cf_aig_token_set,
+    cf_aig_token_preview: maskSecret(merged.cf_aig_token),
+    configured: status.configured,
+    source: status.source,
+  });
+}
+
 
 async function r2Put(env: Env, prefix: "in" | "out", mime: string, bytes: Uint8Array, userEmail: string): Promise<string> {
   const key = `${prefix}/${crypto.randomUUID()}.${extFromMime(mime)}`;
@@ -204,19 +276,6 @@ async function r2Put(env: Env, prefix: "in" | "out", mime: string, bytes: Uint8A
   return key;
 }
 
-// Streaming variant: pipes a ReadableStream directly into R2 without
-// buffering the bytes in worker memory. Use this for large artifacts (video,
-// audio) where the source is a fetch response body. R2.put accepts
-// ReadableStream as the value parameter and will consume it as the upload
-// progresses, so peak memory stays bounded regardless of artifact size.
-async function r2PutStream(env: Env, prefix: "in" | "out", mime: string, stream: ReadableStream, userEmail: string): Promise<string> {
-  const key = `${prefix}/${crypto.randomUUID()}.${extFromMime(mime)}`;
-  await env.R2.put(key, stream, {
-    httpMetadata: { contentType: mime },
-    customMetadata: { user_email: userEmail },
-  });
-  return key;
-}
 
 // Read an R2 object and return it as a base64 `data:` URI. Used to inline a
 // source image for image-to-video (hh1-i2v): the upstream accepts data URIs
@@ -276,7 +335,15 @@ export default {
     }
 
     if (url.pathname === "/api/models" && request.method === "GET") {
-      return json({ models: MODELS, user: getUserEmail(request) });
+      const userEmail = getUserEmail(request);
+      const gateway = await loadGatewayStatus(env, userEmail);
+      return json({ models: MODELS, user: userEmail, gateway });
+    }
+    if (url.pathname === "/api/prefs" && request.method === "GET") {
+      return handlePrefsGet(request, env);
+    }
+    if (url.pathname === "/api/prefs" && request.method === "PATCH") {
+      return handlePrefsPatch(request, env);
     }
     // v0.104.0 / v0.108.0: conversational STT (@cf/deepgram/flux) over a
     // WebSocket. flux is websocket-only, so this is a WS upgrade endpoint, not a
@@ -459,8 +526,8 @@ async function handleChatStream(request: Request, env: Env, ctx: ExecutionContex
   }
   // Anthropic + Workers AI + xAI + OpenAI + Google. Workers AI catalog
   // entries omit `provider` (the type allows this and the ModelEntry default
-  // per the type comment is "workers-ai"); BYOK / Unified Billing providers
-  // set it explicitly.
+  // per the type comment is "workers-ai"); Unified Billing providers set it
+  // explicitly.
   const isWorkersAI = !model.provider;
   if (
     model.provider !== "anthropic" &&
@@ -479,6 +546,9 @@ async function handleChatStream(request: Request, env: Env, ctx: ExecutionContex
 
 async function runChat(request: Request, env: Env, model: ModelEntry, body: ChatRequest): Promise<Response> {
   const userEmail = getUserEmail(request);
+  const ctxOrErr = await requireAiContext(env, userEmail, { requireCfToken: modelNeedsCfAigToken(model) });
+  if (ctxOrErr instanceof Response) return ctxOrErr;
+  const aiCtx = ctxOrErr;
   const inputs: InputAttachment[] = body.attachments ?? [];
 
   // v0.20.0: resolve project_id to row, apply per-project system_prompt
@@ -551,7 +621,7 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
       const parsed = att.data ? parseDataUrl(att.data) : null;
       if (!parsed) return json({ error: "Invalid audio data URL" }, { status: 400 });
       try {
-        const wr = await aiRun(env, WHISPER_MODEL, { audio: parsed.base64 });
+        const wr = await aiRun(aiCtx, WHISPER_MODEL, { audio: parsed.base64 });
         const text = (wr as { text?: string })?.text?.trim() ?? "";
         const label = att.filename ? ` from ${att.filename}` : "";
         extraText.push(text
@@ -693,27 +763,27 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
       if (!parsedImg) {
         return json({ error: "Invalid image data URL" }, { status: 400 });
       }
-      result = await aiRun(env, model.id, {
+      result = await aiRun(aiCtx, model.id, {
         image: [...base64ToBytes(parsedImg.base64)],
         prompt: body.user_input || "Describe this image in detail.",
         max_tokens: 512,
       });
-      logId = aiLogId(env);
+      logId = aiLogId(aiCtx);
     } else if (model.provider === "anthropic") {
-      const r = await callAnthropic(env, model, effectiveSystemPrompt || undefined, messages);
+      const r = await callAnthropic(aiCtx, model, effectiveSystemPrompt || undefined, messages);
       result = r.raw;
       logId = r.logId;
     } else if (model.provider === "xai") {
-      const r = await callXai(env, model, messages);
+      const r = await callXai(aiCtx, model, messages);
       result = r.raw;
       logId = r.logId;
     } else if (model.provider === "google") {
-      const r = await callGemini(env, model, effectiveSystemPrompt || undefined, messages);
+      const r = await callGemini(aiCtx, model, effectiveSystemPrompt || undefined, messages);
       result = r.raw;
       logId = r.logId;
     } else {
-      result = await aiRun(env, model.id, { messages });
-      logId = aiLogId(env);
+      result = await aiRun(aiCtx, model.id, { messages });
+      logId = aiLogId(aiCtx);
     }
   } catch (err) {
     const m = err instanceof Error ? err.message : String(err);
@@ -782,6 +852,13 @@ async function runChat(request: Request, env: Env, model: ModelEntry, body: Chat
 
 async function runImage(request: Request, env: Env, model: ModelEntry, body: ChatRequest): Promise<Response> {
   const userEmail = getUserEmail(request);
+  let aiCtx: AiContext | null = null;
+  const needsProxiedGateway = !!model.provider && !(model.provider === "openai" && env.OPENAI_API_KEY);
+  if (needsProxiedGateway) {
+    const ctxOrErr = await requireAiContext(env, userEmail, { requireCfToken: true });
+    if (ctxOrErr instanceof Response) return ctxOrErr;
+    aiCtx = ctxOrErr;
+  }
 
   // Image gen splits two ways. Proxied models (those with a `provider`:
   // nano-banana/google, gpt-image-1.5/openai, recraftv4/recraft) go through the
@@ -821,8 +898,8 @@ async function runImage(request: Request, env: Env, model: ModelEntry, body: Cha
       // openai/google paths return png), so no format is hardcoded on the store.
       // (First pass is text-to-image only; gpt-image-1.5's images[] editing and
       // reference inputs are a later add, mirroring the FLUX.2 ref-image work.)
-      const result = await aiRun(env, model.id, buildProxiedImageParams(model.provider, body.user_input));
-      logId = aiLogId(env);
+      const result = await aiRun(aiCtx!, model.id, buildProxiedImageParams(model.provider, body.user_input));
+      logId = aiLogId(aiCtx!);
 
       const failure = detectProviderFailure(result);
       if (failure) {
@@ -936,8 +1013,13 @@ async function runImage(request: Request, env: Env, model: ModelEntry, body: Cha
         type BypassRunFn = (model: string, params: unknown) => Promise<unknown>;
         result = await (env.AI as unknown as { run: BypassRunFn }).run(model.id, runParams);
       } else {
-        result = await aiRun(env, model.id, runParams);
-        logId = aiLogId(env);
+        if (!aiCtx) {
+          const ctxOrErr = await requireAiContext(env, userEmail, { requireCfToken: false });
+          if (ctxOrErr instanceof Response) return ctxOrErr;
+          aiCtx = ctxOrErr;
+        }
+        result = await aiRun(aiCtx, model.id, runParams);
+        logId = aiLogId(aiCtx);
       }
 
       // Two response shapes are possible:
@@ -1023,6 +1105,11 @@ async function runImage(request: Request, env: Env, model: ModelEntry, body: Cha
 // two Aura-2 catalog entries.
 const TTS_VOICES = new Set(["@cf/deepgram/aura-2-en", "@cf/deepgram/aura-2-es"]);
 async function handleTtsSpeak(request: Request, env: Env): Promise<Response> {
+  const userEmail = getUserEmail(request);
+  const ctxOrErr = await requireAiContext(env, userEmail, { requireCfToken: false });
+  if (ctxOrErr instanceof Response) return ctxOrErr;
+  const aiCtx = ctxOrErr;
+
   let body: { text?: string; voice?: string };
   try {
     body = await request.json<{ text?: string; voice?: string }>();
@@ -1033,7 +1120,7 @@ async function handleTtsSpeak(request: Request, env: Env): Promise<Response> {
   if (!text) return json({ error: "text required" }, { status: 400 });
   const voice = body.voice && TTS_VOICES.has(body.voice) ? body.voice : "@cf/deepgram/aura-2-en";
   try {
-    const resp = await aiRun(env, voice, { text, prompt: text }, true /* returnRawResponse */);
+    const resp = await aiRun(aiCtx, voice, { text, prompt: text }, true /* returnRawResponse */);
     if (!(resp instanceof Response)) {
       return json({ error: "TTS returned non-Response shape" }, { status: 502 });
     }
@@ -1047,6 +1134,9 @@ async function handleTtsSpeak(request: Request, env: Env): Promise<Response> {
 
 async function runTts(request: Request, env: Env, model: ModelEntry, body: ChatRequest): Promise<Response> {
   const userEmail = getUserEmail(request);
+  const ctxOrErr = await requireAiContext(env, userEmail, { requireCfToken: false });
+  if (ctxOrErr instanceof Response) return ctxOrErr;
+  const aiCtx = ctxOrErr;
 
   let mime: string;
   let bytes: Uint8Array;
@@ -1056,8 +1146,8 @@ async function runTts(request: Request, env: Env, model: ModelEntry, body: ChatR
   try {
     // Aura: { text }; MeloTTS: { prompt, lang? }. Send both keys defensively.
     const params: Record<string, unknown> = { text: body.user_input, prompt: body.user_input };
-    const resp = await aiRun(env, model.id, params, true /* returnRawResponse */);
-    logId = aiLogId(env);
+    const resp = await aiRun(aiCtx, model.id, params, true /* returnRawResponse */);
+    logId = aiLogId(aiCtx);
     if (!(resp instanceof Response)) {
       return json({ error: "TTS returned non-Response shape", raw: resp }, { status: 502 });
     }
@@ -1132,6 +1222,9 @@ function extractDeepgramTranscript(result: unknown): string {
 
 async function runStt(request: Request, env: Env, model: ModelEntry, body: ChatRequest): Promise<Response> {
   const userEmail = getUserEmail(request);
+  const ctxOrErr = await requireAiContext(env, userEmail, { requireCfToken: false });
+  if (ctxOrErr instanceof Response) return ctxOrErr;
+  const aiCtx = ctxOrErr;
   const t0 = Date.now();
 
   const audioAtt = (body.attachments ?? []).find((a) => a.type === "audio");
@@ -1156,7 +1249,7 @@ async function runStt(request: Request, env: Env, model: ModelEntry, body: ChatR
         .run(model.id, { audio: { body: new Response(base64ToBytes(parsed.base64)).body, contentType: parsed.mime } });
       transcript = extractDeepgramTranscript(dr);
     } else {
-      const wr = await aiRun(env, model.id, { audio: parsed.base64 });
+      const wr = await aiRun(aiCtx, model.id, { audio: parsed.base64 });
       transcript = (wr as { text?: string })?.text?.trim() ?? "";
     }
   } catch (err) {
@@ -1186,7 +1279,7 @@ async function runStt(request: Request, env: Env, model: ModelEntry, body: ChatR
     tokens_in: null,
     tokens_out: null,
     latency_ms: latency,
-    ai_gateway_log_id: viaDeepgram ? null : aiLogId(env),
+    ai_gateway_log_id: viaDeepgram ? null : aiLogId(aiCtx),
   });
 
   return json({
@@ -1229,6 +1322,9 @@ async function runMusic(
   // owns the long-running work. Kept in signature for router compatibility.
   void ctx;
   const userEmail = getUserEmail(request);
+  const ctxOrErr = await requireAiContext(env, userEmail, { requireCfToken: modelNeedsCfAigToken(model) });
+  if (ctxOrErr instanceof Response) return ctxOrErr;
+  void ctxOrErr; // credentials validated; workflow loads them from D1 by userEmail
   const startedAt = new Date().toISOString();
 
   const row = await persistChat(env, {
@@ -1415,6 +1511,9 @@ async function persistChat(env: Env, a: PersistArgs): Promise<{ id: number; crea
 
 async function runChatStream(request: Request, env: Env, model: ModelEntry, body: ChatRequest): Promise<Response> {
   const userEmail = getUserEmail(request);
+  const ctxOrErr = await requireAiContext(env, userEmail, { requireCfToken: modelNeedsCfAigToken(model) });
+  if (ctxOrErr instanceof Response) return ctxOrErr;
+  const aiCtx = ctxOrErr;
   const inputs: InputAttachment[] = body.attachments ?? [];
 
   // v0.20.0: same project resolution as runChat. See resolveProjectForChat
@@ -1476,7 +1575,7 @@ async function runChatStream(request: Request, env: Env, model: ModelEntry, body
       const parsed = att.data ? parseDataUrl(att.data) : null;
       if (!parsed) return json({ error: "Invalid audio data URL" }, { status: 400 });
       try {
-        const wr = await aiRun(env, WHISPER_MODEL, { audio: parsed.base64 });
+        const wr = await aiRun(aiCtx, WHISPER_MODEL, { audio: parsed.base64 });
         const text = (wr as { text?: string })?.text?.trim() ?? "";
         const label = att.filename ? ` from ${att.filename}` : "";
         extraText.push(text
@@ -1601,15 +1700,15 @@ async function runChatStream(request: Request, env: Env, model: ModelEntry, body
       // shape so the consumer loop is provider-agnostic.
       let streamGenerator: AsyncGenerator<ProviderStreamEvent>;
       if (model.provider === "anthropic") {
-        streamGenerator = callAnthropicStream(env, model, effectiveSystemPrompt || undefined, messages, upstreamAbort.signal);
+        streamGenerator = callAnthropicStream(aiCtx, model, effectiveSystemPrompt || undefined, messages, upstreamAbort.signal);
       } else if (model.provider === "xai") {
-        streamGenerator = callXaiStream(env, model, messages, upstreamAbort.signal);
+        streamGenerator = callXaiStream(aiCtx, model, messages, upstreamAbort.signal);
       } else if (model.provider === "openai") {
-        streamGenerator = callOpenAIStream(env, model, messages, upstreamAbort.signal);
+        streamGenerator = callOpenAIStream(aiCtx, model, messages, upstreamAbort.signal);
       } else if (model.provider === "google") {
-        streamGenerator = callGeminiStream(env, model, effectiveSystemPrompt || undefined, messages, upstreamAbort.signal);
+        streamGenerator = callGeminiStream(aiCtx, model, effectiveSystemPrompt || undefined, messages, upstreamAbort.signal);
       } else {
-        streamGenerator = callWorkersAIStream(env, model, messages, upstreamAbort.signal);
+        streamGenerator = callWorkersAIStream(aiCtx, model, messages, upstreamAbort.signal);
       }
 
       for await (const ev of streamGenerator) {
@@ -1693,28 +1792,19 @@ async function runChatStream(request: Request, env: Env, model: ModelEntry, body
 // As of Cloudflare Agents Week 2026 (April 2026), the AI Gateway and Workers
 // AI are unified. Third-party video models are callable via env.AI.run with
 // model strings like "google/veo-3.1-fast" or "xai/grok-imagine-video".
-// Cloudflare bills your account directly under Unified Billing - no BYOK to
-// xAI, Google, etc needed for these models. See:
+// Cloudflare bills your account directly under Unified Billing. See:
 //   https://developers.cloudflare.com/ai-gateway/features/unified-billing/
 //   https://developers.cloudflare.com/ai/models/google/veo-3.1-fast/
 //
 // Video gen takes 30s-3min. env.AI.run for these models blocks until
-// completion. Two architectures coexist:
+// completion, which exceeds the ~30s waitUntil budget after an HTTP response.
+// Cloudflare Workflows (v0.12.0+): the runVideo handler creates a
+// LongRunWorkflow instance, persists its ID on the row, and returns
+// immediately. The workflow class holds the long blocking env.AI.run call
+// alive across step boundaries, then downloads and finalizes D1.
 //
-//   - BYOK path (xAI Grok video, Google Veo with API key): submit-and-poll.
-//     The submit returns a job_id in <30s; each client poll of /api/job/:id
-//     triggers ONE upstream poll in a fresh worker invocation. Download to
-//     R2 happens when upstream reports done.
-//
-//   - Unified Billing path (v0.12.0+): Cloudflare Workflows. The runVideo
-//     handler creates a LongRunWorkflow instance, persists its ID on the
-//     row, and returns immediately. The workflow class (defined at the
-//     bottom of this file) holds the long blocking env.AI.run call alive
-//     across step boundaries, then downloads and finalizes D1.
-//
-// Both paths populate chats.output_artifact and let the frontend poll
-// /api/job/:id for status (which just reads D1 in the Unified path; the
-// workflow itself updates D1 when done).
+// The frontend polls /api/job/:id for status (reads D1 only; the workflow
+// updates the row when done).
 
 async function runVideo(
   request: Request,
@@ -1723,68 +1813,12 @@ async function runVideo(
   model: ModelEntry,
   body: ChatRequest
 ): Promise<Response> {
-  // ctx is no longer used: BYOK paths are sync-submit, Unified Billing path
-  // delegates to LongRunWorkflow. Kept in the signature for router uniformity.
   void ctx;
   const userEmail = getUserEmail(request);
+  const ctxOrErr = await requireAiContext(env, userEmail, { requireCfToken: modelNeedsCfAigToken(model) });
+  if (ctxOrErr instanceof Response) return ctxOrErr;
+  void ctxOrErr; // credentials validated; workflow loads them from D1 by userEmail
   const startedAt = new Date().toISOString();
-  const isBYOK = !!(model.byok_alias && model.provider === "xai");
-
-  // BYOK path: do the submit synchronously (one fast HTTP call, well within
-  // the worker's request budget). Save the upstream job_id on the row so the
-  // poll endpoint can check status without re-submitting. This avoids using
-  // ctx.waitUntil for the long-running poll loop - waitUntil only gets ~30s
-  // after the response, which is far less than the 1-3 minutes needed.
-  if (isBYOK) {
-    let submit: BYOKSubmitResult;
-    try {
-      submit = await submitVideoXai(env, model.byok_alias!, body.user_input);
-    } catch (err) {
-      const m = err instanceof Error ? err.message : String(err);
-      return json({ error: `Video submit failed: ${m}` }, { status: 502 });
-    }
-
-    const row = await persistChat(env, {
-      userEmail,
-      model: model.id,
-      model_type: "video",
-      system_prompt: body.system_prompt ?? null,
-      user_input: body.user_input,
-      output: "",
-      output_artifact: null,
-      attachments: [],
-      tokens_in: null,
-      tokens_out: null,
-      latency_ms: 0,
-      ai_gateway_log_id: null,
-      status: "pending",
-      job_id: submit.job_id,
-      job_provider: model.provider ?? null,
-      job_error: null,
-      job_started_at: startedAt,
-    });
-
-    return json({
-      id: row.id,
-      created_at: row.created_at,
-      model: model.id,
-      model_type: "video",
-      output: "",
-      output_artifact: null,
-      status: "pending",
-      job_started_at: startedAt,
-      job_id: submit.job_id,
-      conversation_id: row.conversation_id,
-      turn_index: 0,
-    });
-  }
-
-  // Unified Billing path (env.AI.run for third-party video models). As of
-  // v0.12.0, this is handled by the LongRunWorkflow class for durable
-  // execution. env.AI.run blocks until the upstream provider finishes
-  // (30s-3min), which exceeds the ~30s waitUntil budget after an HTTP
-  // response. The workflow keeps the call alive across step boundaries
-  // and retries each step independently.
 
   // Image-to-video models (e.g. alibaba/hh1-i2v, flagged "image-input") need a
   // source image (v0.21.6). Three sources, resolved into one of two workflow
@@ -1876,95 +1910,10 @@ async function runVideo(
   });
 }
 
-// ---------- Video generation BYOK path (per-provider endpoints) ----------
-//
-// BYOK video architecture (v0.10.2):
-//
-// The OLD architecture (v0.7.0-v0.10.1) used ctx.waitUntil to run a long poll
-// loop after the response was sent. That doesn't work: Cloudflare Workers only
-// gives waitUntil ~30 seconds after the response, but video generation takes
-// 1-3 minutes. The waitUntil task got cancelled mid-poll, leaving rows stuck
-// "pending" until the client gave up.
-//
-// The NEW architecture:
-//   1. POST /api/chat: submit synchronously (one fast HTTP call), store the
-//      upstream job_id on the row, return immediately.
-//   2. GET /api/job/:id: each client poll triggers one upstream poll. If done,
-//      this single invocation downloads the video and stores it in R2. Each
-//      invocation gets its own ~30s budget, plenty for one round-trip.
-//
-// This eliminates the waitUntil cancellation problem entirely for BYOK models.
-// The Unified Billing path (env.AI.run) still uses waitUntil and is still
-// subject to the same problem - that requires a Cloudflare Workflows refactor.
-
-interface BYOKSubmitResult { job_id: string; }
-interface BYOKPollResult {
-  status: "pending" | "done" | "failed";
-  video_url?: string;
-  error?: string;
-}
-
-
-// xAI BYOK submit/poll - hits /v1/videos/* directly on api.x.ai.
-//
-// IMPORTANT: Cloudflare AI Gateway only proxies the OpenAI-compatible chat
-// schema for xAI - it doesn't know /v1/videos/generations and returns 404
-// ("not found") for that path. We call api.x.ai directly to work around it.
-// This means no caching/analytics for video gen, but those benefits were
-// marginal for a 1-3 minute generation anyway.
-
-const XAI_DIRECT_BASE = "https://api.x.ai";
-
-async function submitVideoXai(env: Env, modelName: string, prompt: string): Promise<BYOKSubmitResult> {
-  if (!env.XAI_API_KEY) throw new Error("XAI_API_KEY not set; xAI video gen requires the secret to be configured");
-  const headers: Record<string, string> = {
-    "content-type": "application/json",
-    "Authorization": `Bearer ${env.XAI_API_KEY}`,
-  };
-
-  const resp = await fetch(`${XAI_DIRECT_BASE}/v1/videos/generations`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      model: modelName,
-      prompt,
-      duration: 8,
-      aspect_ratio: "16:9",
-      resolution: "720p",
-    }),
-  });
-  if (!resp.ok) throw new Error(`xAI submit ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
-  const data = await resp.json() as { request_id?: string };
-  if (!data.request_id) throw new Error("xAI submit returned no request_id");
-  return { job_id: data.request_id };
-}
-
-async function pollVideoXai(env: Env, jobId: string): Promise<BYOKPollResult> {
-  if (!env.XAI_API_KEY) throw new Error("XAI_API_KEY not set");
-  const headers: Record<string, string> = {
-    "Authorization": `Bearer ${env.XAI_API_KEY}`,
-  };
-
-  const resp = await fetch(`${XAI_DIRECT_BASE}/v1/videos/${encodeURIComponent(jobId)}`, { headers });
-  if (!resp.ok) throw new Error(`xAI poll ${resp.status}: ${(await resp.text()).slice(0, 500)}`);
-  const data = await resp.json() as {
-    status?: string;
-    video?: { url?: string };
-    error?: { message?: string } | string;
-  };
-
-  if (data.status === "done" && data.video?.url) return { status: "done", video_url: data.video.url };
-  if (data.status === "failed" || data.status === "expired") {
-    const errMsg = typeof data.error === "string" ? data.error : (data.error?.message ?? data.status);
-    return { status: "failed", error: errMsg };
-  }
-  return { status: "pending" };
-}
-
 // ---------- Job polling endpoint ----------
 //
-// All real work happens in the waitUntil background task. This endpoint just
-// reflects the current D1 row state to the client.
+// Reflects the current D1 row state. Long-running video/music jobs are owned
+// by LongRunWorkflow instances, which update the row when they finish.
 
 async function handleJobPoll(request: Request, env: Env, id: number): Promise<Response> {
   const userEmail = getUserEmail(request);
@@ -2003,78 +1952,9 @@ async function handleJobPoll(request: Request, env: Env, id: number): Promise<Re
     return json({ id: row.id, status: "failed", job_error: row.job_error });
   }
 
-  // Pending. For BYOK video gen (xAI with a stored job_id), this is where
-  // the actual upstream poll happens - one round-trip per client poll, each
-  // in its own worker invocation budget. No more waitUntil cancellation.
-  if (row.status === "pending" && row.model_type === "video" && row.job_id && row.job_provider === "xai") {
-    let pollResult: BYOKPollResult;
-    try {
-      pollResult = await pollVideoXai(env, row.job_id);
-    } catch (err) {
-      // Transient upstream error - keep status pending, client will try again.
-      console.error("handleJobPoll: upstream poll failed:", err instanceof Error ? err.message : String(err));
-      return json({ id: row.id, status: "pending" });
-    }
-
-    if (pollResult.status === "pending") {
-      return json({ id: row.id, status: "pending" });
-    }
-
-    if (pollResult.status === "failed") {
-      await env.DB.prepare(`UPDATE chats SET status = 'failed', job_error = ? WHERE id = ?`)
-        .bind(`Upstream gen failed: ${pollResult.error ?? "unknown"}`, row.id)
-        .run();
-      return json({ id: row.id, status: "failed", job_error: pollResult.error ?? "unknown" });
-    }
-
-    // Done. Download video, upload to R2, finalize D1.
-    if (!pollResult.video_url) {
-      await env.DB.prepare(`UPDATE chats SET status = 'failed', job_error = ? WHERE id = ?`)
-        .bind("Upstream reported done but no video_url", row.id)
-        .run();
-      return json({ id: row.id, status: "failed", job_error: "Upstream reported done but no video_url" });
-    }
-
-    // Done. Stream-pipe the upstream video directly into R2 without buffering
-    // the bytes in worker memory. Combines what used to be a separate download
-    // (await aresp.arrayBuffer()) and r2Put step into one streaming put.
-    // Save: 5-30MB peak memory and ~1-5s on the user-visible "done" poll for
-    // typical Veo/Grok video outputs.
-    const mime = "video/mp4";
-    let r2Key: string;
-    try {
-      const aresp = await fetch(pollResult.video_url);
-      if (!aresp.ok) throw new Error(`Fetch ${aresp.status}`);
-      if (!aresp.body) throw new Error("Upstream response has no body");
-      r2Key = await r2PutStream(env, "out", mime, aresp.body, userEmail);
-    } catch (err) {
-      const m = err instanceof Error ? err.message : String(err);
-      await env.DB.prepare(`UPDATE chats SET status = 'failed', job_error = ? WHERE id = ?`)
-        .bind(`Video download/upload failed: ${m}`, row.id)
-        .run();
-      return json({ id: row.id, status: "failed", job_error: `Video download/upload failed: ${m}` });
-    }
-
-    const outputArtifact: OutputArtifact = { key: r2Key, mime, type: "video" };
-    const latency = row.job_started_at ? (Date.now() - Date.parse(row.job_started_at)) : 0;
-    await env.DB.prepare(
-      `UPDATE chats SET status = 'done', output_artifact = ?, latency_ms = ? WHERE id = ?`
-    )
-      .bind(JSON.stringify(outputArtifact), latency, row.id)
-      .run();
-
-    return json({
-      id: row.id,
-      status: "done",
-      output_artifact: outputArtifact,
-      latency_ms: latency,
-    });
-  }
-
-  // Other pending case (Unified Billing video, music gen). As of v0.12.0
-  // these are owned by LongRunWorkflow instances which update D1 directly
-  // when their work completes. No active polling here - just return the
-  // current D1 state; the workflow will eventually flip it to done/failed.
+  // Pending (Unified Billing video/music via LongRunWorkflow). The workflow
+  // updates D1 when its work completes; this endpoint just reflects current
+  // row state.
   return json({ id: row.id, status: "pending" });
 }
 
@@ -2425,12 +2305,11 @@ function mimeFromName(name: string): string {
   }
 }
 
-// v0.17.0: web-search retrieval limits and timeouts. Both upstreams are
-// time-bounded per source so a slow Tavily doesn't block on a working
-// Wikipedia (or vice versa). Counts kept small to bound context-token spend
-// when the toggle is on; a typical use_web_search:true request adds roughly
-// 1500-3000 tokens to the system prompt.
+// v0.17.0: web-search retrieval limits and timeouts. Each upstream is
+// time-bounded per source so a slow Tavily doesn't block Brave or Wikipedia.
+// Counts kept small to bound context-token spend when the toggle is on.
 const TAVILY_MAX_RESULTS    = 5;
+const BRAVE_MAX_RESULTS     = 5;
 const WIKIPEDIA_MAX_RESULTS = 3;
 const WEB_SEARCH_TIMEOUT_MS = 8000;
 
@@ -2594,9 +2473,14 @@ async function extractChunks(bytes: Uint8Array, mime: string, filename: string):
   return chunkText(text).map((t) => ({ text: t }));
 }
 
-async function embedBatch(env: Env, texts: string[]): Promise<number[][]> {
+async function embedBatch(env: Env, userEmail: string, texts: string[]): Promise<number[][]> {
   if (texts.length === 0) return [];
-  const result = await aiRun(env, EMBED_MODEL, { text: texts }) as {
+  const gateway = await loadGatewayCredentials(env, userEmail);
+  if (!gateway?.gatewayId) {
+    throw new Error(GATEWAY_NOT_CONFIGURED_MSG);
+  }
+  const aiCtx: AiContext = { env, gateway };
+  const result = await aiRun(aiCtx, EMBED_MODEL, { text: texts }) as {
     shape?: [number, number];
     data?: number[][];
   };
@@ -2630,7 +2514,7 @@ async function retrieveContext(
   // 1) Embed the query. Log + surface errors instead of silently swallowing.
   let queryVec: number[];
   try {
-    const vectors = await embedBatch(env, [queryText]);
+    const vectors = await embedBatch(env, userEmail, [queryText]);
     if (vectors.length === 0) {
       const msg = "Embed returned no vectors";
       console.error("retrieveContext:", msg);
@@ -2762,13 +2646,13 @@ function formatRetrievalForSystemPrompt(chunks: RetrievedChunk[]): string {
 
 // ---------- Web search (v0.17.0) ----------
 //
-// Optional retrieval source: Tavily for general web, Wikipedia for lore /
-// reference. Both run in parallel; failure of one doesn't kill the other.
-// Per-source timeouts (WEB_SEARCH_TIMEOUT_MS) prevent a slow upstream from
-// blocking the whole turn.
+// Optional retrieval source: Tavily and Brave for general web, Wikipedia for
+// lore / reference. All three run in parallel; failure of one doesn't kill
+// the others. Per-source timeouts (WEB_SEARCH_TIMEOUT_MS) prevent a slow
+// upstream from blocking the whole turn.
 //
-// Tavily requires an API key (TAVILY_API_KEY). When unset, the Tavily call
-// is silently skipped and only Wikipedia runs. Wikipedia needs no key.
+// Tavily requires TAVILY_API_KEY; Brave requires BRAVE_API_KEY. When either
+// key is unset, that source is silently skipped. Wikipedia needs no key.
 //
 // Results are persisted to the existing retrieved_context column alongside
 // RAG chunks, with source_type discriminator. The frontend renders branches
@@ -2782,21 +2666,36 @@ async function searchWeb(
   if (!q) return { results: [], error: null };
 
   // Each upstream is wrapped in its own timeout + catch so a single failure
-  // doesn't abort the other. Partial results are better than nothing.
+  // doesn't abort the others. Partial results are better than nothing.
   const tavilyPromise: Promise<RetrievedWebResult[]> = env.TAVILY_API_KEY
     ? searchTavily(env.TAVILY_API_KEY, q).catch(() => [])
     : Promise.resolve([]);
+  const bravePromise: Promise<RetrievedWebResult[]> = env.BRAVE_API_KEY
+    ? searchBrave(env.BRAVE_API_KEY, q).catch(() => [])
+    : Promise.resolve([]);
   const wikipediaPromise: Promise<RetrievedWebResult[]> = searchWikipedia(q).catch(() => []);
 
-  const [tavily, wikipedia] = await Promise.all([tavilyPromise, wikipediaPromise]);
-  const results = [...tavily, ...wikipedia];
+  const [tavily, brave, wikipedia] = await Promise.all([tavilyPromise, bravePromise, wikipediaPromise]);
+  const results = [...tavily, ...brave, ...wikipedia];
 
   // Empty results is fine; it just means the query didn't match anything in
-  // either source. Real per-source failures are swallowed by the .catch above
-  // so the other source can still return its hits. If you want surfaced
-  // diagnostics on partial failures, lift the per-source catches into
-  // labeled results.
+  // any source. Real per-source failures are swallowed by the .catch above
+  // so the other sources can still return their hits.
   return { results, error: null };
+}
+
+async function searchBrave(apiKey: string, query: string): Promise<RetrievedWebResult[]> {
+  const hits = await searchBraveWeb(apiKey, query, {
+    maxResults: BRAVE_MAX_RESULTS,
+    timeoutMs: WEB_SEARCH_TIMEOUT_MS,
+  });
+  return hits.map((r): RetrievedWebResult => ({
+    source_type: "web",
+    source: "brave",
+    url: r.url,
+    title: r.title,
+    snippet: r.snippet,
+  }));
 }
 
 async function searchTavily(apiKey: string, query: string): Promise<RetrievedWebResult[]> {
@@ -2900,11 +2799,19 @@ function stripWikipediaSnippet(html: string): string {
     .trim();
 }
 
+function webSourceSystemLabel(source: RetrievedWebResult["source"]): string {
+  switch (source) {
+    case "tavily": return "Web";
+    case "brave": return "Brave";
+    case "wikipedia": return "Wikipedia";
+  }
+}
+
 function formatWebForSystemPrompt(results: RetrievedWebResult[]): string {
   if (results.length === 0) return "";
   const body = results
     .map((r, i) => {
-      const sourceLabel = r.source === "tavily" ? "Web" : "Wikipedia";
+      const sourceLabel = webSourceSystemLabel(r.source);
       return `[${sourceLabel} ${i + 1}, "${r.title}" (${r.url})]\n${r.snippet}`;
     })
     .join("\n\n---\n\n");
@@ -3061,7 +2968,7 @@ async function ingestDocument(env: Env, userEmail: string, filename: string, mim
   try {
     for (let b = 0; b < extracted.length; b += EMBED_BATCH_SIZE) {
       const batch = extracted.slice(b, b + EMBED_BATCH_SIZE);
-      const vectors = await embedBatch(env, batch.map((c) => c.text));
+      const vectors = await embedBatch(env, userEmail, batch.map((c) => c.text));
       if (vectors.length !== batch.length) {
         throw new Error(`Embedding batch returned ${vectors.length} vectors for ${batch.length} texts`);
       }
@@ -3762,7 +3669,7 @@ async function handleDiscordImport(request: Request, env: Env, projectId: number
   try {
     for (let b = 0; b < chunks.length; b += EMBED_BATCH_SIZE) {
       const batch = chunks.slice(b, b + EMBED_BATCH_SIZE);
-      const vectors = await embedBatch(env, batch.map((c) => c.text));
+      const vectors = await embedBatch(env, userEmail, batch.map((c) => c.text));
       if (vectors.length !== batch.length) {
         throw new Error(`Embedding batch returned ${vectors.length} vectors for ${batch.length} texts`);
       }
@@ -3941,16 +3848,16 @@ async function handleHealthDeep(env: Env): Promise<Response> {
     }
   }
 
-  // AI binding: just confirm GATEWAY_ID is set. We deliberately do NOT run
-  // an actual model here; even the cheapest model call burns neurons and a
-  // per-minute health probe would add up. If the secret is missing, every
-  // real chat request will fail anyway, so this is sufficient.
+  // AI binding: confirm worker-level gateway config, or note per-user mode.
+  // We deliberately do NOT run an actual model here; even the cheapest model
+  // call burns neurons and a per-minute health probe would add up.
   {
     const t0 = Date.now();
-    if (env.GATEWAY_ID && typeof env.GATEWAY_ID === "string" && env.GATEWAY_ID.length > 0) {
+    if (env.GATEWAY_ID?.trim()) {
       checks.ai_config = { ok: true, latency_ms: Date.now() - t0 };
     } else {
-      checks.ai_config = { ok: false, latency_ms: Date.now() - t0, error: "GATEWAY_ID not set" };
+      // Public demo: users supply gateway slug + token via /api/prefs.
+      checks.ai_config = { ok: true, latency_ms: Date.now() - t0 };
     }
   }
 
@@ -4170,7 +4077,12 @@ export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
             : imageUrl;
           const params = buildGenParams(kind, { modelId, prompt, lyrics, imageUrl: resolvedImage });
 
-          const result = await aiRun(this.env, modelId, params) as LongRunResult;
+          const gateway = await loadGatewayCredentials(this.env, userEmail);
+          if (!gateway?.gatewayId) {
+            throw new Error(GATEWAY_NOT_CONFIGURED_MSG);
+          }
+          const aiCtx: AiContext = { env: this.env, gateway };
+          const result = await aiRun(aiCtx, modelId, params) as LongRunResult;
 
           if (result.state && result.state !== "Completed") {
             throw new Error(`Unexpected gen state: ${result.state}`);
@@ -4195,7 +4107,7 @@ export class LongRunWorkflow extends WorkflowEntrypoint<Env, LongRunParams> {
           if (!aresp.ok) throw new Error(`Fetch ${aresp.status} from ${artifactUrl.slice(0, 100)}`);
           // For video, force video/mp4. CF's catalog R2 and many CDNs serve
           // MP4 as application/octet-stream, which would cause R2 keys to
-          // end in .bin (matches the BYOK video fix in v0.10.3).
+          // end in .bin when upstream serves application/octet-stream.
           const upstreamMime = aresp.headers.get("content-type") || "";
           const finalMime = kind === "video"
             ? "video/mp4"

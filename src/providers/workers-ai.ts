@@ -11,7 +11,7 @@
 // streaming path needs its own dispatcher because it consumes a ReadableStream
 // and parses SSE frames.
 
-import type { Env } from "../env";
+import type { AiContext } from "../ai-binding";
 import type { ModelEntry } from "../models";
 import type { ProviderStreamEvent } from "../parsers/types";
 import { aiRun } from "../ai-binding";
@@ -32,12 +32,12 @@ import { interpretWorkersAISSEFrame } from "../parsers/workers-ai-sse";
 // reader.cancel() to release the upstream stream when the client disconnects.
 
 export async function* callWorkersAIStream(
-  env: Env,
+  ctx: AiContext,
   model: ModelEntry,
   messages: Array<unknown>,
   signal: AbortSignal,
 ): AsyncGenerator<ProviderStreamEvent> {
-  const result = await aiRun(env, model.id, { messages, stream: true });
+  const result = await aiRun(ctx, model.id, { messages, stream: true });
 
   if (!(result instanceof ReadableStream)) {
     throw new Error(`Workers AI did not return a stream (got ${typeof result}). Ensure stream:true is honored by this model.`);

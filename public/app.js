@@ -197,6 +197,10 @@ const historyList       = $("#history-list");
 const accountEmail      = $("#account-email");
 const accountToggle     = $("#account-toggle");
 const accountMenu       = $("#account-menu");
+const accountUserBtn    = $("#account-user");
+const gatewayBanner     = $("#gateway-banner");
+const gatewayBannerText = $("#gateway-banner-text");
+const gatewayBannerBtn  = $("#gateway-banner-btn");
 const historySearch     = $("#history-search");
 const newChatBtn        = $("#new-chat");
 const fileInput         = $("#file-input");
@@ -253,6 +257,7 @@ const ICON_CHECK = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" s
 
 const state = {
   user: null,
+  gateway: null,
   currentConversationId: null,
   currentTurns: [],
   modelsById: {},
@@ -312,9 +317,11 @@ function fmtMeta(chat) {
 // ---------- Models ----------
 
 async function loadModels() {
-  const { models, user } = await api("/api/models");
+  const { models, user, gateway } = await api("/api/models");
   state.user = user;
+  state.gateway = gateway || null;
   if (accountEmail) accountEmail.textContent = user;
+  renderGatewayBanner();
 
   state.modelsById = {};
   const grouped = {};
@@ -327,6 +334,20 @@ async function loadModels() {
   modelSelect.populate(grouped);
 
   updateAffordance();
+}
+
+function renderGatewayBanner() {
+  if (!gatewayBanner) return;
+  const g = state.gateway;
+  if (!g || g.configured) {
+    gatewayBanner.hidden = true;
+    return;
+  }
+  gatewayBanner.hidden = false;
+  if (gatewayBannerText) {
+    gatewayBannerText.textContent =
+      "AI Gateway not configured. Set your gateway slug and a Cloudflare API token with AI Gateway Run permission to run models on your account.";
+  }
 }
 
 function currentModel() {
@@ -826,7 +847,10 @@ function renderRetrievedChunksHTML(chunks) {
     .map((c, i) => {
       if (c.source_type === "web") {
         const score = (typeof c.score === "number") ? ` \u00b7 score ${c.score.toFixed(3)}` : "";
-        const sourceLabel = c.source === "tavily" ? "tavily" : c.source === "wikipedia" ? "wikipedia" : "web";
+        const sourceLabel =
+          c.source === "tavily" ? "tavily" :
+          c.source === "brave" ? "brave" :
+          c.source === "wikipedia" ? "wikipedia" : "web";
         return `
         <details class="retrieved-chunk retrieved-web">
           <summary>
@@ -1302,8 +1326,7 @@ async function run() {
     if (m.type === "chat" && useDocsCheckbox.checked && state.documentCount > 0) {
       requestBody.use_docs = true;
     }
-    // v0.17.0: web search. Chat models only; no doc-count gate (Tavily +
-    // Wikipedia are always reachable from the worker).
+    // v0.17.0: web search. Chat models only; Tavily + Brave + Wikipedia when toggled.
     if (m.type === "chat" && useWebSearchCheckbox.checked) {
       requestBody.use_web_search = true;
     }
@@ -1512,6 +1535,17 @@ if (accountToggle && accountMenu) {
     accountMenu.hidden = !accountMenu.hidden;
     accountToggle.setAttribute("aria-expanded", accountMenu.hidden ? "false" : "true");
   });
+}
+if (accountUserBtn) {
+  accountUserBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (accountMenu) accountMenu.hidden = true;
+    if (accountToggle) accountToggle.setAttribute("aria-expanded", "false");
+    openGatewayModal();
+  });
+}
+if (gatewayBannerBtn) {
+  gatewayBannerBtn.addEventListener("click", () => openGatewayModal());
 }
 document.addEventListener("click", (e) => {
   if (settingsPanel && !settingsPanel.hidden && !settingsPanel.contains(e.target) && !(settingsToggle && settingsToggle.contains(e.target))) {
@@ -1864,6 +1898,15 @@ const projectModalSave     = $("#project-modal-save");
 const projectModalCancel   = $("#project-modal-cancel");
 const projectModalDelete   = $("#project-modal-delete");
 
+const gatewayModal         = $("#gateway-modal");
+const gatewayModalId       = $("#gateway-modal-id");
+const gatewayModalToken    = $("#gateway-modal-token");
+const gatewayModalTokenHint= $("#gateway-modal-token-hint");
+const gatewayModalClear    = $("#gateway-modal-clear-token");
+const gatewayModalError    = $("#gateway-modal-error");
+const gatewayModalSave     = $("#gateway-modal-save");
+const gatewayModalCancel   = $("#gateway-modal-cancel");
+
 const projectDocsModal     = $("#project-docs-modal");
 const projectDocsModalList = $("#project-docs-modal-list");
 const projectDocsModalEmpty= $("#project-docs-modal-empty");
@@ -2006,6 +2049,75 @@ function openProjectModal(project) {
 function closeProjectModal() {
   projectModal.hidden = true;
   editingProjectId = null;
+}
+
+async function openGatewayModal() {
+  if (!gatewayModal) return;
+  gatewayModalError.hidden = true;
+  gatewayModalError.textContent = "";
+  gatewayModalToken.value = "";
+  gatewayModalClear.checked = false;
+  try {
+    const prefs = await api("/api/prefs");
+    gatewayModalId.value = prefs.gateway_id || "";
+    if (gatewayModalTokenHint) {
+      gatewayModalTokenHint.textContent = prefs.cf_aig_token_set
+        ? `saved token: ${prefs.cf_aig_token_preview || "••••"}`
+        : "no token saved yet";
+    }
+    state.gateway = {
+      configured: !!prefs.configured,
+      source: prefs.source,
+      gateway_id: prefs.gateway_id,
+      cf_aig_token_set: prefs.cf_aig_token_set,
+    };
+    renderGatewayBanner();
+  } catch (err) {
+    gatewayModalId.value = state.gateway?.gateway_id || "";
+    if (gatewayModalTokenHint) gatewayModalTokenHint.textContent = "";
+    gatewayModalError.textContent = err.message;
+    gatewayModalError.hidden = false;
+  }
+  gatewayModal.hidden = false;
+  gatewayModalId.focus();
+}
+
+function closeGatewayModal() {
+  if (gatewayModal) gatewayModal.hidden = true;
+}
+
+function showGatewayModalError(msg) {
+  gatewayModalError.textContent = msg;
+  gatewayModalError.hidden = false;
+}
+
+async function saveGatewayModal() {
+  const gateway_id = gatewayModalId.value.trim();
+  const body = {};
+  if (gateway_id) body.gateway_id = gateway_id;
+  else body.gateway_id = "";
+  if (gatewayModalClear.checked) {
+    body.clear_cf_aig_token = true;
+  } else if (gatewayModalToken.value.trim()) {
+    body.cf_aig_token = gatewayModalToken.value.trim();
+  }
+  if (!gateway_id && !body.cf_aig_token && !body.clear_cf_aig_token) {
+    showGatewayModalError("enter a gateway slug and/or API token");
+    return;
+  }
+  try {
+    const prefs = await api("/api/prefs", { method: "PATCH", body: JSON.stringify(body) });
+    state.gateway = {
+      configured: !!prefs.configured,
+      source: prefs.source,
+      gateway_id: prefs.gateway_id,
+      cf_aig_token_set: prefs.cf_aig_token_set,
+    };
+    renderGatewayBanner();
+    closeGatewayModal();
+  } catch (err) {
+    showGatewayModalError(err.message);
+  }
 }
 
 function showProjectModalError(msg) {
@@ -2224,6 +2336,8 @@ activeProjectClear.addEventListener("click", () => setActiveProject(null));
 
 projectModalSave.addEventListener("click", saveProjectModal);
 projectModalCancel.addEventListener("click", closeProjectModal);
+if (gatewayModalSave) gatewayModalSave.addEventListener("click", saveGatewayModal);
+if (gatewayModalCancel) gatewayModalCancel.addEventListener("click", closeGatewayModal);
 projectModalDelete.addEventListener("click", deleteProjectFromModal);
 
 projectDocsModalClose.addEventListener("click", closeDocsPicker);
@@ -2246,6 +2360,7 @@ document.addEventListener("click", (e) => {
   const modalId = closer.dataset.modalClose;
   if (modalId === "project-modal") closeProjectModal();
   else if (modalId === "project-docs-modal") closeDocsPicker();
+  else if (modalId === "gateway-modal") closeGatewayModal();
 });
 
 // Escape key closes any open modal.
@@ -2253,6 +2368,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   if (!projectModal.hidden) closeProjectModal();
   else if (!projectDocsModal.hidden) closeDocsPicker();
+  else if (gatewayModal && !gatewayModal.hidden) closeGatewayModal();
 });
 
 // Submit project modal on Cmd/Ctrl+Enter inside any of its text inputs.

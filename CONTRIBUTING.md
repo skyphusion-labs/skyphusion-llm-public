@@ -8,12 +8,12 @@ This project is maintained as time allows. Response times on issues and PRs may 
 
 ## Scope
 
-The project is a template for the Cloudflare AI stack: a single Worker that ties together Workers AI, AI Gateway, D1, R2, Vectorize, Workflows, and Cloudflare Access. Modalities covered: chat (text and vision), image generation, TTS, STT, video generation, music generation, and RAG over uploaded PDFs and spreadsheets. xAI chat is the one remaining BYOK path; Anthropic and everyone else run on Unified Billing through the AI Gateway / `env.AI.run`.
+The project is a template for the Cloudflare AI stack: a single Worker that ties together Workers AI, AI Gateway, D1, R2, Vectorize, Workflows, and Cloudflare Access. Modalities covered: chat (text and vision), image generation, TTS, STT, video generation, music generation, and RAG over uploaded files. Paid third-party models run on **Cloudflare Unified Billing**; the only deployer BYOK path is optional `OPENAI_API_KEY` for `gpt-image-1.5` transparent PNGs (the Unified Billing proxy rejects the fields needed for alpha).
 
 PRs that fit:
 
 - New Workers AI models in the catalog (verify the model ID and the response shape against the model page on `developers.cloudflare.com/workers-ai/models/`)
-- Conversion of BYOK chat providers to Unified Billing where Cloudflare supports them (see "Adding a new model provider" below)
+- Conversion of remaining legacy BYOK paths to Unified Billing where Cloudflare supports them
 - Per-provider param mapping for Unified Billing video models (the current baseline assumes Veo's param shape and sends the same to ByteDance / RunwayML / Alibaba / PixVerse / Vidu, which may reject or ignore some params; provider-specific mappers would fix this)
 - Better handling of provider-specific response shapes in `extractOutput` or in the per-provider dispatch helpers (`callAnthropic`, `callXai`, `callGemini`)
 - Image-to-image input for FLUX 2 (the multipart binding already accepts up to 4 reference images; frontend needs the UI to attach them)
@@ -28,22 +28,17 @@ PRs unlikely to merge:
 - Replacement of D1 / R2 / Vectorize / Access with non-Cloudflare alternatives. The point is to be a Cloudflare-native template.
 - Features that materially expand the surface area without a clear use case. The current modality list (chat, image, TTS, STT, video, music, RAG) is intentional; adding agentic browsing, image upscaling, document generation, etc. needs strong justification tied to an actual use case.
 - Telemetry, analytics, or anything that exfiltrates user data to a third-party service.
+- New deployer BYOK provider paths when Unified Billing already covers the capability.
 
 ## Adding a new model provider
 
-When adding a new third-party model that isn't already in the catalog, prefer the **Unified Billing** path (via `env.AI.run` with the provider's model ID) over BYOK. Reasons:
+When adding a new third-party model that isn't already in the catalog, prefer the **Unified Billing** path (via `env.AI.run` with the provider's model ID, or via the gateway provider endpoint with `cf-aig-authorization`) over deployer BYOK. Reasons:
 
 - Unified Billing means deployers don't need a separate API key for that provider; the cost rolls up to their Cloudflare bill.
 - It uses Cloudflare's AI Gateway natively, so observability, caching, and rate limiting come free.
-- It is less code on our side: no per-provider dispatch helper, no transform between our internal `messages` shape and the provider's format.
+- It is less code on our side: no per-provider dispatch helper, no transform between our internal `messages` shape and the provider's format (when the binding handles it).
 
-Add a BYOK path only when:
-
-- The provider is not yet supported by Unified Billing (uncommon, but happens for new launches).
-- The provider's billing model does not fit Unified Billing (e.g., it requires its own cloud credentials and is not proxied through the AI Gateway).
-- A deployer specifically wants their own quota or rate-limit ceiling with the provider, distinct from their Cloudflare account.
-
-If you add a BYOK entry, mark the catalog row with `{ provider: "<name>", byok_alias: "<provider-side-model-id>" }` and label it `(BYOK)` in the UI so deployers know to set the corresponding secret. The existing xAI entries are the reference pattern.
+Add a deployer BYOK path only when Unified Billing lacks a capability the playground needs. The current example is `OPENAI_API_KEY` for transparent PNG on `gpt-image-1.5`: the proxy schema rejects `background`/`output_format`, so a direct OpenAI call is the only way to get alpha.
 
 ## Long-running operations
 

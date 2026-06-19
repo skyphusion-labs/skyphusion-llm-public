@@ -17,9 +17,10 @@
 // system pulled to a top-level field, image_url blocks rewritten as image
 // blocks with base64 source.
 
-import type { Env } from "../env";
+import type { AiContext } from "../ai-binding";
 import type { ModelEntry } from "../models";
 import type { ProviderStreamEvent } from "../parsers/types";
+import { CF_AIG_TOKEN_REQUIRED_MSG } from "../gateway-credentials";
 import { parseDataUrl } from "../utils";
 import { extractSSEDataPayloads } from "../parsers/sse-framer";
 import { interpretAnthropicSSEFrame } from "../parsers/anthropic-sse";
@@ -82,7 +83,7 @@ function transformToAnthropic(
 // opts.stream. Mirrors the v0.17.2 prepareXaiRequest pattern.
 
 async function prepareAnthropicRequest(
-  env: Env,
+  ctx: AiContext,
   model: ModelEntry,
   systemPrompt: string | undefined,
   messages: Array<unknown>,
@@ -90,9 +91,9 @@ async function prepareAnthropicRequest(
 ): Promise<{ url: string; headers: Record<string, string>; body: string }> {
   const { system, messages: aMessages } = transformToAnthropic(messages, systemPrompt);
 
-  const baseUrl = await (env.AI as unknown as {
+  const baseUrl = await (ctx.env.AI as unknown as {
     gateway: (id: string) => { getUrl: (provider: string) => Promise<string> };
-  }).gateway(env.GATEWAY_ID).getUrl("anthropic");
+  }).gateway(ctx.gateway.gatewayId).getUrl("anthropic");
 
   // Strip the "anthropic/" prefix we use in our internal IDs; Anthropic's API
   // expects just the model name (e.g. "claude-opus-4-6").
@@ -113,12 +114,10 @@ async function prepareAnthropicRequest(
   if (opts.stream) headers["accept"] = "text/event-stream";
   // Unified Billing: keyless. Never send x-api-key (that would make the
   // gateway bill BYOK/pass-through); authorize with the gateway token only.
-  if (!env.CF_AIG_TOKEN) {
-    throw new Error(
-      "Anthropic runs on Cloudflare Unified Billing and requires CF_AIG_TOKEN; set it with `npx wrangler secret put CF_AIG_TOKEN`.",
-    );
+  if (!ctx.gateway.cfAigToken) {
+    throw new Error(CF_AIG_TOKEN_REQUIRED_MSG);
   }
-  headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
+  headers["cf-aig-authorization"] = `Bearer ${ctx.gateway.cfAigToken}`;
 
   return {
     url: `${baseUrl}/v1/messages`,
@@ -128,13 +127,13 @@ async function prepareAnthropicRequest(
 }
 
 export async function callAnthropic(
-  env: Env,
+  ctx: AiContext,
   model: ModelEntry,
   systemPrompt: string | undefined,
   messages: Array<unknown>,
 ): Promise<{ raw: unknown; logId: string | null }> {
   const { url, headers, body } = await prepareAnthropicRequest(
-    env, model, systemPrompt, messages, { stream: false },
+    ctx, model, systemPrompt, messages, { stream: false },
   );
 
   const resp = await fetch(url, { method: "POST", headers, body });
@@ -151,14 +150,14 @@ export async function callAnthropic(
 }
 
 export async function* callAnthropicStream(
-  env: Env,
+  ctx: AiContext,
   model: ModelEntry,
   systemPrompt: string | undefined,
   messages: Array<unknown>,
   signal: AbortSignal,
 ): AsyncGenerator<ProviderStreamEvent> {
   const { url, headers, body } = await prepareAnthropicRequest(
-    env, model, systemPrompt, messages, { stream: true },
+    ctx, model, systemPrompt, messages, { stream: true },
   );
 
   const resp = await fetch(url, {

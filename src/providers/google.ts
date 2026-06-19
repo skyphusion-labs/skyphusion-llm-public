@@ -28,10 +28,10 @@
 // which mirrors callOpenAIStream (binding path + abort bridge) and uses the
 // Gemini SSE interpreter plus a dual-mode delta reconciler.
 
-import type { Env } from "../env";
+import type { AiContext } from "../ai-binding";
+import { aiRun, aiLogId } from "../ai-binding";
 import type { ModelEntry } from "../models";
 import type { ProviderStreamEvent } from "../parsers/types";
-import { aiRun, aiLogId } from "../ai-binding";
 import { extractSSEDataPayloads } from "../parsers/sse-framer";
 import { interpretGeminiSSEFrame, makeGeminiDeltaReconciler } from "../parsers/gemini-sse";
 
@@ -79,23 +79,23 @@ export function prepareGeminiRequest(
 }
 
 export async function callGemini(
-  env: Env,
+  ctx: AiContext,
   model: ModelEntry,
   systemPrompt: string | undefined,
   messages: Array<unknown>,
 ): Promise<{ raw: unknown; logId: string | null }> {
-  const raw = await aiRun(env, model.id, prepareGeminiRequest(systemPrompt, messages));
-  return { raw, logId: aiLogId(env) };
+  const raw = await aiRun(ctx, model.id, prepareGeminiRequest(systemPrompt, messages));
+  return { raw, logId: aiLogId(ctx) };
 }
 
 export async function* callGeminiStream(
-  env: Env,
+  ctx: AiContext,
   model: ModelEntry,
   systemPrompt: string | undefined,
   messages: Array<unknown>,
   signal: AbortSignal,
 ): AsyncGenerator<ProviderStreamEvent> {
-  const result = await aiRun(env, model.id, {
+  const result = await aiRun(ctx, model.id, {
     ...prepareGeminiRequest(systemPrompt, messages),
     stream: true,
   });

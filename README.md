@@ -4,7 +4,7 @@
 [![Typecheck](https://github.com/SkyPhusion/skyphusion-llm-public/actions/workflows/typecheck.yml/badge.svg)](https://github.com/SkyPhusion/skyphusion-llm-public/actions/workflows/typecheck.yml)
 [![Voice chat](https://img.shields.io/badge/%F0%9F%8E%99%EF%B8%8F_voice_chat-speak_%26_hear_35_chat_models-6d8cff)](#voice-chat)
 
-A multimodal AI playground deployed as a single Cloudflare Worker. 35 chat models across 5 providers, **hands-free voice chat** (talk to any model and hear it reply), image / TTS / STT / video / music generation, cross-model artifact reuse within a conversation (v0.21.7), RAG over files of any type (v0.23.0), projects that scope a knowledge base and system prompt, Discord chat-log ingestion, opt-in web search via Tavily and Wikipedia, SSE streaming on supported chat models, and multi-turn conversations. One web UI behind Cloudflare Access, per-user history, R2 for all binary artifacts.
+A multimodal AI playground deployed as a single Cloudflare Worker. 35 chat models across 5 providers, **hands-free voice chat** (talk to any model and hear it reply), image / TTS / STT / video / music generation, cross-model artifact reuse within a conversation (v0.21.7), RAG over files of any type (v0.23.0), projects that scope a knowledge base and system prompt, Discord chat-log ingestion, opt-in web search via Tavily, Brave, and Wikipedia, SSE streaming on supported chat models, and multi-turn conversations. One web UI behind Cloudflare Access, per-user history, R2 for all binary artifacts.
 
 <p align="center">
   <img src="docs/screenshot-desktop.jpg" alt="Desktop UI: image generation with Nano Banana Pro" width="800"><br><br>
@@ -24,8 +24,8 @@ A multimodal AI playground deployed as a single Cloudflare Worker. 35 chat model
 
 A working template for the Cloudflare AI stack. One Worker, no framework, no build step beyond TypeScript. The interesting parts are the patterns, not the model count:
 
-- **Unified `env.AI.run()` binding** drives every modality through one call surface: chat, vision input, image gen, TTS, STT, conversational STT + voice chat (Flux over a WebSocket), video gen (Unified Billing), and music gen.
-- **Per-provider dispatch helpers** for Anthropic Claude (Unified Billing), xAI Grok (BYOK), and Gemini, each transforming our internal `messages` shape into the provider's format. OpenAI and Workers AI ride the `env.AI.run` binding directly.
+- **Unified `env.AI.run()` binding** drives every modality through one call surface: chat, vision input, image gen, TTS, STT, conversational STT + voice chat (Flux over a WebSocket), video gen, and music gen. Paid third-party models bill through **Cloudflare Unified Billing** on your AI Gateway.
+- **Per-provider dispatch helpers** for Anthropic Claude, xAI Grok, and Google Gemini, each transforming our internal `messages` shape into the provider's native format while authorizing keylessly via `cf-aig-authorization`. OpenAI chat and Workers AI ride the `env.AI.run` binding directly. The one deployer BYOK escape hatch is **OpenAI image only**: an optional `OPENAI_API_KEY` for `gpt-image-1.5` transparent PNGs, because the Unified Billing proxy rejects `background`/`output_format`.
 - **SSE streaming** (v0.13.0+) for chat models on all five providers: Anthropic native SSE, Workers AI OpenAI-compatible SSE, xAI OpenAI-compatible SSE, OpenAI proxied (binding-based, v0.21.1), and Gemini (binding-based, v0.21.4).
 - **AI Gateway** wraps every call for observability, caching, and rate-limiting.
 - **D1** holds chat metadata, multi-turn conversation history, and RAG chunk text. **R2** holds all binary artifacts. **Vectorize** holds RAG embeddings (768-dim BGE-base). The chat row references R2 keys; nothing binary touches D1.
@@ -39,13 +39,13 @@ A working template for the Cloudflare AI stack. One Worker, no framework, no bui
 **Chat (35 models across 5 providers; 34 of 35 stream-capable):**
 - Workers AI: Llama 4 Scout, Llama 3.x family, Qwen3 30B / QwQ 32B / Qwen2.5 Coder 32B, DeepSeek R1, Mistral Small 3.1, Gemma 4 26B / Gemma 3 12B, Granite 4 Micro, Nemotron 3 120B, GLM-4.7 Flash, Hermes 2 Pro, GPT-OSS 120B / 20B, Kimi K2.6, SEA-LION v4 27B, LLaVA 1.5 7B (single-shot vision; the one non-streaming model)
 - Anthropic (Unified Billing): Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 4.6, Haiku 4.5 (all streaming)
-- xAI BYOK: Grok 4.3, Grok 4.20 (Multi-Agent and Reasoning), Grok Build 0.1 (all streaming as of v0.16.0)
+- xAI (Unified Billing): Grok 4.3, Grok 4.20 (Multi-Agent and Reasoning), Grok Build 0.1 (all streaming as of v0.16.0)
 - OpenAI (Unified Billing): GPT-5.5, GPT-5.4, GPT-5.4 mini, o4-mini (streaming as of v0.21.1; needs CF credits)
 - Google Gemini (Unified Billing): Gemini 3.1 Pro (streaming as of v0.21.4; needs CF credits)
 
 **Image generation:** Google Nano Banana Pro (Unified Billing), GPT Image 1.5 (OpenAI; transparent PNG with an OpenAI key, opaque otherwise; v0.22.1), Recraft V4 (opaque, art-directed; v0.22.0), FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM, Stable Diffusion XL. FLUX.2 models accept up to 4 reference images (v0.16.0) for image-to-image generation, downscaled client-side to 512px.
 
-**Video generation:** Google Veo 3.1 / 3.1 Fast / 3 / 3 Fast (Unified Billing), ByteDance Seedance 2.0 / 2.0 Fast, MiniMax Hailuo 2.3 / 2.3 Fast, RunwayML Gen-4.5, Alibaba HappyHorse 1.0 T2V and I2V (image-to-video, v0.21.5), PixVerse v6 / v5.6, Vidu Q3 Pro / Q3 Turbo, xAI Grok Imagine Video. BYOK for xAI, Unified Billing for the rest (durable via Cloudflare Workflows).
+**Video generation:** Google Veo 3.1 / 3.1 Fast / 3 / 3 Fast, ByteDance Seedance 2.0 / 2.0 Fast, MiniMax Hailuo 2.3 / 2.3 Fast, RunwayML Gen-4.5, Alibaba HappyHorse 1.0 T2V and I2V (image-to-video, v0.21.5), PixVerse v6 / v5.6, Vidu Q3 Pro / Q3 Turbo, xAI Grok Imagine Video. All 16 models route through Unified Billing and durable Cloudflare Workflows.
 
 **Music generation:** MiniMax Music 2.6 (Unified Billing, durable via Workflows).
 
@@ -61,7 +61,7 @@ A working template for the Cloudflare AI stack. One Worker, no framework, no bui
 
 **Discord ingestion (v0.20.3+):** import a [DiscordChatExporter](https://github.com/Tyrrrz/DiscordChatExporter) JSON export into a project. The worker parses the export, groups messages into conversation-aware chunks (by author, time gap, and channel), and embeds them into the project's retrieval scope, so you can ask questions across an archived Discord channel's history. Import is a file picker in the project's "manage documents" modal.
 
-**Web search (v0.17.0):** opt-in retrieval source that queries Tavily (general web) and Wikipedia (reference and lore) in parallel. Snippets folded into the system prompt the same way RAG chunks are. Per-turn toggle. Tavily requires `TAVILY_API_KEY`; Wikipedia needs no setup. See [Web search](#web-search) below.
+**Web search (v0.17.0):** opt-in retrieval source that queries Tavily and Brave (general web) and Wikipedia (reference and lore) in parallel. Snippets folded into the system prompt the same way RAG chunks are. Per-turn toggle. Tavily requires `TAVILY_API_KEY`; Brave requires `BRAVE_API_KEY`; Wikipedia needs no setup. See [Web search](#web-search) below.
 
 **Streaming (v0.13.0+):** `POST /api/chat/stream` returns SSE for any chat model flagged `streaming: true` in the catalog. Token deltas surface as `{ type: "delta", text: "..." }` events, terminal completion as `{ type: "done", ... }` with token counts and conversation IDs. Client disconnect aborts the upstream model call immediately.
 
@@ -117,6 +117,26 @@ echo "GATEWAY_ID=your-gateway-slug" >> .dev.vars
 
 `.dev.vars` is gitignored.
 
+### 1b. Unified Billing token (required for paid third-party models)
+
+Anthropic, xAI, OpenAI chat, Google Gemini, and proxied image / video / music models authorize through Cloudflare Unified Billing. Set a gateway token with AI Gateway Run permission:
+
+```
+npx wrangler secret put CF_AIG_TOKEN
+```
+
+For local development, also add it to `.dev.vars`:
+
+```
+echo "CF_AIG_TOKEN=your-cloudflare-api-token" >> .dev.vars
+```
+
+Then enable Unified Billing for each provider you plan to use: Dashboard > AI > AI Gateway > your gateway > Settings. Without credits, proxied models fail with `2021: Invalid User Credentials`.
+
+The **only** optional deployer BYOK secret is `OPENAI_API_KEY`, and it applies **only** to `openai/gpt-image-1.5` transparent PNG output (see [Image generation](#image-generation)). OpenAI chat does not use it.
+
+> **Public demo:** to run a separate try-it-yourself instance (no worker gateway secrets; visitors bring their own), see [Deploying a public demo (separate worker)](#deploying-a-public-demo-separate-worker). Skip steps 1 and 1b for that path.
+
 ### 2. Create the D1 database
 
 ```
@@ -168,21 +188,33 @@ You will get a `*.workers.dev` URL.
 
 ### 6. Cloudflare Access
 
-Dashboard > Zero Trust > Access > Applications > Add an application > Self-hosted. Application domain is your worker URL. Identity providers: enable at least one (Google, GitHub, One-Time PIN, etc.). Policy: Action Allow, Rules > Emails > include your address and anyone else who should have access.
+Cloudflare Access sits in front of the worker URL. Authenticated requests reach the worker with `Cf-Access-Authenticated-User-Email`, which scopes history, R2 artifacts, and per-user gateway prefs.
 
-Cloudflare Zero Trust is free up to 50 seats, so a small team is free.
+**Private install (team / personal):**
 
-After this, hitting the worker URL shows the Access login screen. Authenticated requests reach the worker with `Cf-Access-Authenticated-User-Email`, which scopes both history and R2 artifact access per user.
+Dashboard > Zero Trust > Access > Applications > Add an application > Self-hosted. Application domain is your worker hostname (e.g. `skyphusion-llm.your-subdomain.workers.dev`). Under **Policies**, add:
 
-### 7. Optional: web search (Tavily)
+| Field | Value |
+|---|---|
+| Action | **Allow** |
+| Include | **Emails** (or **Emails ending in** for a domain) |
 
-For the v0.17.0 web-search feature, set a Tavily API key (free tier: 1000 searches/month):
+Add your address and anyone else who should have access. Cloudflare Zero Trust is free up to 50 users; see [pricing](https://developers.cloudflare.com/cloudflare-one/) if you need more.
+
+**Public demo install:** use a different policy (Allow + Everyone). Full steps are in [Deploying a public demo (separate worker)](#deploying-a-public-demo-separate-worker).
+
+Do **not** use a **Bypass** policy on the main app URL. Bypass skips login, so the worker never receives a user email and everyone shares the `anonymous` bucket.
+
+### 7. Optional: web search (Tavily + Brave)
+
+For the v0.17.0 web-search feature, set API keys for the sources you want:
 
 ```
 npx wrangler secret put TAVILY_API_KEY
+npx wrangler secret put BRAVE_API_KEY
 ```
 
-Without this, the "search the web" toggle still works but falls back to Wikipedia only. See [Web search](#web-search) below.
+Without `TAVILY_API_KEY`, the Tavily source is silently skipped. Without `BRAVE_API_KEY`, the Brave source is silently skipped. Wikipedia always works with no key. See [Web search](#web-search) below.
 
 ### 8. Local development
 
@@ -191,6 +223,148 @@ Without this, the "search the web" toggle still works but falls back to Wikipedi
 ```
 npm run dev
 ```
+
+## Deploying a public demo (separate worker)
+
+Run a **second deployment** alongside your private instance. Same codebase, **separate** Worker name, D1 database, R2 bucket, Vectorize index, and Access application. Do not reuse the private install's bindings or secrets; visitors store their own AI Gateway slug and API token under **Account > AI Gateway**, and Unified Billing charges **their** Cloudflare account.
+
+### Why a separate worker
+
+| | Private instance | Public demo instance |
+|---|---|---|
+| Worker secrets | `GATEWAY_ID` + `CF_AIG_TOKEN` (yours) | None (omit both) |
+| D1 / R2 / Vectorize | Your data | Empty, isolated per deploy |
+| Access policy | Email allowlist | **Allow + Everyone** |
+| Who pays for models | You | Each signed-in visitor |
+
+### 1. Bootstrap a separate config
+
+Use a second checkout or a copy of the repo so `wrangler.toml` does not collide with your private deploy:
+
+```
+git clone https://github.com/SkyPhusion/skyphusion-llm-public.git skyphusion-llm-demo
+cd skyphusion-llm-demo
+npm install
+npm run bootstrap
+```
+
+Edit `wrangler.toml` and rename **every** deployer-specific resource so nothing points at the private instance:
+
+```toml
+name = "skyphusion-llm-demo"          # was skyphusion-llm
+
+[[d1_databases]]
+database_name = "skyphusion-llm-demo" # new D1; paste a new database_id
+
+[[r2_buckets]]
+bucket_name = "skyphusion-llm-demo"
+
+[[vectorize]]
+index_name = "skyphusion-llm-demo-vec"
+
+[[workflows]]
+name = "skyphusion-longrun-demo"      # workflow name is per-worker
+```
+
+Create the backing resources with the new names:
+
+```
+npx wrangler d1 create skyphusion-llm-demo
+npx wrangler r2 bucket create skyphusion-llm-demo
+npx wrangler vectorize create skyphusion-llm-demo-vec --dimensions=768 --metric=cosine
+```
+
+Paste the new `database_id` into `wrangler.toml`, then apply schema:
+
+```
+npm run db:migrate:remote
+```
+
+Fresh installs include `user_prefs` from `schema.sql`. Upgrading an older demo DB uses `migrate-v0.164.0.sql` (see [MIGRATIONS.md](MIGRATIONS.md)).
+
+### 2. Skip deployer gateway secrets
+
+Do **not** run:
+
+```
+npx wrangler secret put GATEWAY_ID
+npx wrangler secret put CF_AIG_TOKEN
+```
+
+For local dev, leave those keys out of `.dev.vars` as well. Optional deployer secrets (`OPENAI_API_KEY`, `TAVILY_API_KEY`, `BRAVE_API_KEY`) still work if you want global features, but most public demos omit them so visitors rely on their own gateway for paid models.
+
+### 3. Deploy
+
+```
+npm run deploy
+```
+
+Note the `*.workers.dev` hostname (or attach a custom domain first, e.g. `demo.example.com`).
+
+### Cloudflare Access (public sign-in)
+
+Access means **sign-in required**, not anonymous traffic. Each visitor gets a unique email identity; the worker uses that for history, R2 ownership, and `user_prefs`. Use **Allow**, not **Bypass**.
+
+**Step A: enable login methods**
+
+Zero Trust > **Settings** > **Authentication** > **Login methods**. Enable at least one:
+
+- **One-Time PIN** (email OTP; good default for a public demo; no OAuth app setup)
+- **Google** and/or **GitHub** (optional; familiar for technical users)
+
+**Step B: create a dedicated Access application**
+
+Zero Trust > **Access** > **Applications** > **Add an application** > **Self-hosted**
+
+| Field | Value |
+|---|---|
+| Application name | e.g. `skyphusion demo` |
+| Subdomain / domain | The **demo** worker hostname only (not your private worker URL) |
+| Session duration | Your choice (e.g. 24 hours) |
+
+**Step C: public Allow policy**
+
+Under **Policies** on that application:
+
+| Field | Value |
+|---|---|
+| Action | **Allow** |
+| Include | **Everyone** |
+
+Remove any email-only Allow policies on this app, or they will block users not on the list.
+
+**Step D: verify**
+
+1. Open the demo URL in a private/incognito window.
+2. You should see the Cloudflare Access login page (OTP or OAuth).
+3. After login, the app loads; **Account** shows your email.
+4. Open **Account > AI Gateway**, enter your gateway slug and a Cloudflare API token with **AI Gateway Run** permission.
+5. Run a model; usage bills the visitor's Unified Billing account.
+
+### Visitor flow (what you tell users)
+
+1. Sign in at your demo URL (email OTP or social login).
+2. Open **Account > AI Gateway**.
+3. Create an AI Gateway in the [Cloudflare dashboard](https://developers.cloudflare.com/ai-gateway/) if needed; enable Unified Billing for the providers you want.
+4. Paste the gateway **slug** and an API token with **AI Gateway Run** permission.
+5. Use the playground; history and uploads are scoped to your login email.
+
+### Limits and abuse
+
+- **Zero Trust free tier** covers roughly 50 users; a widely public demo may need a paid plan.
+- **Your Cloudflare bill** still includes Workers, D1, R2, and Vectorize for the demo worker. Model inference cost is on each visitor once they configure gateway creds.
+- Access gives you identity (email), not rate limits. Consider WAF rules, geographic restrictions, or a landing page with terms if you open the URL broadly.
+
+### Keeping private and public separate
+
+| Resource | Private | Public demo |
+|---|---|---|
+| `wrangler.toml` `name` | e.g. `skyphusion-llm` | e.g. `skyphusion-llm-demo` |
+| Access application | Email allowlist | Allow + Everyone |
+| Worker secrets | `GATEWAY_ID`, `CF_AIG_TOKEN` | (none) |
+| Deploy command | `npm run deploy` from private dir | `npm run deploy` from demo dir |
+
+Pulling upstream releases: update both checkouts independently; diff each `wrangler.toml` against `wrangler.example.toml` for new bindings.
 
 ## Upgrading across versions
 
@@ -217,7 +391,7 @@ For D1 **schema** changes, see [Migrating an existing deployment](#migrating-an-
        |
    +---+---+
    |       |
- Tavily  Wikipedia    (web search, v0.17.0)
+ Tavily  Brave  Wikipedia    (web search, v0.17.0)
 ```
 
 The worker is the only public surface. R2 is private; the worker streams objects through `GET /api/artifact/*` after verifying ownership via `customMetadata.user_email` on the R2 object.
@@ -265,11 +439,7 @@ The worker is the only public surface. R2 is private; the worker streams objects
 
 ### Long-running jobs
 
-Video and music generation can take 1-3 minutes per call, which exceeds the ~30-second post-response budget that Cloudflare Workers gives to `ctx.waitUntil`. Two architectures handle this:
-
-**BYOK video** (xAI Grok Imagine Video) uses submit-and-poll: the worker submits the job synchronously (one fast HTTP call), persists the upstream job ID, and returns immediately. Each client poll of `/api/job/:id` triggers ONE fresh worker invocation that checks upstream status; when done, that invocation downloads to R2 and finalizes D1.
-
-**Unified Billing video and music** (Veo/Seedance/Hailuo/Gen-4.5/HappyHorse/PixVerse/Vidu/MiniMax Music via Cloudflare credits) uses [Cloudflare Workflows](https://developers.cloudflare.com/workflows/). The `LongRunWorkflow` class (defined at the bottom of `src/index.ts`) holds the blocking `env.AI.run` call alive across step boundaries and retries each phase independently. Workflow instance IDs are stored on the chats row as `job_id` for traceability.
+Video and music generation can take 1-3 minutes per call, which exceeds the ~30-second post-response budget that Cloudflare Workers gives to `ctx.waitUntil`. These paths use [Cloudflare Workflows](https://developers.cloudflare.com/workflows/) (`LongRunWorkflow` in `src/index.ts`) for durable execution.
 
 **Bulk ZIP import** (v0.26.0) reuses the same `LongRunWorkflow` binding with `kind: "zip_import"`. The uploaded archive is staged to R2, then the workflow expands it and ingests each inner file in its own step. The win here is different from video/music: it's not about wall-clock time but about subrequest budget. Each file's embedding is several subrequests, so a large archive done in one request could approach the per-invocation limit; one step per file gives each ingest a fresh budget. The client polls `GET /api/import/:id` for the summary. See [RAG ZIP import](#constraints).
 
@@ -297,7 +467,7 @@ Workers AI billing is per-token / per-image / per-minute depending on model. Fre
 
 D1 is roughly $0.75/GB-month for storage. R2 is roughly $0.015/GB-month with no egress fees inside Cloudflare. Free tiers on D1 and R2 cover small personal use indefinitely.
 
-xAI (Grok) models bill against your own xAI account via BYOK. Anthropic (Claude) and the OpenAI / Gemini proxied models bill against your Cloudflare account via Unified Billing. Tavily web search bills against your Tavily account (1000 searches/month free tier). See per-provider sections below.
+Anthropic (Claude), xAI (Grok), OpenAI chat, Google Gemini, and proxied image / video / music models bill against your Cloudflare account via Unified Billing. The optional `OPENAI_API_KEY` (image only, transparent PNG) bills against your OpenAI account. Tavily and Brave web search bill against your respective API accounts (Tavily free tier: 1000 searches/month). See per-provider sections below.
 
 ## Anthropic models (Unified Billing)
 
@@ -319,30 +489,19 @@ All five Claude entries support SSE streaming (v0.13.0). Streaming events normal
 
 Billing: the call bills against your Cloudflare account at Anthropic's per-token rates through Unified Billing. Gateway caching can reduce duplicate-prompt costs.
 
-## xAI / Grok models (BYOK)
+## xAI / Grok models (Unified Billing)
 
-Grok 4.3, Grok 4.20 (Multi-Agent and Reasoning variants), and Grok Build 0.1 are routed via BYOK against your own xAI account. This is the one remaining BYOK chat path: store the key in the gateway dashboard (recommended) or set it as an inline Worker secret. xAI is OpenAI-compatible so no message transform is needed.
+Grok 4.3, Grok 4.20 (Multi-Agent and Reasoning variants), and Grok Build 0.1 run on Cloudflare Unified Billing. Like Anthropic, the worker hits the AI Gateway's xAI provider endpoint with `cf-aig-authorization: Bearer <CF_AIG_TOKEN>` and no deployer API key. xAI's chat API is OpenAI-compatible, so no message transform is needed beyond what `callXai` already handles.
 
 All four Grok entries support SSE streaming as of v0.16.0. The streaming path requests `stream_options.include_usage: true` so token counts arrive in the final pre-`[DONE]` frame.
 
-### Option A (recommended): Store the key in AI Gateway
+### Setup
 
-1. Get an API key from https://console.x.ai > API Keys > Create API Key
-2. Dashboard > AI > AI Gateway > Provider Keys > Add API Key > pick xAI > paste
-3. Redeploy
-
-### Option B: Inline secret
-
-```
-npx wrangler secret put XAI_API_KEY
-npm run deploy
-```
-
-The same `CF_AIG_TOKEN` secret applies if your gateway is authenticated.
+Same as Anthropic: enable Unified Billing for xAI on your gateway, set `CF_AIG_TOKEN`, redeploy. There is no `XAI_API_KEY` secret for chat.
 
 Note: Grok 4.x are reasoning models and expect `max_completion_tokens` rather than the legacy `max_tokens` field. The worker handles this internally. If you swap in older Grok variants (the grok-3 family was retired May 15, 2026), check xAI's docs for which field they expect.
 
-Billing: xAI charges your account directly. Pricing as of mid-2026: Grok 4.3 and Grok 4.20 variants at $1.25/$2.50 per million input/output tokens, Grok Build 0.1 at $1.00/$2.00. No Cloudflare markup.
+Billing: the call bills against your Cloudflare account at xAI's per-token rates through Unified Billing.
 
 ## OpenAI models (Unified Billing)
 
@@ -350,7 +509,7 @@ GPT-5.5, GPT-5.4, GPT-5.4 mini, and o4-mini (a reasoning model) are routed throu
 
 This is a deliberate re-introduction. OpenAI chat shipped as BYOK in v0.11.0 and was removed in the v0.14.0 consolidation in favor of Unified Billing. These entries come back on the Unified Billing side of that same decision, so they are not a revert of v0.14.0; the BYOK chat path stays gone.
 
-One narrow BYOK exception exists for image, not chat (v0.22.1): `openai/gpt-image-1.5` can produce transparent PNGs, but the Unified Billing proxy's image schema is strictly `{ prompt, images, quality, size, style }` and rejects `background`/`output_format` (a request with them returns `7003: User Input Error`). Transparency therefore requires a direct call to `api.openai.com`, which does accept those fields. The worker uses an optional `OPENAI_API_KEY` for this single purpose (image only): when set, gpt-image-1.5 goes direct and transparent; when unset, it falls back to the opaque proxy path. See the Image generation section below.
+One narrow BYOK exception exists for image, not chat (v0.22.1): `openai/gpt-image-1.5` can produce transparent PNGs, but the Unified Billing proxy's image schema is strictly `{ prompt, images, quality, size, style }` and rejects `background`/`output_format` (a request with them returns `7003: User Input Error`). Transparency therefore requires a direct call to `api.openai.com`, which does accept those fields. The worker uses an optional `OPENAI_API_KEY` for this single purpose. When set, gpt-image-1.5 goes direct and transparent; when unset, it falls back to the opaque proxy path. **This is the only deployer BYOK path in the playground.** See the Image generation section below.
 
 Two current limitations:
 
@@ -370,29 +529,25 @@ Dispatch is unambiguous despite `provider: "google"` also being used for Veo (vi
 
 The rest of the Gemini family (`gemini-3-flash`, `gemini-2.5-pro/flash`, the flash-lites) share this exact request/response shape, so they are catalog-only additions on this module once each is spot-checked.
 
-## Video generation (dual-route: Unified Billing + BYOK)
+## Video generation (Unified Billing)
 
-Video models have two possible routes through the AI Gateway:
+All 16 video models route through Unified Billing via `env.AI.run`. Cloudflare manages provider auth and bills your CF account directly. Enable Unified Billing in the AI Gateway dashboard and fund it with credits before using these models; otherwise calls fail with code `2021: Invalid User Credentials`.
 
-**Route A: Unified Billing via `env.AI.run`** (binding-based, 15 of 16 models). Cloudflare manages provider auth and bills your CF account directly. Requires opting into Unified Billing in the AI Gateway dashboard and funding it with credits. Per CF docs: BYOK is **not** supported for third-party models called through the AI binding.
-
-**Route B: BYOK via per-provider AI Gateway endpoints** (1 of 16 models). Hits `/grok/v1/videos/*` directly with your stored xAI key. Works today without Unified Billing.
-
-This deployment supports both. The router picks per-model based on a `byok_alias` field in the model catalog. If a model has `byok_alias` set and the provider is `xai`, the worker uses BYOK. Otherwise it uses `env.AI.run`, which will fail with code `2021: Invalid User Credentials` until Unified Billing is enabled.
+Per CF docs, BYOK is not supported for third-party models called through the AI binding, so every partner model (including xAI Grok Imagine Video) uses the same Workflow-backed path.
 
 ### Model availability matrix
 
-| Model | Route | Works today | Notes |
-|---|---|---|---|
-| `xai/grok-imagine-video` | BYOK | yes (with XAI_API_KEY) | $0.05/sec, 8s default |
-| `google/veo-3.1`, `veo-3.1-fast`, `veo-3`, `veo-3-fast` | Unified | needs CF credits | route through `env.AI.run` |
-| `bytedance/seedance-2.0`, `seedance-2.0-fast` | Unified | needs CF credits | CF partner, no public API |
-| `minimax/hailuo-2.3`, `hailuo-2.3-fast` | Unified | needs CF credits | CF partner, no public API |
-| `runwayml/gen-4.5` | Unified | needs CF credits | CF partner |
-| `alibaba/hh1-t2v` | Unified | needs CF credits | text-to-video |
-| `alibaba/hh1-i2v` | Unified | needs CF credits | image-to-video; requires `image_url` (v0.21.5) |
-| `pixverse/v6`, `v5.6` | Unified | needs CF credits | CF partner |
-| `vidu/q3-pro`, `q3-turbo` | Unified | needs CF credits | CF partner |
+| Model | Works today | Notes |
+|---|---|---|
+| `xai/grok-imagine-video` | needs CF credits | 8s default |
+| `google/veo-3.1`, `veo-3.1-fast`, `veo-3`, `veo-3-fast` | needs CF credits | route through `env.AI.run` |
+| `bytedance/seedance-2.0`, `seedance-2.0-fast` | needs CF credits | CF partner, no public API |
+| `minimax/hailuo-2.3`, `hailuo-2.3-fast` | needs CF credits | CF partner, no public API |
+| `runwayml/gen-4.5` | needs CF credits | CF partner |
+| `alibaba/hh1-t2v` | needs CF credits | text-to-video |
+| `alibaba/hh1-i2v` | needs CF credits | image-to-video; requires `image_url` (v0.21.5) |
+| `pixverse/v6`, `v5.6` | needs CF credits | CF partner |
+| `vidu/q3-pro`, `q3-turbo` | needs CF credits | CF partner |
 
 The "needs CF credits" entries appear in the menu but will fail until you enable Unified Billing.
 
@@ -420,21 +575,19 @@ Known follow-ups: a dimension check (hh1-i2v wants the source >=300x300, aspect 
 
 ### Architecture
 
-Unified Billing video and music run through Cloudflare Workflows (v0.12.0+). The `LongRunWorkflow` class invokes the model, downloads the artifact, uploads to R2, and finalizes the D1 row across independently-retryable steps. BYOK video (xAI) uses a separate submit-and-poll pattern with no workflow involvement (the upstream xAI API is async-natively).
+Unified Billing video and music run through Cloudflare Workflows (v0.12.0+). The `LongRunWorkflow` class invokes the model, downloads the artifact, uploads to R2, and finalizes the D1 row across independently-retryable steps.
 
 1. Client POSTs to `/api/chat` with a video model. Worker writes a `status='pending'` row to D1 and returns immediately with `{ id, status: "pending", job_id }`.
-2. Background work:
-   - **Unified route:** Workflow instance starts; the `LongRunWorkflow` class blocks on `env.AI.run("provider/model", ...)` until the video is ready, then downloads and re-hosts.
-   - **BYOK route:** worker submits to `api.x.ai/v1/videos/generations`, persists the upstream job ID, and returns. Each client poll triggers a fresh worker invocation that checks upstream status.
-3. When complete, the worker (Unified) or job-poll handler (BYOK) uploads video bytes to your R2 bucket and updates the D1 row to `status='done'`.
-4. Client polls `GET /api/job/:id` every 5 seconds. For Unified, this endpoint reads D1 only (no provider calls). For BYOK, each poll triggers an upstream status check.
+2. Background work: a Workflow instance starts; the `LongRunWorkflow` class blocks on `env.AI.run("provider/model", ...)` until the video is ready, then downloads and re-hosts.
+3. When complete, the workflow uploads video bytes to your R2 bucket and updates the D1 row to `status='done'`.
+4. Client polls `GET /api/job/:id` every 5 seconds. This endpoint reads D1 only (no provider calls per poll).
 5. Frontend renders `<video controls>` pointing at `/api/artifact/:key` once `status='done'`.
 
 If the job fails at any stage, the row gets `status='failed'` with a descriptive `job_error`. The history list shows a warning icon and the chat detail view shows the error message.
 
 ### Defaults
 
-The worker submits with `duration: 8s`, `aspect_ratio: "16:9"`, `resolution: "720p"`, `generate_audio: true` for the Unified route. The BYOK route uses the xAI-specific param shape (`duration: 8` integer). Per-model parameter customization is a backlog item; param-shape iteration for individual partners as each is exercised in production.
+The worker submits with `duration: 8s`, `aspect_ratio: "16:9"`, `resolution: "720p"`, `generate_audio: true`. Per-model parameter customization is a backlog item; param-shape iteration for individual partners as each is exercised in production.
 
 ### Cost discipline
 
@@ -442,12 +595,7 @@ Video gen is the most expensive feature in this playground.
 
 - The worker has no per-user rate limiting. If you make the URL public, add rate limits at the AI Gateway level.
 - Each generation creates an R2 object (~5-30MB per 8s clip). Use `DELETE /api/history/:id` or `DELETE /api/conversations/:id` to clean up.
-- BYOK route prices: xAI Grok Imagine Video $0.05/sec ($0.40 per 8s clip).
 - Unified Billing prices: visible at https://dash.cloudflare.com under AI > Models > [model] > Pricing. CF marks up upstream provider costs.
-
-### Image-to-video (BYOK only)
-
-The xAI BYOK route exposes an `image_input` parameter for image-to-video on supported models. The UI does not yet expose this in the standard composer; you can wire it in via the worker request body manually if needed. The Alibaba HH1 model is image-to-video only and requires an input image; selecting it without one will fail.
 
 ## Speech-to-text (Whisper, standalone)
 
@@ -510,7 +658,7 @@ This is a Cloudflare-proxied (third-party) model, so it requires Unified Billing
 
 ## Image generation
 
-Eleven models in the catalog: Google Nano Banana Pro and OpenAI GPT Image 1.5, plus Recraft V4, FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM, Stable Diffusion XL. The eight FLUX/Leonardo/Lykon/Stability models run through Workers AI (no BYOK or Unified Billing required); Nano Banana Pro and Recraft V4 are proxied partner models on Unified Billing (need CF credits); GPT Image 1.5 is Unified Billing for opaque output and OpenAI BYOK for transparent output (see below).
+Eleven models in the catalog: Google Nano Banana Pro and OpenAI GPT Image 1.5, plus Recraft V4, FLUX 2 Klein 9B/4B, FLUX 2 Dev, FLUX-1 schnell, Lucid Origin, Phoenix 1.0, Dreamshaper 8 LCM, Stable Diffusion XL. The eight FLUX/Leonardo/Lykon/Stability models run through Workers AI (no Unified Billing required); Nano Banana Pro and Recraft V4 are proxied partner models on Unified Billing (need CF credits); GPT Image 1.5 is Unified Billing for opaque output and optional OpenAI BYOK for transparent output (see below). This is the **only** deployer BYOK path in the playground.
 
 ### Google Nano Banana Pro (Unified Billing, v0.21.2)
 
@@ -652,32 +800,37 @@ An opt-in retrieval source (v0.17.0) that queries the web at request time and fo
 
 ### How it works
 
-When you check the "search the web" toggle next to the run button (chat models only), the worker fires two parallel queries on each turn:
+When you check the "search the web" toggle next to the run button (chat models only), the worker fires three parallel queries on each turn:
 
 1. **Tavily** for general web results. Cleaned snippets, no full-page fetches. Requires `TAVILY_API_KEY`; without it, this source is silently skipped.
-2. **Wikipedia** for reference and lore. No API key needed. Returns titles + HTML-stripped snippets via the public MediaWiki search endpoint.
+2. **Brave Search** for general web results from Brave's independent index. Requires `BRAVE_API_KEY`; without it, this source is silently skipped.
+3. **Wikipedia** for reference and lore. No API key needed. Returns titles + HTML-stripped snippets via the public MediaWiki search endpoint.
 
-Both have an 8-second per-source timeout. If one fails or times out, the other still returns its hits. Results are persisted in the same `retrieved_context` column alongside any RAG chunks from the same turn, with a `source_type` discriminator so the UI can render web results (title + clickable URL + snippet) distinctly from doc chunks.
+All three have an 8-second per-source timeout. If one fails or times out, the others still return their hits. Results are persisted in the same `retrieved_context` column alongside any RAG chunks from the same turn, with a `source_type` discriminator so the UI can render web results (title + clickable URL + snippet) distinctly from doc chunks.
 
 Per-turn opt-in: the toggle is not sticky across turns. Each turn decides independently whether to search. Web search and RAG can be on simultaneously; the model sees both in the system prompt.
 
 ### Setup
 
-Optional Tavily key (skip if you only want Wikipedia):
+Optional API keys (set whichever sources you want; Wikipedia needs none):
 
-1. Sign up at https://tavily.com and create an API key. Free tier is 1000 searches per month.
-2. Load it as a Worker secret:
-   ```
-   npx wrangler secret put TAVILY_API_KEY
-   ```
-3. Redeploy.
+1. **Tavily:** sign up at https://tavily.com and create an API key. Free tier is 1000 searches per month.
+2. **Brave Search:** subscribe at https://api.search.brave.com and create an API key.
 
-No D1 migration. No new bindings. Wikipedia works with no setup at all.
+Load them as Worker secrets:
+
+```
+npx wrangler secret put TAVILY_API_KEY
+npx wrangler secret put BRAVE_API_KEY
+```
+
+Redeploy after setting secrets.
 
 ### Caveats worth knowing
 
-- **Token budget.** Each turn with web search on adds roughly 1500-3000 tokens to the system prompt (Tavily defaults to 5 snippets, Wikipedia to 3). Long campaigns or document-heavy RAG turns may push against your model's context window.
+- **Token budget.** Each turn with web search on adds roughly 2000-4000 tokens to the system prompt (up to 5 Tavily snippets, 5 Brave snippets, and 3 Wikipedia snippets). Long campaigns or document-heavy RAG turns may push against your model's context window.
 - **Tavily costs.** After the free tier, Tavily is ~$0.005 per search. Auto-search-every-turn would be wasteful; the per-turn toggle is intentional.
+- **Brave costs.** Brave Search API billing depends on your plan at https://api.search.brave.com. New accounts typically receive monthly credits; check the dashboard for current pricing.
 - **No fact-checking.** Web snippets are supplementary context, not authoritative. The system prompt tells the model so. Verify anything that matters before quoting it.
 - **Wikipedia User-Agent.** The worker identifies itself per Wikimedia's policy. If you fork to a different repo name, update the UA string in `searchWikipedia` so you're not lumped in with anonymous scrapers.
 
@@ -724,15 +877,14 @@ Note: AI Gateway does not surface `cf-aig-log-id` on proxied SSE responses, so s
 
 ## Editing the model menu
 
-`MODELS` at the top of `src/index.ts`. Each entry has:
+`MODELS` in `src/models.ts`. Each entry has:
 
-- `id`: `@cf/{vendor}/{model}` for Workers AI, `anthropic/{model}` for Anthropic (Unified Billing), `xai/{model}` for BYOK xAI, `openai/{model}` / `google/{model}` for Unified Billing chat, or `bytedance/{model}` / `minimax/{model}` / etc. for Unified Billing video and music partners.
+- `id`: `@cf/{vendor}/{model}` for Workers AI, `anthropic/{model}` / `xai/{model}` / `openai/{model}` / `google/{model}` for Unified Billing chat, or `bytedance/{model}` / `minimax/{model}` / etc. for Unified Billing video and music partners.
 - `label` for the picker
 - `group` for the picker section heading
 - `type`: `"chat"` | `"image"` | `"tts"` | `"video"` | `"stt"` | `"music"`
 - `capabilities`: array. Currently only `"vision"` is recognized; applies to chat models only.
-- `provider` (optional): `"workers-ai"` (default) | `"anthropic"` (Unified Billing) | `"xai"` (BYOK) | `"openai"` / `"google"` / `"bytedance"` / `"minimax"` / `"runwayml"` / `"alibaba"` / `"pixverse"` / `"vidu"` (Unified Billing). Drives the call dispatch.
-- `byok_alias` (optional): for xAI video, the upstream model name passed to the provider API.
+- `provider` (optional): `"workers-ai"` (default) | `"anthropic"` | `"xai"` | `"openai"` / `"google"` / `"bytedance"` / `"minimax"` / `"runwayml"` / `"alibaba"` / `"pixverse"` / `"vidu"` (Unified Billing). Drives the call dispatch.
 - `streaming` (optional, chat only): when `true`, the model is eligible for `POST /api/chat/stream`. 34 of the 35 chat models across the five providers (Anthropic, Workers AI, xAI, OpenAI, Gemini) are wired; only the single-shot LLaVA 1.5 is not.
 
 Full Workers AI catalog: https://developers.cloudflare.com/workers-ai/models/. Skip anything tagged "Planned deprecation."
@@ -758,7 +910,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). PRs welcome. Current backlog items that 
 - **Tests for the parsers and transforms**: the SSE parsers are exercised by unit fixtures but not validated against real upstream responses. More golden fixtures from live captures would catch drift.
 - **Discriminated-union refactor of `InputAttachment`**: currently a flat shape with optional fields; a proper tagged union would surface real assumptions in the code.
 - **Provider-shared request builders**: `callXai` + `callXaiStream` share ~30 lines. Factor out URL/headers/body builders.
-- **Upstream BYOK video poll throttle**: client polls every 5s, each currently triggers an upstream call. Adding `last_upstream_check_at` to the chats row would let us throttle to ~1 upstream call per 20-30s while keeping client UX responsive.
+- **Upstream BYOK video poll throttle**: client polls every 5s; for long jobs the worker could throttle upstream status checks if a direct poll path is reintroduced.
 - **Accessibility on the model picker**: keyboard-accessible (uses `<details>`) but missing `role="combobox"`, `aria-expanded`, `aria-controls`.
 - **RAG chunking quality**: fixed-size chunking within page/sheet boundaries; recursive separator splitting would substantially improve retrieval on technical and legal docs.
 - **True video understanding via Gemini routing**: the existing 8-keyframe sampling is a workaround; Gemini 2.5 / 3 Pro could handle real temporal video reasoning.

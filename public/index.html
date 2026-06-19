@@ -61,7 +61,7 @@
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg>
           </button>
           <div id="account-menu" class="account-menu" role="menu" hidden>
-            <button id="account-user" class="account-row account-user" type="button" role="menuitem" title="user preferences (coming soon)">
+            <button id="account-user" class="account-row account-user" type="button" role="menuitem" title="AI Gateway settings">
               <span class="account-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg></span>
               <span class="account-email" id="account-email">loading&#8230;</span>
             </button>
@@ -72,6 +72,11 @@
           </div>
         </div>
       </header>
+
+      <div id="gateway-banner" class="gateway-banner" hidden>
+        <span id="gateway-banner-text">AI Gateway not configured. Set your gateway slug and Cloudflare API token to run models on your account.</span>
+        <button id="gateway-banner-btn" type="button">Configure</button>
+      </div>
 
       <!-- settings popover: system prompt + retrieval toggles + active project -->
       <div id="settings-panel" class="settings-panel" hidden>
@@ -137,6 +142,37 @@
           <span id="attach-hint" class="hint"></span>
         </div>
       </div>
+    </div>
+  </div>
+
+  <div id="gateway-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-modal-close="gateway-modal"></div>
+    <div class="modal-panel" role="dialog" aria-labelledby="gateway-modal-title" aria-modal="true">
+      <header class="modal-header">
+        <h2 id="gateway-modal-title">AI Gateway</h2>
+        <button class="modal-close" data-modal-close="gateway-modal" type="button" title="close">&#x2715;</button>
+      </header>
+      <div class="modal-body">
+        <p class="modal-hint">Connect your Cloudflare AI Gateway so model calls bill your account via Unified Billing. Create a gateway in the Cloudflare dashboard, enable Unified Billing for the providers you want, then paste the gateway slug and an API token with <strong>AI Gateway Run</strong> permission.</p>
+        <label class="modal-field">
+          <span>gateway slug</span>
+          <input id="gateway-modal-id" type="text" autocomplete="off" placeholder="my-gateway-slug">
+        </label>
+        <label class="modal-field">
+          <span>Cloudflare API token</span>
+          <input id="gateway-modal-token" type="password" autocomplete="new-password" placeholder="leave blank to keep existing">
+          <span id="gateway-modal-token-hint" class="modal-hint"></span>
+        </label>
+        <label class="modal-field modal-check">
+          <input id="gateway-modal-clear-token" type="checkbox">
+          <span>clear saved token</span>
+        </label>
+        <div id="gateway-modal-error" class="modal-error" hidden></div>
+      </div>
+      <footer class="modal-actions">
+        <button id="gateway-modal-cancel" type="button">cancel</button>
+        <button id="gateway-modal-save" type="button" class="modal-primary">save</button>
+      </footer>
     </div>
   </div>
 

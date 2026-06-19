@@ -235,3 +235,15 @@ ALTER TABLE chunks ADD COLUMN channel       TEXT;
 ALTER TABLE chunks ADD COLUMN authors       TEXT;   -- comma-joined distinct authors
 ALTER TABLE chunks ADD COLUMN sent_at_start TEXT;   -- ISO8601 earliest message
 ALTER TABLE chunks ADD COLUMN sent_at_end   TEXT;   -- ISO8601 latest message
+
+-- ---------- Per-user preferences (v0.164.0) ----------
+--
+-- JSON blob keyed by Cloudflare Access email. Public demo deployments store
+-- each visitor's AI Gateway slug and CF API token here so the worker itself
+-- needs no GATEWAY_ID / CF_AIG_TOKEN secrets.
+
+CREATE TABLE IF NOT EXISTS user_prefs (
+  user_email  TEXT PRIMARY KEY,
+  prefs_json  TEXT NOT NULL DEFAULT '{}',
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);

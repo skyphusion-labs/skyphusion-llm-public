@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.164.0
+
+feat(prefs): per-user AI Gateway credentials for public demo deployments.
+
+Deploy without worker-level `GATEWAY_ID` / `CF_AIG_TOKEN`; each Cloudflare Access
+user stores their own gateway slug and CF API token under Account > AI Gateway.
+Unified Billing runs on their dime. Private installs unchanged: worker secrets
+remain the default, with user prefs overriding field-by-field when set.
+
+Also: xAI chat/video on Unified Billing (remove deployer `XAI_API_KEY` path); Brave
+Search alongside Tavily for web retrieval; docs aligned to Unified Billing defaults.
+
+### Code
+- `src/gateway-credentials.ts`, `src/user-prefs.ts`: resolve + persist per-user gateway creds
+- `src/ai-binding.ts`: `AiContext` threads gateway id through `aiRun` / `aiLogId`
+- `src/providers/*.ts`, `src/index.ts`: all AI paths resolve credentials per user; `/api/prefs` GET/PATCH; `/api/models` returns `gateway` status; `LongRunWorkflow` loads creds from D1
+- `src/brave-search.ts`, `tests/brave-search.test.ts`: Brave web-search source (`BRAVE_API_KEY`)
+- `src/providers/xai.ts`, `src/models.ts`: xAI Unified Billing (keyless gateway auth)
+- `migrate-v0.164.0.sql`, `schema.sql`: `user_prefs` table
+- `public/index.html`, `public/app.js`, `public/styles.css`: AI Gateway settings modal + banner
+- `tests/gateway-credentials.test.ts`: resolution + masking tests
+- `README.md`, `MIGRATIONS.md`, `wrangler.example.toml`, `src/env.ts`, `CLAUDE.md`, `CONTRIBUTING.md`: public demo + Unified Billing docs
+- `package.json`: 0.163.0 -> 0.164.0
+
+typecheck green; vitest green.
+
 ## v0.163.0
 
 chore(extract): scrub remaining Vivijure / Wavevryn vestiges from the public playground repo.

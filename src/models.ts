@@ -6,24 +6,20 @@
 // model picker.
 //
 // Each entry's `id` is the routing key. The worker's dispatch logic uses
-// the `provider` field (defaulting to "workers-ai") plus the `byok_alias`
-// when present to pick a code path. The `type` field controls which
-// dispatcher runs (chat / image / tts / video / stt / music). The
-// `capabilities` array is mostly UI-driven (vision toggles the attach
-// affordance for vision-capable chat models). The `streaming` flag opts
-// chat models in to POST /api/chat/stream.
+// the `provider` field (defaulting to "workers-ai") to pick a code path.
+// The `type` field controls which dispatcher runs (chat / image / tts /
+// video / stt / music). The `capabilities` array is mostly UI-driven (vision
+// toggles the attach affordance for vision-capable chat models). The
+// `streaming` flag opts chat models in to POST /api/chat/stream.
 //
 // Catalog conventions for adding a new model:
 //   - Use the upstream's canonical ID for the prefix
 //     (anthropic/, xai/, openai/, google/, @cf/<vendor>/, etc.)
 //   - Keep labels clean: do NOT put billing markers like "BYOK" or "needs CF
-//     credits" in the label (they were removed in v0.111.0); the worker knows
-//     the billing path from `provider` / `byok_alias`
+//     credits" in the label (they were removed in v0.111.0)
 //   - Set streaming: true if the model can stream and your provider's
 //     stream parser handles it (Anthropic, xAI, OpenAI, Google, Workers AI
 //     are all covered)
-//   - For BYOK video: set byok_alias to the provider's model name and
-//     leave provider set to the provider's slug
 
 // "voice" = conversational/streaming STT (a live WebSocket session, not a
 // one-shot request like "stt"); handled out of /api/chat via /api/stt/stream.
@@ -51,11 +47,6 @@ export interface ModelEntry {
   // source image required (e.g. alibaba/hh1-i2v, v0.21.5).
   capabilities: Array<"vision" | "image-input">;
   provider?: Provider; // defaults to "workers-ai" when omitted
-  // For video models: if set, the worker uses the per-provider BYOK endpoint
-  // (xAI direct API for xai/*) instead of the env.AI.run binding. The value
-  // is the model name expected by the direct provider API. Without this,
-  // video gen requires Unified Billing on the AI Gateway.
-  byok_alias?: string;
   // v0.13.0: when true, the model can be invoked via POST /api/chat/stream
   // (server-sent events). Covers Anthropic, Workers AI, xAI, OpenAI, and
   // Google. Chat models only - irrelevant for image/tts/video/stt/music types.
@@ -72,7 +63,7 @@ export const MODELS: ModelEntry[] = [
   { id: "anthropic/claude-sonnet-4-6",                  label: "Claude Sonnet 4.6 (Anthropic)",        group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
   { id: "anthropic/claude-haiku-4-5",                   label: "Claude Haiku 4.5 (Anthropic)",         group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
 
-  // xAI / Grok (BYOK via Bearer auth or stored keys, routed through AI Gateway)
+  // xAI / Grok (Unified Billing via cf-aig-authorization, routed through AI Gateway)
   { id: "xai/grok-4.3",                                 label: "Grok 4.3 (xAI)",                       group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai", streaming: true },
   { id: "xai/grok-4.20-multi-agent-0309",               label: "Grok 4.20 Multi-Agent (xAI)",          group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai", streaming: true },
   { id: "xai/grok-4.20-0309-reasoning",                 label: "Grok 4.20 Reasoning (xAI)",            group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai", streaming: true },
@@ -175,7 +166,7 @@ export const MODELS: ModelEntry[] = [
 
   // ---- Video generation (Cloudflare Unified Billing via env.AI.run) ----
   // All routed through env.AI.run("provider/model", ...) - CF handles auth and
-  // billing. No BYOK to xAI/Google/etc needed for these models.
+  // billing. Includes xAI Grok Imagine Video (v0.164.0: moved off BYOK).
   { id: "google/veo-3.1",                               label: "Veo 3.1 (Google)",               group: "Video Gen", type: "video", capabilities: [], provider: "google" },
   { id: "google/veo-3.1-fast",                          label: "Veo 3.1 Fast (Google)",          group: "Video Gen", type: "video", capabilities: [], provider: "google" },
   { id: "google/veo-3",                                 label: "Veo 3 (Google)",                 group: "Video Gen", type: "video", capabilities: [], provider: "google" },
@@ -184,7 +175,7 @@ export const MODELS: ModelEntry[] = [
   { id: "bytedance/seedance-2.0-fast",                  label: "Seedance 2.0 Fast (ByteDance)",  group: "Video Gen", type: "video", capabilities: ["image-input"], provider: "bytedance" },
   { id: "minimax/hailuo-2.3",                           label: "Hailuo 2.3 (MiniMax)",           group: "Video Gen", type: "video", capabilities: ["image-input"], provider: "minimax" },
   { id: "minimax/hailuo-2.3-fast",                      label: "Hailuo 2.3 Fast (MiniMax)",      group: "Video Gen", type: "video", capabilities: ["image-input"], provider: "minimax" },
-  { id: "xai/grok-imagine-video",                       label: "Grok Imagine Video (xAI)",                   group: "Video Gen", type: "video", capabilities: [], provider: "xai",      byok_alias: "grok-imagine-video" },
+  { id: "xai/grok-imagine-video",                       label: "Grok Imagine Video (xAI)",                   group: "Video Gen", type: "video", capabilities: [], provider: "xai" },
   { id: "runwayml/gen-4.5",                             label: "Gen-4.5 (RunwayML)",             group: "Video Gen", type: "video", capabilities: ["image-input"], provider: "runwayml" },
   { id: "alibaba/hh1-t2v",                              label: "HappyHorse 1.0 T2V (Alibaba)", group: "Video Gen", type: "video", capabilities: [], provider: "alibaba" },
   // Image-to-video (v0.21.5): requires a source image. Flagged "image-input";

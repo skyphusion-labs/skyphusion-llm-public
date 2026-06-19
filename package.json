@@ -26,12 +26,12 @@
     "db:migrate:remote": "wrangler d1 execute skyphusion-llm --remote --file=schema.sql"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260606.1",
-    "@types/node": "^25.9.2",
+    "@cloudflare/workers-types": "^4.20260617.1",
+    "@types/node": "^25.9.3",
     "@vitest/coverage-v8": "^4.1.9",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8",
-    "wrangler": "^4.98.0"
+    "wrangler": "^4.102.0"
   },
   "dependencies": {
     "unpdf": "^1.6.0",

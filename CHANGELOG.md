@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.163.0
+
+chore(extract): scrub remaining Vivijure / Wavevryn vestiges from the public playground repo.
+
+The video-studio pipeline (planner, cast, RunPod renders, containers, `R2_RENDERS`) was
+extracted in prior releases; this finishes the cleanup. D1 schema for fresh installs no
+longer defines `renders`, `cast_members`, `storyboard_projects`, or `user_prefs`. Removed
+`/api/prefs` and `/api/whoami` (planner-only), `src/user-prefs.ts`, Vivijure-era migration
+deltas, GitHub issue-template links to the GPU backend, and the unused `@cloudflare/containers`
+dependency. Intended for scratch deploys: apply `schema.sql` to a new D1, no upgrade delta.
+
+### Code
+- `schema.sql`: drop Vivijure/storyboard tables and columns
+- deleted: `migrate-v0.{34,36,39,40,42,122,126,139,145.2}.sql`, `migrations/v0.{46.0,53.0,55.0,57.0}-*.sql`
+- `src/index.ts`: remove `/api/prefs`, `/api/whoami`, user-prefs handlers
+- deleted: `src/user-prefs.ts`, `tests/user-prefs.test.ts`
+- `.github/ISSUE_TEMPLATE/*`: playground-only scope (no Vivijure / vivijure-serverless links)
+- `wrangler.example.toml`, `Jenkinsfile`, `ci/node-docker.Dockerfile`, `.github/dependabot.yml`: drop container-path references
+- `package.json`: 0.162.2 -> 0.163.0; remove `@cloudflare/containers`
+
+typecheck green; vitest 156/156 green.
+
 ## v0.162.2
 
 Fix: a successful plan left the Refine / Audio / Preflight sections hidden (follow-on to v0.162.1).

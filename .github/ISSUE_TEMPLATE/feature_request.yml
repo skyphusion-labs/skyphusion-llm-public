@@ -1,13 +1,12 @@
 name: Feature request
-description: Suggest a capability or improvement for the control plane
+description: Suggest a capability or improvement for the playground
 labels: ["enhancement"]
 body:
   - type: markdown
     attributes:
       value: >
-        For the control plane (playground, planner, cast, voice, generation,
-        the Worker itself). GPU render-pipeline ideas belong to the
-        vivijure-serverless repo.
+        For the multimodal AI playground (chat, voice, generation, RAG,
+        projects, and the Worker itself).
   - type: textarea
     id: problem
     attributes:

@@ -35,7 +35,6 @@ import { callWorkersAIStream } from "./providers/workers-ai";
 import { callOpenAIStream } from "./providers/openai";
 import { callGemini, callGeminiStream } from "./providers/google";
 import { buildGenParams } from "./longrun-params";
-import { getUserPrefs, setUserPrefs } from "./user-prefs";
 import { buildProxiedImageParams } from "./proxied-image-params";
 import { generateOpenAIImage } from "./providers/openai-image";
 import type {
@@ -279,12 +278,6 @@ export default {
     if (url.pathname === "/api/models" && request.method === "GET") {
       return json({ models: MODELS, user: getUserEmail(request) });
     }
-    // v0.66.0: lightweight "who is this Cloudflare-Access JWT" endpoint so
-    // page chrome (the account/user pill) can populate itself without
-    // pulling /api/models' full model payload just for the email.
-    if (url.pathname === "/api/whoami" && request.method === "GET") {
-      return json({ user: getUserEmail(request) });
-    }
     // v0.104.0 / v0.108.0: conversational STT (@cf/deepgram/flux) over a
     // WebSocket. flux is websocket-only, so this is a WS upgrade endpoint, not a
     // chat model. The upgrade is forwarded to a per-session SttSession Durable
@@ -307,12 +300,6 @@ export default {
     // /api/chat). Used to speak the LLM's reply in hands-free voice chat.
     if (url.pathname === "/api/tts" && request.method === "POST") {
       return handleTtsSpeak(request, env);
-    }
-    // v0.139.0: User Preferences (first instance). GET returns this user's prefs
-    // with defaults; PATCH shallow-merges a partial. Scoped to the CF-Access email.
-    if (url.pathname === "/api/prefs") {
-      if (request.method === "GET") return handleGetPrefs(request, env);
-      if (request.method === "PATCH") return handlePatchPrefs(request, env);
     }
     if (url.pathname === "/api/history" && request.method === "GET") {
       return handleHistoryList(request, env);
@@ -486,30 +473,6 @@ async function handleChatStream(request: Request, env: Env, ctx: ExecutionContex
   }
 
   return runChatStream(request, env, model, body);
-}
-
-// v0.139.0: User Preferences. GET returns the caller's prefs (with defaults);
-// PATCH shallow-merges a partial and returns the result. Scoped to the
-// Cloudflare-Access email. Unknown keys in a PATCH are dropped by the normalizer.
-async function handleGetPrefs(request: Request, env: Env): Promise<Response> {
-  const userEmail = getUserEmail(request);
-  const prefs = await getUserPrefs(env, userEmail);
-  return json({ ok: true, prefs });
-}
-
-async function handlePatchPrefs(request: Request, env: Env): Promise<Response> {
-  const userEmail = getUserEmail(request);
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return json({ error: "Invalid JSON" }, { status: 400 });
-  }
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return json({ error: "body must be a prefs object" }, { status: 400 });
-  }
-  const prefs = await setUserPrefs(env, userEmail, body);
-  return json({ ok: true, prefs });
 }
 
 // ---------- Chat (text generation, multimodal in) ----------
@@ -3879,13 +3842,10 @@ async function handleArtifact(request: Request, env: Env, key: string): Promise<
   // Artifacts (chat input + output) all live on env.R2.
   const bucket = env.R2;
   // v0.142.0: forward the request's conditional headers (If-None-Match) to R2.
-  // Artifacts at a STABLE key can be overwritten in place (e.g. regen-shot
-  // rewrites renders/<project>/<job>/keyframes/<shot>.png), and the old
-  // "private, max-age=3600" header let the browser serve the pre-regen pixels
-  // for up to an hour. With a conditional get, R2 returns the object WITHOUT a
-  // body when the client's ETag still matches, and we reply 304 (a ~0-byte
-  // revalidation); a changed object returns fresh bytes. customMetadata is
-  // present on the body-less R2Object too, so the ownership check is unaffected.
+  // With a conditional get, R2 returns the object WITHOUT a body when the
+  // client's ETag still matches, and we reply 304 (a ~0-byte revalidation);
+  // a changed object returns fresh bytes. customMetadata is present on the
+  // body-less R2Object too, so the ownership check is unaffected.
   const obj = await bucket.get(key, { onlyIf: request.headers });
   if (!obj) return new Response("Not Found", { status: 404 });
 

@@ -1,9 +1,8 @@
 # CI agent image for the Jenkins `skyphusion-ci` pipeline.
 #
-# Plain node:22 plus the Docker CLI + buildx, so the Deploy stage's
-# `wrangler deploy` can build the three Cloudflare Container images
-# (containers/{audio-beat-sync,image-prep,video-finish}) before pushing the
-# Worker. The container builds run against the HOST Docker daemon: the Jenkinsfile
+# Plain node:22 plus the Docker CLI + buildx, so Jenkins deploy stages can
+# reach the host Docker daemon when an image build is needed. This Worker
+# deploy is TypeScript-only; the client is here for optional CI use.
 # bind-mounts /var/run/docker.sock and runs the agent with the `docker` group, so
 # this image only needs the client, not a daemon.
 #

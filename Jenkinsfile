@@ -23,9 +23,8 @@ pipeline {
   agent {
     docker {
       // Custom image: node:22 + Docker CLI + buildx, built/pushed on mindcrime-ci
-      // (see ci/node-docker.Dockerfile). The Docker CLI lets the Deploy stage's
-      // `wrangler deploy` build the three Cloudflare Container images
-      // (containers/{audio-beat-sync,image-prep,video-finish}) before publishing.
+      // (see ci/node-docker.Dockerfile). Docker CLI is available if a deploy step
+      // needs host-daemon image builds; wrangler deploy for this Worker is TS-only.
       image 'ghcr.io/skyphusion-labs/ci-node-docker:latest'
       registryUrl 'https://ghcr.io'
       registryCredentialsId 'ghcr-skyphusion'
@@ -39,8 +38,7 @@ pipeline {
   }
 
   options {
-    // Generous: a full deploy rebuilds the three Cloudflare Container images,
-    // which can take several minutes each on a cold layer cache.
+    // Generous headroom for npm ci + typecheck + vitest + wrangler deploy.
     timeout(time: 60, unit: 'MINUTES')
     disableConcurrentBuilds()
     timestamps()                 // requires the Timestamper plugin (ships by default)

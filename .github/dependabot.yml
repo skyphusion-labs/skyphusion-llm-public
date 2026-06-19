@@ -24,13 +24,10 @@ updates:
       npm-minor-patch:
         update-types: ["minor", "patch"]
 
-  # The Cloudflare Containers and the CI builder image.
+  # CI builder image (node + Docker CLI for optional host-daemon builds).
   - package-ecosystem: docker
     directories:
       - /ci
-      - /containers/audio-beat-sync
-      - /containers/image-prep
-      - /containers/video-finish
     schedule:
       interval: weekly
     commit-message:

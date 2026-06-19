@@ -72,7 +72,7 @@ tag = "v4"
 new_sqlite_classes = ["VideoFinishContainer"]
 
 # Retire the CPU container Durable Objects (audio-beat-sync, image-prep,
-# video-finish) extracted to the vivijure worker -- their bindings,
+# video-finish) moved to a separate worker project; their bindings,
 # [[containers]] blocks, and worker exports are removed. v1/v2/v4 above stay as
 # the historical create records; this drops the now-unused classes + their storage.
 [[migrations]]

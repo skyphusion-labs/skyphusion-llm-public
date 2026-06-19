@@ -6,11 +6,6 @@ contact_links:
       Please report vulnerabilities privately via the Security tab (Report a
       vulnerability), not a public issue. See SECURITY.md for the trust model
       and scope.
-  - name: GPU render backend (vivijure-serverless)
-    url: https://github.com/SkyPhusion/vivijure-serverless
-    about: >
-      This repo is the control plane. LoRA training, SDXL keyframes, and
-      image-to-video rendering live in the vivijure-serverless repo.
   - name: Project background
     url: https://skyphusion.net/blog/llm/
-    about: What the skyphusion playground and the Vivijure pipeline are.
+    about: What the skyphusion multimodal AI playground is.

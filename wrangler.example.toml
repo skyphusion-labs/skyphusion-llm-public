@@ -65,7 +65,11 @@ new_sqlite_classes = ["ImagePrepContainer"]
 
 [[migrations]]
 tag = "v3"
-new_sqlite_classes = ["SttSession"]
+# SttSession was created as a regular DO before the new_sqlite_classes declaration
+# was added to this file; existing instances cannot have the sqlite migration
+# applied retroactively (CF API code 10074). Cursor-advance only -- SttSession DOs
+# are untouched (they continue using their pre-sqlite storage).
+# (v0.164.1)
 
 [[migrations]]
 tag = "v4"

@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.164.1
+
+fix(deploy): clear GHA deploy 10074 by converting v3 migration to cursor-advance (v0.164.1)
+
+SttSession Durable Objects existed on the live worker before `new_sqlite_classes` was ever
+declared in the migration history; Cloudflare rejects applying the sqlite-class migration
+to a class that already has existing DO instances (code 10074). The v3 tag is now a
+cursor-advance-only entry (no DO operations); SttSession instances continue using their
+pre-sqlite storage unchanged. This unblocks the GHA deploy path added in v0.164.0.
+
+### Code
+- `wrangler.example.toml`: v3 `new_sqlite_classes = ["SttSession"]` converted to
+  cursor-advance comment block (no DO ops)
+- `package.json`: 0.164.0 -> 0.164.1
+
+typecheck green (no source changes); vitest green.
+
 ## v0.164.0
 
 feat(prefs): per-user AI Gateway credentials for public demo deployments.

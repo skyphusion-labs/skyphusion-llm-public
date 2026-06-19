@@ -1,7 +1,7 @@
-# skyphusion-llm-public
+# prism
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
-[![Typecheck](https://github.com/SkyPhusion/skyphusion-llm-public/actions/workflows/typecheck.yml/badge.svg)](https://github.com/SkyPhusion/skyphusion-llm-public/actions/workflows/typecheck.yml)
+[![Typecheck](https://github.com/skyphusion-labs/prism/actions/workflows/typecheck.yml/badge.svg)](https://github.com/skyphusion-labs/prism/actions/workflows/typecheck.yml)
 [![Voice chat](https://img.shields.io/badge/%F0%9F%8E%99%EF%B8%8F_voice_chat-speak_%26_hear_35_chat_models-6d8cff)](#voice-chat)
 
 A multimodal AI playground deployed as a single Cloudflare Worker. 35 chat models across 5 providers, **hands-free voice chat** (talk to any model and hear it reply), image / TTS / STT / video / music generation, cross-model artifact reuse within a conversation (v0.21.7), RAG over files of any type (v0.23.0), projects that scope a knowledge base and system prompt, Discord chat-log ingestion, opt-in web search via Tavily, Brave, and Wikipedia, SSE streaming on supported chat models, and multi-turn conversations. One web UI behind Cloudflare Access, per-user history, R2 for all binary artifacts.
@@ -93,8 +93,8 @@ Prerequisites:
 - Workers Paid plan if you plan to exceed the free Workers AI tier (10,000 neurons per day across all model usage), and required as of v0.11.0 for the `unpdf` bundle size
 
 ```
-git clone https://github.com/SkyPhusion/skyphusion-llm-public.git
-cd skyphusion-llm-public
+git clone https://github.com/skyphusion-labs/prism.git
+cd prism
 npm install
 npm run bootstrap
 ```
@@ -242,8 +242,8 @@ Run a **second deployment** alongside your private instance. Same codebase, **se
 Use a second checkout or a copy of the repo so `wrangler.toml` does not collide with your private deploy:
 
 ```
-git clone https://github.com/SkyPhusion/skyphusion-llm-public.git skyphusion-llm-demo
-cd skyphusion-llm-demo
+git clone https://github.com/skyphusion-labs/prism.git prism-demo
+cd prism-demo
 npm install
 npm run bootstrap
 ```

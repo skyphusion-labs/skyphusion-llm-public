@@ -1,8 +1,8 @@
-name: ci (self-hosted)
+name: ci
 
-# Full CI (typecheck + tests) on the self-hosted dischord runner; deploy to
-# Cloudflare on push to main. The GitHub-hosted typecheck.yml stays as the
-# safe path for untrusted fork PRs.
+# Full CI (typecheck + tests) on GitHub-hosted runners; deploy to Cloudflare on
+# push to main. prism is PUBLIC and accepts outside PRs, so CI runs on
+# ubuntu-latest (fork-safe sandbox), never the self-hosted fleet pool.
 on:
   push:
     branches: [main]
@@ -13,19 +13,15 @@ on:
 permissions:
   contents: read
 
-# Supersede in-flight runs on the same ref so a self-hosted runner is never
-# queued up behind stale commits.
+# Supersede in-flight runs on the same ref so a queued run is never left behind
+# stale commits.
 concurrency:
-  group: ci-self-hosted-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   ci:
-    # SECURITY: this repo is PUBLIC and the runner is self-hosted. Never let an
-    # untrusted fork PR execute on the box. Run for pushes (trusted) and only for
-    # same-repo (non-fork) PRs; fork PRs still get typecheck via the hosted workflow.
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6

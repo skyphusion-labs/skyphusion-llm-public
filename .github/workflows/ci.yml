@@ -25,7 +25,7 @@ jobs:
     # untrusted fork PR execute on the box. Run for pushes (trusted) and only for
     # same-repo (non-fork) PRs; fork PRs still get typecheck via the hosted workflow.
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, linux, x64]
+    runs-on: [self-hosted, fleet]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6

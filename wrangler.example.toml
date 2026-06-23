@@ -2,6 +2,14 @@ name = "skyphusion-llm"
 main = "src/index.ts"
 compatibility_date = "2026-05-01"
 
+# No scheduled tasks. The render-notify sweep that used a `*/3` cron (resolving
+# fire-and-forget renders) moved to vivijure; the scheduled() handler was stripped
+# from src/index.ts. An empty crons list is explicit on purpose: omitting the
+# [triggers] block leaves a previously-deployed cron in place (wrangler only syncs
+# triggers it can see), so this clears the stale schedule on the next deploy.
+[triggers]
+crons = []
+
 # AI binding. The unified binding handles Workers AI models directly and routes
 # third-party Unified Billing models (chat partners, video, music, proxied image)
 # through the Cloudflare AI Gateway. Anthropic, xAI, and Google chat hit the
